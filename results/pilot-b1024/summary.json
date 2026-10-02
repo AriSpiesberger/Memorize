@@ -1,0 +1,27 @@
+{
+  "args": {
+    "name": "pilot-b1024",
+    "bench": [
+      "mmlu_pro"
+    ],
+    "n": 64,
+    "split_seed": 0,
+    "model": "mlx-community/Qwen3.5-2B-MLX-bf16",
+    "adapter_path": null,
+    "no_think": false,
+    "budget": 1024,
+    "batch_size": 16,
+    "seed": 0
+  },
+  "results": {
+    "mmlu_pro": {
+      "n": 64,
+      "accuracy": 0.5,
+      "stderr": 0.0625,
+      "no_answer": 0.078125,
+      "forced_close": 0.984375,
+      "mean_reasoning_tokens": 1021.953125,
+      "mean_total_tokens": 1026.453125
+    }
+  }
+}
