@@ -1,0 +1,30 @@
+{
+  "args": {
+    "name": "pilot-b2048",
+    "bench": [
+      "mmlu_pro",
+      "mmlu_redux",
+      "ceval",
+      "supergpqa"
+    ],
+    "n": 64,
+    "split_seed": 0,
+    "model": "mlx-community/Qwen3.5-2B-MLX-bf16",
+    "adapter_path": null,
+    "no_think": false,
+    "budget": 2048,
+    "batch_size": 16,
+    "seed": 0
+  },
+  "results": {
+    "mmlu_pro": {
+      "n": 64,
+      "accuracy": 0.546875,
+      "stderr": 0.062224735633101526,
+      "no_answer": 0.109375,
+      "forced_close": 0.953125,
+      "mean_reasoning_tokens": 1997.5625,
+      "mean_total_tokens": 2002.671875
+    }
+  }
+}
