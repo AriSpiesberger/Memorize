@@ -4,68 +4,7 @@
   | |\/| |  _| | |\/| | | | | |_) || |  / /|  _|
   | |  | | |___| |  | | |_| |  _ < | | / /_| |___
   |_|  |_|_____|_|  |_|\___/|_| \_\___/____|_____|
-
-                        __           __,,,,,,,,,,,__
-                     /('''''\--\.--('  . .         ''\\_
-                    \\                                 ')\,_
-                    /.                                     ''\,_
-                   / ...                           ..   ....   '\_
-                  \\..                               ......:;:...'\_
-                  |.                        . .:..=+:=;x+...;;;:..:'\\_
-                  (.                      :=.    ..+:..x::;a=+;x;;;xXOo)\
-                 _\                   ....:               =XOx*aX*xxa*oOOa,
-                 /.         .         ..       :..     .  +*XaOO##x*o**o*X0x_
-                |\                                       .:=***xxO#*;x;xxx;x+_
-               ,(                                        .::.;;==xxo*;::=....),_
-              |\     .                             .     .:..:=+===+xxa:=.     '\_
-              (     ..                                   .:::;;=:=::;x:=..       )
-             _\    ....                        .    . ...::x:..:.=:;*x+===.      .\
-             \-    ....                          ..  ...::.;;; :.:;x*;;x=+=      .|
-             |    .=:..                             ...:...::;::x*axxxx;;.      . //
-             (   .=::.                 ..         . .. . ..::.;xoXXaaoxx= . .     .)_
-            |.  .++::.                      .  ..    . .::..:+xxaaXOXa*;+:..     . .\
-            |  .;x+:.            .. .   .           .  ..:..:xxaaaXoxoXx:=  ..      =
-            ( .:;;... .....  .......:: . .. .....::........::x;aoXXOXao;::. ..     |\
-           -\..;;=...+;;=xxaXox*x;:.+:.:::.::.:...... .... .=:;xxaaoaox++..  :.    (
-            =::x;. :xxxxaXO00@@00Xaoox;;;o;;;xooaaXOXax.::.:..=x*oxxoaox=:  ....  \\
-            |;:+=..:::::+;xaX####0#OXa:xxXO#0#0MNNNNNMM@Xa**;==;oxxx;XaX*; .  ... |
-            --=::....xa000NNNM0M@00#x:.:;O@0NNNN@#XXXOO#0#O00axxxx;;x*a00x....... |
-            |;;=.    .  ..=;xxaXaa*x.  .xaO0MNNM@NMMM0Xx=;X0@0o*;+x+;;X0X;xx+;x=:.|
-            |..:.     .=+==;;;xx=::.    :=;xX#XOOao;0MNNN0aXXXOx:..::oooaxX=oXoox_(
-            ( .:          ..::..   .   .:===;xxx;=.. . ..:xaaxxxx++;;;x*aaoxOXa#*(
-           -\...                   .   .:..:=:.=;;+;;xx*a;..   ..+xx;xxxx;;oX#0#x
-           -/....                 .    .:=..:=.. . .. .       ...:+;;x#Xox;xo;.:|
-           -/ ....           ...       .::.....               .:;x;xxoO#O*+aOx..|
-            |  .... .      .oX.        .x;;;xaa:           ...:==xxxoO0**; #Ma; |
-            )_ .:=:......:;aO;.       .:+:...+X@x..    ......=:+xxaa#@#xx;::O*. |
-             \_.:+;;=::=xoaX:..xx;;x;;++;:=;;O000X+......::==xx;x*0@#00Xa+x;=;._(
-              '\==xoaoaaaox=   .X0N@@MMNMNNN0XxXX0X;;;::::=;x*Xa#M00OOOO#...  _(
-                \+;oooaooa:    . =XMNNNNM0Oa;;::;a#XXoa*x*xXXa*a#0X#Xa#o:.:. .=
-                |=x==+;aO:.. ....:=;oXOa*x**x;==xxXO0#0M@0M0#a*XOXX#XaXx....:/
-                -x+...=o=:::...:::=;xoo;xx;;.:x;x;o#0XXO00O#0OX#XaXXXa0#x;;;|
-                 =+:...;xx;=:;;=+;;=;;;xXaox*xxxxxxXMa;;;xaaO#0#aXaXa@NNOxx=)_
-                 )+;:::=;oa**XoaX00X*oO#OOOXXaaXX0@0@...;xaX@00XXaaX0NoaNX;::+
-                 -/;x;;xxxx;;;*O###X0@0MM@0OXooXM0a*..:x*oa@@#XaXXXXNX ;NNx:.)_
-                 _a;xax;=:..=+xo;..:+*x;::;*O#oX0a;;=;XaOaO#aoxoooaM0  =@N@:.:'\_
-               _,/x=xXa*=.  .:;xa0@MM@@N@@@O*x:x+.=xxX0MOOXooooXXaO0:  Xx0No.;@a.)\_
-          _,//''   .+*xxx=.:.::..:xa#XX#O*a=::.  ..xXO#OaoXaO00OOX#:  =x+@NM=.@N0+ '),_
-   __,//''   .  ... .*xax;. .         .  . .   ..:.+;xx;;;*O@M0O##.  .;+*MNNO.xNNo..  )\_
-  ''       ...:=:.   :X#X;=.  ...            ..:=;xXax;x*o0NM@X#O   .x==a@NNN=:0Mx.     '\,_
-         ...::+:      .aaxx:.:. .....:... . ..:+xXO@##Xa#0M0#X0x   :o=:=o#0MN#.XO:..  .    '\,
-     .... .::=:       =Oa;+x;;;;=;;+;;xx==.=:x;XaO0@@@@00#0000.   ;o;;x*aaaO#0;oX:. .:. .     '\__
-  .......::...       .:#@xxx*XaoaaaXXXoxx*xxoa*OO#0@@0#OO#@@*   .**::;x:;***oXoxX. . ...... .   .'
-  .... .....         .:#0*x;+;x*aaXaXaa*aaaXXXX#000OOXXXO#X.   .;:..=;+==;;;xxa:x:   .:=...
-  ... ....           .:OX*.=+===;x*XOXOOaXOOOXXXXaaooxoXa:    :+:.::=:...:=:+;x=:.........
-       . .          . .xxo.:+;::+:;aaaaoo**ooo**xxxxx*x:    ..:....:.........:=:........... .
-       .   ..       . ..;x:.:...:.;xx;;=;;;;;x;x;;x;;.     :.... ...   .. ...... ..... ..
-           ...::.   .  ..::........:::.::::=======.       ..  .  .            ..  ..  . . .
-              . .        ...      ... .........
-
-  Andrey Nikolaevich Kolmogorov, 1903-1987
-  "memory is just compression you can run"
 ```
-
-<sub>Portrait: ASCII rendering of a detail from [a photograph of Kolmogorov and Igor Zurbenko](https://commons.wikimedia.org/wiki/File:KolmogorovZurbenko.jpg) by Igor Zurbenko, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Best viewed in a light theme.</sub>
 
 **do memories matter?**
 
@@ -167,10 +106,73 @@ error bar. Treat it as a smoke test, not a result.
 
 ## license
 
-MIT, see [LICENSE](LICENSE), except the Kolmogorov portrait at the top, which is
+MIT, see [LICENSE](LICENSE), except the Kolmogorov portrait at the bottom, which is
 an adaptation of a CC BY-SA 4.0 photograph (credited under it) and is shared
 under the same license.
 
 ---
+
+```
+                        __           __,,,,,,,,,,,__
+                     /('''''\--\.--('  . .         ''\\_
+                    \\                                 ')\,_
+                    /.                                     ''\,_
+                   / ...                           ..   ....   '\_
+                  \\..                               ......:;:...'\_
+                  |.                        . .:..=+:=;x+...;;;:..:'\\_
+                  (.                      :=.    ..+:..x::;a=+;x;;;xXOo)\
+                 _\                   ....:               =XOx*aX*xxa*oOOa,
+                 /.         .         ..       :..     .  +*XaOO##x*o**o*X0x_
+                |\                                       .:=***xxO#*;x;xxx;x+_
+               ,(                                        .::.;;==xxo*;::=....),_
+              |\     .                             .     .:..:=+===+xxa:=.     '\_
+              (     ..                                   .:::;;=:=::;x:=..       )
+             _\    ....                        .    . ...::x:..:.=:;*x+===.      .\
+             \-    ....                          ..  ...::.;;; :.:;x*;;x=+=      .|
+             |    .=:..                             ...:...::;::x*axxxx;;.      . //
+             (   .=::.                 ..         . .. . ..::.;xoXXaaoxx= . .     .)_
+            |.  .++::.                      .  ..    . .::..:+xxaaXOXa*;+:..     . .\
+            |  .;x+:.            .. .   .           .  ..:..:xxaaaXoxoXx:=  ..      =
+            ( .:;;... .....  .......:: . .. .....::........::x;aoXXOXao;::. ..     |\
+           -\..;;=...+;;=xxaXox*x;:.+:.:::.::.:...... .... .=:;xxaaoaox++..  :.    (
+            =::x;. :xxxxaXO00@@00Xaoox;;;o;;;xooaaXOXax.::.:..=x*oxxoaox=:  ....  \\
+            |;:+=..:::::+;xaX####0#OXa:xxXO#0#0MNNNNNMM@Xa**;==;oxxx;XaX*; .  ... |
+            --=::....xa000NNNM0M@00#x:.:;O@0NNNN@#XXXOO#0#O00axxxx;;x*a00x....... |
+            |;;=.    .  ..=;xxaXaa*x.  .xaO0MNNM@NMMM0Xx=;X0@0o*;+x+;;X0X;xx+;x=:.|
+            |..:.     .=+==;;;xx=::.    :=;xX#XOOao;0MNNN0aXXXOx:..::oooaxX=oXoox_(
+            ( .:          ..::..   .   .:===;xxx;=.. . ..:xaaxxxx++;;;x*aaoxOXa#*(
+           -\...                   .   .:..:=:.=;;+;;xx*a;..   ..+xx;xxxx;;oX#0#x
+           -/....                 .    .:=..:=.. . .. .       ...:+;;x#Xox;xo;.:|
+           -/ ....           ...       .::.....               .:;x;xxoO#O*+aOx..|
+            |  .... .      .oX.        .x;;;xaa:           ...:==xxxoO0**; #Ma; |
+            )_ .:=:......:;aO;.       .:+:...+X@x..    ......=:+xxaa#@#xx;::O*. |
+             \_.:+;;=::=xoaX:..xx;;x;;++;:=;;O000X+......::==xx;x*0@#00Xa+x;=;._(
+              '\==xoaoaaaox=   .X0N@@MMNMNNN0XxXX0X;;;::::=;x*Xa#M00OOOO#...  _(
+                \+;oooaooa:    . =XMNNNNM0Oa;;::;a#XXoa*x*xXXa*a#0X#Xa#o:.:. .=
+                |=x==+;aO:.. ....:=;oXOa*x**x;==xxXO0#0M@0M0#a*XOXX#XaXx....:/
+                -x+...=o=:::...:::=;xoo;xx;;.:x;x;o#0XXO00O#0OX#XaXXXa0#x;;;|
+                 =+:...;xx;=:;;=+;;=;;;xXaox*xxxxxxXMa;;;xaaO#0#aXaXa@NNOxx=)_
+                 )+;:::=;oa**XoaX00X*oO#OOOXXaaXX0@0@...;xaX@00XXaaX0NoaNX;::+
+                 -/;x;;xxxx;;;*O###X0@0MM@0OXooXM0a*..:x*oa@@#XaXXXXNX ;NNx:.)_
+                 _a;xax;=:..=+xo;..:+*x;::;*O#oX0a;;=;XaOaO#aoxoooaM0  =@N@:.:'\_
+               _,/x=xXa*=.  .:;xa0@MM@@N@@@O*x:x+.=xxX0MOOXooooXXaO0:  Xx0No.;@a.)\_
+          _,//''   .+*xxx=.:.::..:xa#XX#O*a=::.  ..xXO#OaoXaO00OOX#:  =x+@NM=.@N0+ '),_
+   __,//''   .  ... .*xax;. .         .  . .   ..:.+;xx;;;*O@M0O##.  .;+*MNNO.xNNo..  )\_
+  ''       ...:=:.   :X#X;=.  ...            ..:=;xXax;x*o0NM@X#O   .x==a@NNN=:0Mx.     '\,_
+         ...::+:      .aaxx:.:. .....:... . ..:+xXO@##Xa#0M0#X0x   :o=:=o#0MN#.XO:..  .    '\,
+     .... .::=:       =Oa;+x;;;;=;;+;;xx==.=:x;XaO0@@@@00#0000.   ;o;;x*aaaO#0;oX:. .:. .     '\__
+  .......::...       .:#@xxx*XaoaaaXXXoxx*xxoa*OO#0@@0#OO#@@*   .**::;x:;***oXoxX. . ...... .   .'
+  .... .....         .:#0*x;+;x*aaXaXaa*aaaXXXX#000OOXXXO#X.   .;:..=;+==;;;xxa:x:   .:=...
+  ... ....           .:OX*.=+===;x*XOXOOaXOOOXXXXaaooxoXa:    :+:.::=:...:=:+;x=:.........
+       . .          . .xxo.:+;::+:;aaaaoo**ooo**xxxxx*x:    ..:....:.........:=:........... .
+       .   ..       . ..;x:.:...:.;xx;;=;;;;;x;x;;x;;.     :.... ...   .. ...... ..... ..
+           ...::.   .  ..::........:::.::::=======.       ..  .  .            ..  ..  . . .
+              . .        ...      ... .........
+
+  Andrey Nikolaevich Kolmogorov, 1903-1987
+  "memory is just compression you can run"
+```
+
+<sub>Portrait: ASCII rendering of a detail from [a photograph of Kolmogorov and Igor Zurbenko](https://commons.wikimedia.org/wiki/File:KolmogorovZurbenko.jpg) by Igor Zurbenko, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Best viewed in a light theme.</sub>
 
 <sub>· ˚ ✦ · thanks for stopping by · ✦ ˚ ·</sub>
