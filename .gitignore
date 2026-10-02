@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Memorize: benchmark caches and raw rollouts (re-downloadable / large)
+data/
+results/**/*.jsonl
