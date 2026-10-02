@@ -4,6 +4,31 @@
   | |\/| |  _| | |\/| | | | | |_) || |  / /|  _|
   | |  | | |___| |  | | |_| |  _ < | | / /_| |___
   |_|  |_|_____|_|  |_|\___/|_| \_\___/____|_____|
+
+              .-~~~~~~~~-.
+          .-~~ ~~ ~~~~ ~~ ~~-.
+        .~ ~~ ~~~~~~~~~~~~ ~~ ~.
+       / ~~ ~~~~~~    ~~~~~~ ~~ \
+      | ~~ ~~~            ~~~ ~~ |
+      |~~ ~                  ~ ~~|
+      |  |                    |  |
+      |  |  ,==============,  |  |
+      |  |                    |  |
+     (|  |   ~~~~~~~~~~~~~~   |  |)
+     ( )|    (  o  )(  o  )    |( )
+      \ |     `---'  `---'     | /
+          \          /\          /
+           |       (_\/_)       |
+           |     .-~~~~~~-.     |
+           \      `-.__.-'      /
+            \                  /
+             \    `------'    /
+              `.            .'
+                 `-.______.-'
+               _.--'`-.  .-'`--._
+
+        A. N. Kolmogorov, 1903-1987
+   "memory is just compression you can run"
 ```
 
 **do memories matter?**
@@ -33,6 +58,17 @@ changes the answer.
                          ▼
                  ✔ correct / ✘ wrong
 ```
+
+## roadmap
+
+```
+  [x] baseline harness        thinking budget, 5 benchmarks, seeded evals
+  [ ] RL experiment           train against the budget, re-measure   ◀── next
+  [ ] memorization            does adding memory change the answer?
+```
+
+RL comes first, so the memory experiments have a trained model to be compared
+against, not just the raw baseline.
 
 ## what's inside
 
