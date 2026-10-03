@@ -220,3 +220,6 @@ __marimo__/
 # Memorize: benchmark caches and raw rollouts (re-downloadable / large)
 data/
 results/**/*.jsonl
+
+# Trained LoRA weights are large (~33 MB per checkpoint); keep only the configs
+adapters/**/*.safetensors
