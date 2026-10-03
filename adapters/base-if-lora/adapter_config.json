@@ -1,0 +1,42 @@
+{
+    "adapter_path": "adapters/base-if-lora",
+    "batch_size": 1,
+    "clear_cache_threshold": 0,
+    "config": null,
+    "data": "/private/tmp/claude-501/-Users-arisp-Documents-Research-Memorize/08b0dbea-7bb1-4475-a58a-689ba5b41eca/scratchpad/if_chat",
+    "fine_tune_type": "lora",
+    "grad_accumulation_steps": 4,
+    "grad_checkpoint": true,
+    "iters": 2400,
+    "learning_rate": 0.0001,
+    "lora_parameters": {
+        "rank": 8,
+        "dropout": 0.0,
+        "scale": 20.0
+    },
+    "lr_schedule": null,
+    "mask_prompt": true,
+    "max_seq_length": 512,
+    "model": "Qwen/Qwen3.5-2B-Base",
+    "num_layers": -1,
+    "optimizer": "adam",
+    "optimizer_config": {
+        "adam": {},
+        "adamw": {},
+        "muon": {},
+        "sgd": {},
+        "adafactor": {}
+    },
+    "project_name": null,
+    "report_to": null,
+    "resume_adapter_file": "adapters/base-dolly-lora/adapters.safetensors",
+    "save_every": 400,
+    "seed": 0,
+    "steps_per_eval": 400,
+    "steps_per_report": 100,
+    "test": false,
+    "test_batches": 500,
+    "train": true,
+    "trust_remote_code": false,
+    "val_batches": 50
+}
