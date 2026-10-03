@@ -19,7 +19,8 @@
 Give a small model a hard multiple-choice question and a limited budget of
 thinking tokens. What happens when the budget runs out? This repo is the
 harness for measuring that, as a baseline for asking whether adding memory
-changes the answer.
+changes the answer. It also holds the training scripts (SFT, then GRPO) used to
+teach a base model the answer format before any memory is added.
 
 ```
    question ──▶ ┌──────────────────┐
@@ -38,7 +39,9 @@ changes the answer.
 
 ```
   [x] baseline harness        thinking budget, 5 benchmarks, seeded evals
-  [ ] RL experiment           train against the budget, re-measure   ◀── next
+  [x] base-model baselines    5-shot, direct and chain-of-thought
+  [~] SFT warm-up             instruction-following LoRA on the base model
+  [ ] RL experiment           GRPO against held-out benchmarks      ◀── next
   [ ] memorization            does adding memory change the answer?
 ```
 
@@ -53,7 +56,11 @@ Memorize/
 │   ├── chat.py        talk to the model (thinking on by default)
 │   ├── engine.py      batched generation with a thinking budget
 │   ├── benchmarks.py  5 multiple-choice benchmarks, one format
-│   └── evaluate.py    seeded, resumable scoring
+│   ├── evaluate.py    seeded, resumable scoring
+│   ├── sft_data.py    build the instruction-tuning set
+│   ├── sft.py         LoRA fine-tuning, with probes after each epoch
+│   └── grpo.py        GRPO with a KL penalty, on held-out-safe questions
+├── adapters/          LoRA configs per run  (weights gitignored)
 ├── data/              cached benchmark downloads  (gitignored)
 ├── results/           per-run summary.json (raw rollouts gitignored)
 └── requirements.txt
@@ -77,24 +84,36 @@ python -m memorize.chat            # chat, with thinking
 python -m memorize.chat --no-think # chat, direct answers
 
 python -m memorize.evaluate --name baseline --bench mmlu_pro --n 300 --budget 2048
+
+python -m memorize.sft_data                              # build data/sft/
+python -m memorize.sft --out adapters/sft-run1 --epochs 2
+python -m memorize.grpo --model <fused sft model> --out adapters/grpo-run1
 ```
 
 Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
 comparable, and the evaluator resumes where it left off if interrupted.
 
-## first numbers
+## numbers so far
 
-A small pilot: 64 MMLU-Pro questions, 1024 thinking tokens.
+Accuracy on MMLU-Pro, with the seeded split. Small samples, so read the error
+bars. The first two rows are a different model from the last two, so they are
+not a like-for-like comparison.
+
+| model                  | setup                         |   n | accuracy        |
+| ---------------------- | ----------------------------- | --: | --------------- |
+| Qwen3.5-2B-Base        | 5-shot, direct answer         | 300 | 38.0% ± 2.8%    |
+| Qwen3.5-2B-Base        | 5-shot, chain of thought      | 300 | 39.3% ± 2.8%    |
+| Qwen3.5-2B (thinking)  | 1024 thinking tokens          |  64 | 50.0% ± 6.3%    |
+| Qwen3.5-2B (thinking)  | 2048 thinking tokens          |  64 | 54.7% ± 6.2%    |
 
 ```
-accuracy       ██████████░░░░░░░░░░  50.0% ± 6.3%
-forced close   ████████████████████  98.4%   ← budget ran out almost every time
-no answer      █░░░░░░░░░░░░░░░░░░░   7.8%
+thinking, 1024 tokens   forced close  98.4%   no answer  7.8%
+thinking, 2048 tokens   forced close  95.3%   no answer 10.9%
 ```
 
-Takeaway so far: at 1024 tokens the 2B model nearly always runs out of
-thinking room, so the budget is the first thing to vary. Small sample, wide
-error bar. Treat it as a smoke test, not a result.
+Takeaway so far: even at 2048 tokens the thinking model almost always runs out
+of room and has to be cut off, so the budget is the first thing to vary. Treat
+the 64-question rows as smoke tests, not results.
 
 ## notes
 
