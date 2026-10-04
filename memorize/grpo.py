@@ -1,6 +1,6 @@
 """GRPO with a KL penalty, on multiple-choice questions, with a LoRA on mlx-lm.
 
-    python -m memorize.grpo --model models/base-if-fused --out adapters/grpo-run1
+    python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
 
 Each step samples `--questions` training questions, generates `--group`
 replies per question, and rewards a reply 1 if its last line is
@@ -132,7 +132,10 @@ def main():
     p.add_argument("--max-new", type=int, default=768)
     p.add_argument("--beta", type=float, default=0.04)
     p.add_argument("--format-reward", type=float, default=0.1)
+    # mlx-lm's LoRA scales its update by 20, so keep the learning rate low.
     p.add_argument("--lr", type=float, default=1e-5)
+    p.add_argument("--clip", type=float, default=1.0, help="max gradient norm")
+    p.add_argument("--show-every", type=int, default=5, help="print sample replies")
     p.add_argument("--rank", type=int, default=8)
     p.add_argument("--gen-batch", type=int, default=16)
     p.add_argument("--save-every", type=int, default=10)
@@ -195,13 +198,14 @@ def main():
         )
         t_gen = time.time() - t0
 
-        samples, rewards, preds = [], [], []
+        samples, rewards, preds, texts = [], [], [], []
         for q, it in enumerate(items):
             group = range(q * args.group, (q + 1) * args.group)
             rs = []
             for j in group:
                 text = tokenizer.decode([t for t in completions[j] if t not in stop_ids])
                 r, pred = reward(text, it["answer"], args.format_reward)
+                texts.append(text)
                 rs.append(r)
                 preds.append(pred)
             rewards += rs
@@ -221,9 +225,12 @@ def main():
             grads = g if grads is None else tree_map(mx.add, grads, g)
             mx.eval(grads, kl)
             kl_sum += kl.item()
+        grad_norm = 0.0
         if grads is not None:
+            grads, norm = optim.clip_grad_norm(grads, args.clip)
             optimizer.update(model, grads)
-            mx.eval(model.trainable_parameters(), optimizer.state)
+            mx.eval(model.trainable_parameters(), optimizer.state, norm)
+            grad_norm = norm.item()
         mx.clear_cache()
 
         n = len(rewards)
@@ -235,6 +242,7 @@ def main():
             "truncated": sum(f == "length" for f in finished) / n,
             "mean_len": sum(len(c) for c in completions) / n,
             "kl": kl_sum / max(n_total, 1),
+            "grad_norm": grad_norm,
             "trained_on": len(samples),
             "gen_s": round(t_gen, 1),
             "step_s": round(time.time() - t0, 1),
@@ -245,9 +253,20 @@ def main():
         print(
             f"step {step:4d}  reward {rec['reward']:.3f}  acc {rec['accuracy']:.3f}  "
             f"format {rec['format']:.2f}  len {rec['mean_len']:.0f}  kl {rec['kl']:.4f}  "
+            f"grad {rec['grad_norm']:.2f}  "
             f"trained {rec['trained_on']}  {rec['step_s']:.0f}s  peak {rec['peak_gb']} GB",
             flush=True,
         )
+        if step % args.show_every == 0 or step == 1:
+            # The best and worst reply to the first question of the step.
+            group = list(range(args.group))
+            best = max(group, key=lambda j: rewards[j])
+            worst = min(group, key=lambda j: rewards[j])
+            print(f"  question {items[0]['id']} ({items[0]['subject']}), gold {items[0]['answer']}")
+            for label, j in [("best", best), ("worst", worst)]:
+                tail = " ".join(texts[j].split())[-300:]
+                print(f"  [{label}: reward {rewards[j]:.1f}, {len(completions[j])} tokens] ...{tail}")
+            print(flush=True)
         if step % args.save_every == 0 or step == args.steps:
             weights = dict(tree_flatten(model.trainable_parameters()))
             mx.save_safetensors(str(out / "adapters.safetensors"), weights)
