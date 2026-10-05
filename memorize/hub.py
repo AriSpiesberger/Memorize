@@ -165,12 +165,18 @@ def show(repo):
     repo = repo or reg.get("hub_repo")
     remote = set()
     if repo:
-        try:
-            from huggingface_hub import list_repo_files
+        import time
 
-            remote = {f.split("/")[0] for f in list_repo_files(repo)}
-        except Exception as e:
-            print(f"(couldn't list {repo}: {type(e).__name__})")
+        from huggingface_hub import list_repo_files
+
+        for attempt in range(1, 6):  # HF connections drop often; retry
+            try:
+                remote = {f.split("/")[0] for f in list_repo_files(repo)}
+                break
+            except Exception as e:
+                if attempt == 5:
+                    print(f"(couldn't list {repo}: {type(e).__name__})")
+                time.sleep(5)
     print(f"hub repo: {repo or '(none yet)'}\n")
     print(f"{'adapter':18} {'format':6} {'local':6} {'hub':4}  summary")
     for name, info in reg["models"].items():

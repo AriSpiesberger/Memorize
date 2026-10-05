@@ -1,5 +1,5 @@
 {
-  "hub_repo": null,
+  "hub_repo": "Arisp/memorize-adapters",
   "models": {
     "sft-run2-torch": {
       "format": "peft",
