@@ -20,7 +20,8 @@ Give a small model a hard multiple-choice question and a limited budget of
 thinking tokens. What happens when the budget runs out? This repo is the
 harness for measuring that, as a baseline for asking whether adding memory
 changes the answer. It also holds the training scripts (SFT, then GRPO) used to
-teach a base model the answer format before any memory is added.
+teach a base model the answer format before any memory is added, and the
+evaluators that check both accuracy and format.
 
 ```
    question ──▶ ┌──────────────────┐
@@ -40,8 +41,8 @@ teach a base model the answer format before any memory is added.
 ```
   [x] baseline harness        thinking budget, 5 benchmarks, seeded evals
   [x] base-model baselines    5-shot, direct and chain-of-thought
-  [~] SFT warm-up             instruction-following LoRA on the base model
-  [ ] RL experiment           GRPO against held-out benchmarks      ◀── next
+  [x] SFT warm-up             LoRA teaches the ANSWER line: 91% strict format
+  [~] RL experiment           GRPO / Dr. GRPO, smoke test running    ◀── now
   [ ] memorization            does adding memory change the answer?
 ```
 
@@ -53,16 +54,20 @@ against, not just the raw baseline.
 ```
 Memorize/
 ├── memorize/
-│   ├── chat.py        talk to the model (thinking on by default)
-│   ├── engine.py      batched generation with a thinking budget
-│   ├── benchmarks.py  5 multiple-choice benchmarks, one format
-│   ├── evaluate.py    seeded, resumable scoring
-│   ├── sft_data.py    build the instruction-tuning set
-│   ├── sft.py         LoRA fine-tuning, with probes after each epoch
-│   └── grpo.py        GRPO with a KL penalty, on held-out-safe questions
-├── adapters/          LoRA configs per run  (weights gitignored)
-├── data/              cached benchmark downloads  (gitignored)
-├── results/           per-run summary.json (raw rollouts gitignored)
+│   ├── chat.py           talk to the model (thinking on by default)
+│   ├── engine.py         batched generation with a thinking budget
+│   ├── benchmarks.py     5 multiple-choice benchmarks, one format
+│   ├── prompts.py        zero-shot prompt and required answer line per benchmark
+│   ├── evaluate.py       seeded, resumable scoring with a thinking budget
+│   ├── eval_mmlu_pro.py  MMLU-Pro: official few-shot protocol, or chat CoT
+│   ├── eval_format.py    strict-format and instruction-following check
+│   ├── sft_data.py       build the instruction-tuning set
+│   ├── sft.py            LoRA fine-tuning, with probes after each epoch
+│   └── grpo.py           GRPO / Dr. GRPO with a KL penalty
+├── adapters/             LoRA configs per run  (weights gitignored)
+├── models/               fused models for RL  (gitignored)
+├── data/                 cached benchmark downloads  (gitignored)
+├── results/              per-run summaries (raw rollouts gitignored)
 └── requirements.txt
 ```
 
@@ -85,9 +90,15 @@ python -m memorize.chat --no-think # chat, direct answers
 
 python -m memorize.evaluate --name baseline --bench mmlu_pro --n 300 --budget 2048
 
-python -m memorize.sft_data                              # build data/sft/
-python -m memorize.sft --out adapters/sft-run1 --epochs 2
-python -m memorize.grpo --model <fused sft model> --out adapters/grpo-run1
+# SFT, then fuse the adapter into a full model for RL
+python -m memorize.sft_data
+python -m memorize.sft --out adapters/sft-run2
+python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base \
+    --adapter-path adapters/sft-run2 --save-path models/sft-fused
+
+# RL, then check format and instruction following
+python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
+python -m memorize.eval_format --model models/sft-fused --name sft
 ```
 
 Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
@@ -95,25 +106,33 @@ comparable, and the evaluator resumes where it left off if interrupted.
 
 ## numbers so far
 
-Accuracy on MMLU-Pro, with the seeded split. Small samples, so read the error
-bars. The first two rows are a different model from the last two, so they are
-not a like-for-like comparison.
+Accuracy on MMLU-Pro, on the seeded held-out split. Small samples, so read the
+error bars. The thinking-model rows are a different model from the base-model
+rows, so they are not a like-for-like comparison.
 
-| model                  | setup                         |   n | accuracy        |
-| ---------------------- | ----------------------------- | --: | --------------- |
-| Qwen3.5-2B-Base        | 5-shot, direct answer         | 300 | 38.0% ± 2.8%    |
-| Qwen3.5-2B-Base        | 5-shot, chain of thought      | 300 | 39.3% ± 2.8%    |
-| Qwen3.5-2B (thinking)  | 1024 thinking tokens          |  64 | 50.0% ± 6.3%    |
-| Qwen3.5-2B (thinking)  | 2048 thinking tokens          |  64 | 54.7% ± 6.2%    |
+| model                       | setup                              |   n | accuracy     |
+| --------------------------- | ---------------------------------- | --: | ------------ |
+| Qwen3.5-2B-Base             | 5-shot, direct answer              | 300 | 38.0% ± 2.8% |
+| Qwen3.5-2B-Base             | 5-shot, chain of thought           | 300 | 39.3% ± 2.8% |
+| Qwen3.5-2B-Base + SFT       | zero-shot chat CoT, after epoch 1  | 300 | 48.7% ± 2.9% |
+| Qwen3.5-2B (thinking)       | 1024 thinking tokens               |  64 | 50.0% ± 6.3% |
+| Qwen3.5-2B (thinking)       | 2048 thinking tokens               |  64 | 54.7% ± 6.2% |
+
+The SFT row also hit the required `ANSWER: X` last line on 91.3% of replies,
+which is what the RL stage builds on.
 
 ```
 thinking, 1024 tokens   forced close  98.4%   no answer  7.8%
 thinking, 2048 tokens   forced close  95.3%   no answer 10.9%
 ```
 
-Takeaway so far: even at 2048 tokens the thinking model almost always runs out
-of room and has to be cut off, so the budget is the first thing to vary. Treat
-the 64-question rows as smoke tests, not results.
+Takeaways so far:
+
+- A light instruction-tuning pass puts the base model about 10 points above its
+  5-shot baseline (different prompts, so this is a rough comparison).
+- Even at 2048 tokens the thinking model almost always runs out of room and has
+  to be cut off, so the budget is the first thing to vary.
+- The 64-question rows are smoke tests, not results.
 
 ## notes
 
