@@ -83,8 +83,7 @@ tags: [lora, qwen3.5, mmlu-pro, memorization]
 
 LoRA adapters from [Memorize](https://github.com/AriSpiesberger/Memorize), a small
 lab for poking at Qwen3.5-2B. Every adapter sits on `Qwen/Qwen3.5-2B-Base`, in its
-own folder of this repo. `mlx` adapters load with mlx-lm on Apple Silicon (and convert
-to PyTorch with `python -m memorize.mlx_to_peft`); `peft` adapters load with PEFT.
+own folder of this repo.
 
 | adapter | format | base | what it is |
 | --- | --- | --- | --- |
