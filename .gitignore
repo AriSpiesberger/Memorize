@@ -217,14 +217,27 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Memorize: benchmark caches and raw rollouts (re-downloadable / large)
+# ---- Memorize ----------------------------------------------------------
+# Benchmark caches and raw rollouts (re-downloadable / large)
 data/
 results/**/*.jsonl
+# ...except label_split's per-eval metrics, which are the result
+!results/**/metrics.jsonl
 
-# Trained LoRA weights are large (~33 MB per checkpoint); keep only the configs
-adapters/**/*.safetensors
+# Adapter weights are shared through Hugging Face (python -m memorize.hub),
+# not git; configs, training records and adapters/models.json stay tracked.
+*.safetensors
+adapters/*/epoch*/
+adapters/*/README.md
+# PEFT conversions are rebuilt with `python -m memorize.mlx_to_peft`
+adapters/*-peft/
 # Throwaway smoke-test runs
 adapters/*-smoke/
+results/*-smoke/
 
 # Fused full models (several GB), rebuilt with `mlx_lm fuse`
 models/
+
+# Trained adapters inside label_split runs, and stray logs
+results/**/adapter*/
+results/*.log

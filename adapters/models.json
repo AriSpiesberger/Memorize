@@ -1,0 +1,41 @@
+{
+  "hub_repo": null,
+  "models": {
+    "sft-run2-torch": {
+      "format": "peft",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "windows-cuda",
+      "summary": "Instruction SFT: the sft-run2 recipe (memorize.sft_torch) on the data from memorize.sft_data. 18/19 instruction probes, 38.0% direct-answer MMLU-Pro (500 held-out). Default start for run_split.py."
+    },
+    "sft-run2": {
+      "format": "mlx",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "mac-mlx",
+      "summary": "Instruction SFT with memorize.sft, 1 epoch, batch 8, lr 1e-5. The starting point for the GRPO experiment."
+    },
+    "sft-run1": {
+      "format": "mlx",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "mac-mlx",
+      "summary": "First instruction SFT with memorize.sft, 2 epochs, batch 1 x 4 accumulation, lr 1e-5."
+    },
+    "sft-run1-epoch1": {
+      "format": "mlx",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "mac-mlx",
+      "summary": "sft-run1 after its first epoch: 48.7% zero-shot chat-CoT MMLU-Pro, 91.3% strict answer format (results/sft-run1-epoch1-chat-cot)."
+    },
+    "base-if-lora": {
+      "format": "mlx",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "mac-mlx",
+      "summary": "Early experiment: mlx_lm.lora on instruction-following chats, continued from base-dolly-lora (2400 iters, lr 1e-4)."
+    },
+    "base-dolly-lora": {
+      "format": "mlx",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "mac-mlx",
+      "summary": "Early experiment: mlx_lm.lora on Dolly-15k chats (3000 iters, lr 1e-4). Chats fine, but direct-answer MMLU-Pro drops to chance (9%), so it is not used as a starting point."
+    }
+  }
+}
