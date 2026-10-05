@@ -223,3 +223,8 @@ results/**/*.jsonl
 
 # Trained LoRA weights are large (~33 MB per checkpoint); keep only the configs
 adapters/**/*.safetensors
+# Throwaway smoke-test runs
+adapters/*-smoke/
+
+# Fused full models (several GB), rebuilt with `mlx_lm fuse`
+models/
