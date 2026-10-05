@@ -1,3 +1,32 @@
-mlx-lm>=0.32
+# One file for both machines; environment markers pick the backend.
+#
+#   macOS (Apple Silicon, MLX):
+#     python3 -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements.txt
+#
+#   Windows / Linux (NVIDIA, PyTorch + CUDA 12.8):
+#     py -3.12 -m venv .venv && .venv\Scripts\activate      (Linux: python3 -m venv ...)
+#     pip install -r requirements.txt
+#
+# The CUDA wheel index is only consulted for torch; torch is pinned to a minor
+# version so pip can't prefer a newer CPU-only build from PyPI.
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# shared
 datasets>=5.0
 huggingface_hub
+numpy
+safetensors
+matplotlib
+
+# macOS: MLX (sft.py, grpo.py, evaluate.py, eval_*.py, chat.py)
+mlx-lm>=0.32; sys_platform == "darwin"
+
+# Windows / Linux: PyTorch on CUDA (label_split.py, mlx_to_peft.py)
+torch==2.11.*; sys_platform != "darwin"
+transformers>=5.18; sys_platform != "darwin"
+peft>=0.21; sys_platform != "darwin"
+accelerate; sys_platform != "darwin"
+# Fast kernels for Qwen3.5's linear-attention layers (else a slow torch fallback)
+triton-windows; sys_platform == "win32"
+flash-linear-attention; sys_platform != "darwin"
