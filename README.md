@@ -72,7 +72,7 @@ Memorize/
 │   ├── mlx_to_peft.py    convert an MLX LoRA for PyTorch
 │   └── hub.py            push / pull adapters to and from Hugging Face
 ├── run_split.py          one command: set up, get the SFT model, run label_split
-├── adapters/             LoRA configs + models.json registry  (weights on HF)
+├── adapters/             LoRA configs + models.json  (instruct model on HF)
 ├── models/               fused models for RL  (gitignored)
 ├── data/                 cached benchmark downloads  (gitignored)
 ├── results/              per-run summaries (raw rollouts gitignored)
@@ -146,25 +146,18 @@ python run_split.py --name test --dry-run
 
 ## models
 
-Adapter weights are kept out of git and shared through one Hugging Face repo,
-one folder per adapter. [adapters/models.json](adapters/models.json) lists them
-all, with what each one is, its format (`mlx` from the Mac, `peft` from the GPU
-box) and the hub repo. Every adapter sits on `Qwen/Qwen3.5-2B-Base`.
+The instruct model is on Hugging Face:
+[Arisp/memorize-adapters](https://huggingface.co/Arisp/memorize-adapters),
+folder `sft-run2-torch`. It is a LoRA on `Qwen/Qwen3.5-2B-Base` trained with the
+sft-run2 recipe (`memorize.sft_torch`), and the start point for the label-split
+experiment; `run_split.py` downloads it when it isn't in `adapters/`.
 
-```bash
-python -m memorize.hub list                  # what exists, locally and on the hub
-python -m memorize.hub pull --all            # download every adapter into adapters/
-python -m memorize.hub push sft-run2         # upload one (needs `hf auth login`)
+```python
+from peft import PeftModel
+model = PeftModel.from_pretrained(base_model, "Arisp/memorize-adapters", subfolder="sft-run2-torch")
 ```
 
-| adapter           | format | what it is                                                        |
-| ----------------- | ------ | ----------------------------------------------------------------- |
-| `sft-run2-torch`  | peft   | instruction SFT, sft-run2 recipe on CUDA; label-split start point |
-| `sft-run2`        | mlx    | instruction SFT; GRPO start point                                 |
-| `sft-run1`        | mlx    | first instruction SFT, 2 epochs                                   |
-| `sft-run1-epoch1` | mlx    | sft-run1 after epoch 1 (the 48.7% row below)                      |
-| `base-if-lora`    | mlx    | early: instruction-following chats on top of base-dolly-lora      |
-| `base-dolly-lora` | mlx    | early: Dolly chats; drops direct-answer MMLU-Pro to chance        |
+`python -m memorize.hub pull sft-run2-torch` fetches it into `adapters/`.
 
 ## numbers so far
 
