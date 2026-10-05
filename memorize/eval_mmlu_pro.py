@@ -148,7 +148,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     done = {}
     if out.exists():
-        done = {r["id"]: r for r in map(json.loads, open(out))}
+        done = {r["id"]: r for r in map(json.loads, open(out, encoding="utf-8"))}
     todo = [it for it in items if str(it["question_id"]) not in done]
     print(f"{args.mode}: {len(todo)} to run, {len(done)} done", flush=True)
 
@@ -181,7 +181,7 @@ def main():
         owner[uid], toks[uid], shots[uid] = i, [], k
 
     start, n_tok = time.time(), 0
-    with open(out, "a") as f:
+    with open(out, "a", encoding="utf-8") as f:
 
         def finish(uid, stopped):
             it, t = todo[owner[uid]], toks.pop(uid)
@@ -253,7 +253,7 @@ def main():
         "shots": {str(k): sum(r["shots"] == k for r in recs) for k in range(args.ntrain + 1)},
     }
     print(json.dumps(summary, indent=1), flush=True)
-    json.dump(summary, open(out.with_suffix(".summary.json"), "w"), indent=1)
+    json.dump(summary, open(out.with_suffix(".summary.json"), "w", encoding="utf-8"), indent=1)
 
 
 if __name__ == "__main__":

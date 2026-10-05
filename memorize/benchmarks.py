@@ -73,7 +73,7 @@ def _supergpqa():
     from huggingface_hub import hf_hub_download
 
     path = hf_hub_download("m-a-p/SuperGPQA", "SuperGPQA-all.jsonl", repo_type="dataset")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
             yield {
@@ -94,7 +94,7 @@ def _gpqa():
     # run `hf auth login` first.
     path = hf_hub_download("Idavidrein/gpqa", "gpqa_diamond.csv", repo_type="dataset")
     rng = random.Random(0)
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for i, r in enumerate(csv.DictReader(f)):
             correct = r["Correct Answer"].strip()
             options = [correct] + [r[f"Incorrect Answer {k}"].strip() for k in (1, 2, 3)]
@@ -123,10 +123,14 @@ def load(name):
     if not path.exists():
         items = [dict(item, benchmark=name) for item in BENCHMARKS[name]()]
         CACHE_DIR.mkdir(exist_ok=True)
-        with open(path, "w") as f:
+        # Explicit utf-8 (Windows defaults to cp1252); write then rename so an
+        # interrupted download never leaves a truncated cache behind.
+        tmp = path.with_suffix(".jsonl.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             for item in items:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
-    with open(path) as f:
+        tmp.replace(path)
+    with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f]
 
 

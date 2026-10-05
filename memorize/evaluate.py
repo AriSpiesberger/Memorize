@@ -25,7 +25,7 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 def evaluate(model, tokenizer, items, out_path, args):
     done = {}
     if out_path.exists():
-        with open(out_path) as f:
+        with open(out_path, encoding="utf-8") as f:
             done = {r["id"]: r for r in map(json.loads, f)}
     todo = [item for item in items if item["id"] not in done]
     prompts = [
@@ -38,7 +38,7 @@ def evaluate(model, tokenizer, items, out_path, args):
     ]
 
     start, n_tokens = time.time(), 0
-    with open(out_path, "a") as f:
+    with open(out_path, "a", encoding="utf-8") as f:
 
         def on_done(i, rollout):
             nonlocal n_tokens
@@ -124,7 +124,7 @@ def main():
         summary[bench] = summarize(records)
         s = summary[bench]
         print(f"{bench}: {s['accuracy']:.1%} ± {s['stderr']:.1%}  (n={s['n']})", flush=True)
-        with open(out_dir / "summary.json", "w") as f:
+        with open(out_dir / "summary.json", "w", encoding="utf-8") as f:
             json.dump({"args": vars(args), "results": summary}, f, indent=2)
 
 

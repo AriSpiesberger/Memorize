@@ -87,7 +87,7 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for split, rows in [("train", train), ("valid", valid)]:
-        with open(OUT_DIR / f"{split}.jsonl", "w") as f:
+        with open(OUT_DIR / f"{split}.jsonl", "w", encoding="utf-8") as f:
             for messages in rows:
                 f.write(json.dumps({"messages": messages}, ensure_ascii=False) + "\n")
         print(f"{split}: {len(rows)} -> {OUT_DIR / f'{split}.jsonl'}")
