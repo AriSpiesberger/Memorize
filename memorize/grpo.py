@@ -33,8 +33,10 @@ What it prints:
                  (`--track-bench`): strict format, accuracy, out-of-room, one
                  line per benchmark. These are the numbers to watch.
 
-Training questions come from outside the seeded held-out split
-(`benchmarks.split`), so held-out checks and later evaluation stay clean.
+Training questions are a fixed, seeded set of `--train-n` per benchmark from
+outside the held-out split (`benchmarks.split`), so held-out checks and later
+evaluation stay clean. They are worked through in shuffled passes, each
+question once per pass; their ids are saved to <out>/train_ids.json.
 """
 
 import argparse
@@ -56,6 +58,7 @@ from mlx_lm.tuner.trainer import grad_checkpoint
 from mlx_lm.tuner.utils import linear_to_lora_layers
 
 from memorize import benchmarks, prompts
+from memorize.stats import describe, mcnemar
 
 
 def chat_prompt(tokenizer, item):
@@ -153,6 +156,7 @@ def heldout_check(model, tokenizer, items, max_new, batch_size, stops):
             "accuracy": sum(p == g for p, g, _, _ in rs) / n,
             "out_of_room": sum(o for _, _, o, _ in rs) / n,
             "mean_len": sum(l for _, _, _, l in rs) / n,
+            "correct": [int(p == g) for p, g, _, _ in rs],
         }
     return results
 
@@ -170,6 +174,7 @@ def main():
     p.add_argument("--algo", choices=["grpo", "dr_grpo"], default="dr_grpo")
     p.add_argument("--bench", nargs="+", default=["mmlu_pro"], help="training benchmarks")
     p.add_argument("--heldout", type=int, default=300, help="held-out questions per benchmark")
+    p.add_argument("--train-n", type=int, default=2000, help="training questions per benchmark")
     p.add_argument("--steps", type=int, default=200)
     p.add_argument("--questions", type=int, default=4, help="questions per step")
     p.add_argument("--group", type=int, default=8, help="replies per question")
@@ -190,6 +195,9 @@ def main():
         help="benchmarks not trained on, checked alongside",
     )
     p.add_argument("--track-n", type=int, default=32, help="held-out questions per tracked benchmark")
+    p.add_argument(
+        "--track-every", type=int, default=10, help="steps between checks of the untrained benchmarks only"
+    )
     p.add_argument("--save-every", type=int, default=25)
     p.add_argument("--show-every", type=int, default=5)
     p.add_argument("--resume-adapter", help="adapters.safetensors to continue from")
@@ -222,15 +230,18 @@ def main():
     pool, heldout = [], {}
     for bench in args.bench:
         held, rest = benchmarks.split(bench, args.heldout, 0)
-        pool += rest
+        pool += rest[: args.train_n]  # `rest` is already a seeded shuffle
         heldout[bench] = held[: args.eval_n]
     for bench in args.track_bench:
         if bench not in heldout:
             heldout[bench] = benchmarks.split(bench, args.heldout, 0)[0][: args.track_n]
+    with open(out / "train_ids.json", "w") as f:
+        json.dump([it["id"] for it in pool], f)
     n_params = sum(v.size for _, v in tree_flatten(model.trainable_parameters()))
     print(
         f"model {args.model} | LoRA rank {args.rank}, {n_params / 1e6:.1f}M trainable\n"
-        f"train pool {len(pool)} questions from {args.bench}; held-out check "
+        f"train set {len(pool)} questions from {args.bench} "
+        f"({args.steps * args.questions / len(pool):.2f} passes); held-out check "
         + ", ".join(f"{b} {len(v)}" for b, v in heldout.items())
         + "\n"
         f"{args.algo}: {args.steps} steps x {args.questions} questions x {args.group} replies, "
@@ -250,26 +261,44 @@ def main():
     loss_and_grad = nn.value_and_grad(model, loss_fn)
     log = open(out / "log.jsonl", "a")
 
-    def check(step):
+    start = {}
+
+    def check(step, only=None):
         t = time.time()
-        everything = [it for items in heldout.values() for it in items]
+        everything = [it for b, items in heldout.items() if only is None or b in only for it in items]
         results = heldout_check(model, tokenizer, everything, args.max_new, args.gen_batch, stops)
         log.write(json.dumps({"step": step, "heldout": results}) + "\n")
         log.flush()
-        print(f"== held-out check, step {step} ({time.time() - t:.0f}s)", flush=True)
+        label = "held-out check" if only is None else "untrained-benchmark check"
+        print(f"== {label}, step {step} ({time.time() - t:.0f}s)", flush=True)
         for bench, c in results.items():
             role = "trained" if bench in args.bench else "not trained"
-            print(
+            line = (
                 f"   {bench:11s} ({role:11s}, n={c['n']:3d}): format {c['format']:6.1%}  "
                 f"accuracy {c['accuracy']:6.1%}  out of room {c['out_of_room']:6.1%}  "
-                f"mean length {c['mean_len']:.0f}",
-                flush=True,
+                f"mean length {c['mean_len']:.0f}"
             )
+            if bench in start:
+                # Same questions as step 0, so compare them pairwise.
+                line += f"\n{'':16s}vs step 0: {describe(mcnemar(start[bench], c['correct']))}"
+            else:
+                start[bench] = c["correct"]
+            print(line, flush=True)
+
+    def batches():
+        """Shuffled passes over the training set, `--questions` at a time."""
+        n_pass = 0
+        while True:
+            n_pass += 1
+            order = random.sample(pool, len(pool))
+            for i in range(0, len(order) - args.questions + 1, args.questions):
+                yield n_pass, order[i : i + args.questions]
 
     check(0)
+    next_batch = batches()
     for step in range(1, args.steps + 1):
         t0 = time.time()
-        items = random.sample(pool, args.questions)
+        n_pass, items = next(next_batch)
         prompt_ids = [chat_prompt(tokenizer, it) for it in items]
         model.eval()
         replies, out_of_room = generate(
@@ -325,6 +354,8 @@ def main():
         n = len(rewards)
         rec = {
             "step": step,
+            "pass": n_pass,
+            "ids": [it["id"] for it in items],
             "reward": sum(rewards) / n,
             "accuracy": sum(r == 1.0 for r in rewards) / n,
             "format": sum(p is not None for p in preds) / n,
@@ -339,7 +370,7 @@ def main():
         log.write(json.dumps(rec) + "\n")
         log.flush()
         print(
-            f"step {step:4d}/{args.steps} | reward {rec['reward']:.3f}  acc {rec['accuracy']:.2f}  "
+            f"step {step:4d}/{args.steps} (pass {n_pass}) | reward {rec['reward']:.3f}  acc {rec['accuracy']:.2f}  "
             f"format {rec['format']:.2f}  out-of-room {rec['out_of_room']:.2f}  len {rec['mean_len']:.0f} | "
             f"kl {rec['kl']:.4f}  grad {rec['grad_norm']:.2f}  trained on {rec['trained_on']}/{n} | "
             f"{rec['gen_s']:.0f}s gen, {rec['step_s']:.0f}s total, peak {mx.get_peak_memory() / 1e9:.1f} GB",
@@ -358,6 +389,8 @@ def main():
             save(model, out, step)
         if step % args.eval_every == 0 or step == args.steps:
             check(step)
+        elif args.track_bench and step % args.track_every == 0:
+            check(step, only=[b for b in args.track_bench if b not in args.bench])
 
     print(f"saved adapter to {out}", flush=True)
 
