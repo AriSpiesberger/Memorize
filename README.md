@@ -61,6 +61,8 @@ Memorize/
 │   ├── evaluate.py       seeded, resumable scoring with a thinking budget
 │   ├── eval_mmlu_pro.py  MMLU-Pro: official few-shot protocol, or chat CoT
 │   ├── eval_format.py    strict-format and instruction-following check
+│   ├── compare.py        paired, question-by-question comparison of two runs
+│   ├── stats.py          McNemar's exact test and intervals
 │   ├── sft_data.py       build the instruction-tuning set
 │   ├── sft.py            LoRA fine-tuning, with probes after each epoch
 │   └── grpo.py           GRPO / Dr. GRPO with a KL penalty
@@ -99,6 +101,7 @@ python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base \
 # RL, then check format and instruction following
 python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
 python -m memorize.eval_format --model models/sft-fused --name sft
+python -m memorize.compare sft drgrpo-run1      # paired test, before vs after
 ```
 
 Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
