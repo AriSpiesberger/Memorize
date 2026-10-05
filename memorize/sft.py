@@ -1,7 +1,7 @@
 """Instruction-tune a base model with a LoRA, watching it learn as it goes.
 
     python -m memorize.sft_data                                  # build data/sft/
-    python -m memorize.sft --out adapters/sft-run1 --epochs 2
+    python -m memorize.sft --out adapters/sft-run2
 
 Prints training loss as it runs, validation loss at regular intervals, and
 after every epoch (and once before training) answers a fixed set of probes:
@@ -62,11 +62,77 @@ INSTRUCTION_PROBES = [
     ),
     (
         "List two primary colors as a bulleted list where every line starts with '- ', and write nothing else.",
-        lambda t: [l for l in t.strip().splitlines() if l.strip()] != []
-        and all(l.startswith("- ") for l in t.strip().splitlines() if l.strip())
-        and len([l for l in t.strip().splitlines() if l.strip()]) == 2,
+        lambda t: len(_lines(t)) == 2 and all(l.startswith("- ") for l in _lines(t)),
+    ),
+    (
+        "What is 7 plus 5? Reply with only the number.",
+        lambda t: t.strip().rstrip(".") == "12",
+    ),
+    (
+        "Write the word hello in all lowercase letters and nothing else.",
+        lambda t: t.strip().strip(".!\"'") == "hello",
+    ),
+    (
+        "Describe a cat in fewer than 15 words.",
+        lambda t: 0 < len(t.split()) < 15,
+    ),
+    (
+        "Give exactly three words that describe the ocean, separated by commas, and nothing else.",
+        lambda t: len(parts := [w.strip() for w in t.strip().rstrip(".").split(",")]) == 3
+        and all(len(w.split()) == 1 for w in parts),
+    ),
+    (
+        "Name three planets as a numbered list in the form '1. ...', '2. ...', '3. ...', and write nothing else.",
+        lambda t: [l[:3] for l in _lines(t)] == ["1. ", "2. ", "3. "],
+    ),
+    (
+        "Why is the sky blue? Answer in exactly two sentences.",
+        lambda t: _sentences(t) == 2,
+    ),
+    (
+        "Translate 'good morning' into French. Reply with the translation only.",
+        lambda t: "bonjour" in t.lower() and len(t.split()) <= 3,
+    ),
+    (
+        "Write one sentence that uses both the word 'river' and the word 'lantern'.",
+        lambda t: "river" in t.lower() and "lantern" in t.lower() and _sentences(t) == 1,
+    ),
+    (
+        "Start your reply with the word 'Certainly' and then name one color.",
+        lambda t: t.strip().startswith("Certainly"),
+    ),
+    (
+        "What is the largest planet in the solar system? Wrap your entire answer in double quotation marks.",
+        lambda t: len(t.strip()) > 2 and t.strip()[0] in "\"“" and t.strip()[-1] in "\"”",
+    ),
+    (
+        "Describe a sunset in two sentences without using any commas.",
+        lambda t: "," not in t and _sentences(t) == 2,
+    ),
+    (
+        "Give a title for a story about a lost dog, wrapped in double angle brackets like <<title>>, and nothing else.",
+        lambda t: t.strip().startswith("<<") and t.strip().endswith(">>"),
+    ),
+    (
+        "请只用一个词回答：晴天时天空通常是什么颜色？",
+        lambda t: "蓝" in t and len(t.strip().strip("。.")) <= 4,
+    ),
+    (
+        "用中文列出三种水果，每行一种，不要写其他内容。",
+        lambda t: len(_lines(t)) == 3 and not any(c.isascii() and c.isalpha() for c in t),
     ),
 ]
+
+
+def _lines(text):
+    return [l.strip() for l in text.strip().splitlines() if l.strip()]
+
+
+def _sentences(text):
+    """Sentence count by terminal punctuation (., !, ? and their CJK forms)."""
+    import re
+
+    return len(re.findall(r"[.!?。！？]+(?=\s|$)", text.strip()))
 
 
 def load_split(path, tokenizer, max_seq):
@@ -98,6 +164,20 @@ def to_batch(rows):
     return tokens[:, :-1], tokens[:, 1:], mx.array(mask)
 
 
+def pack(rows, max_tokens):
+    """Group rows into batches whose padded size (rows x longest) fits
+    `max_tokens`; memory scales with that size, about 4 GB per 512 tokens."""
+    batches, current = [], []
+    for row in sorted(rows, key=lambda r: len(r[0])):
+        if current and (len(current) + 1) * len(row[0]) > max_tokens:
+            batches.append(current)
+            current = []
+        current.append(row)
+    if current:
+        batches.append(current)
+    return batches
+
+
 def loss_fn(model, inputs, targets, mask):
     logits = model(inputs).astype(mx.float32)
     ce = nn.losses.cross_entropy(logits, targets) * mask
@@ -105,10 +185,10 @@ def loss_fn(model, inputs, targets, mask):
     return ce.sum() / n, n
 
 
-def evaluate(model, rows, batch_size):
+def evaluate(model, rows, max_tokens):
     total, n_tokens = 0.0, 0.0
-    for i in range(0, len(rows), batch_size):
-        loss, n = loss_fn(model, *to_batch(rows[i : i + batch_size]))
+    for batch in pack(rows, max_tokens):
+        loss, n = loss_fn(model, *to_batch(batch))
         mx.eval(loss, n)
         total += loss.item() * n.item()
         n_tokens += n.item()
@@ -187,26 +267,41 @@ def main():
     p.add_argument("--model", default="Qwen/Qwen3.5-2B-Base")
     p.add_argument("--data", default=str(DATA_DIR), help="dir with train.jsonl, valid.jsonl")
     p.add_argument("--out", required=True, help="adapter directory")
-    p.add_argument("--epochs", type=int, default=2)
-    p.add_argument("--batch-size", type=int, default=1)
-    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=8, help="chats per optimizer step")
+    p.add_argument(
+        "--max-batch-tokens",
+        type=int,
+        default=1536,
+        help="padded tokens per forward pass; ~16 GB peak at 1536 (3 x 512)",
+    )
     # mlx-lm's LoRA multiplies its update by `scale` (20), so learning rates
     # that suit other LoRA setups are ~10x too high here.
     p.add_argument("--lr", type=float, default=1e-5)
-    p.add_argument("--clip", type=float, default=1.0, help="max gradient norm")
+    p.add_argument("--clip", type=float, default=20.0, help="max gradient norm")
     p.add_argument("--warmup", type=int, default=20, help="optimizer steps")
     p.add_argument("--rank", type=int, default=8)
     p.add_argument("--max-seq", type=int, default=512)
     p.add_argument("--resume-adapter", help="adapters.safetensors to start from")
     p.add_argument("--report-every", type=int, default=25, help="optimizer steps")
-    p.add_argument("--eval-every", type=int, default=150, help="optimizer steps")
-    p.add_argument("--n-mmlu-probes", type=int, default=3)
+    p.add_argument("--eval-every", type=int, default=100, help="optimizer steps")
+    p.add_argument(
+        "--cache-gb",
+        type=float,
+        default=2.0,
+        help="cap on MLX's cache of freed buffers; uncapped it grows until macOS swaps",
+    )
+    p.add_argument("--n-mmlu-probes", type=int, default=0)
     p.add_argument("--no-grad-checkpoint", action="store_true")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
     random.seed(args.seed)
     mx.random.seed(args.seed)
+    # Packed batches vary in shape, so freed buffers rarely get reused; cap the
+    # cache and keep the weights resident instead of letting them page out.
+    mx.set_cache_limit(int(args.cache_gb * 1e9))
+    mx.set_wired_limit(mx.device_info()["max_recommended_working_set_size"])
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     lora_config = {"rank": args.rank, "dropout": 0.0, "scale": 20.0}
@@ -229,14 +324,15 @@ def main():
     train, skipped_t = load_split(Path(args.data) / "train.jsonl", tokenizer, args.max_seq)
     valid, skipped_v = load_split(Path(args.data) / "valid.jsonl", tokenizer, args.max_seq)
     mmlu_items = benchmarks.split("mmlu_pro", 300, 0)[0][: args.n_mmlu_probes]
-    per_step = args.batch_size * args.grad_accum
+    per_step = args.batch_size
     steps_per_epoch = math.ceil(len(train) / per_step)
     total_steps = steps_per_epoch * args.epochs
     print(
         f"model {args.model} | LoRA rank {args.rank}, {n_params / 1e6:.1f}M trainable\n"
         f"train {len(train)} chats ({skipped_t} skipped), valid {len(valid)} ({skipped_v} skipped)\n"
         f"{args.epochs} epochs x {steps_per_epoch} optimizer steps "
-        f"(batch {args.batch_size} x accumulate {args.grad_accum}), lr {args.lr}",
+        f"({args.batch_size} chats each, packed into passes of <= {args.max_batch_tokens} "
+        f"tokens), lr {args.lr}",
         flush=True,
     )
 
@@ -252,7 +348,7 @@ def main():
     loss_and_grad = nn.value_and_grad(model, loss_fn)
 
     run_probes(model, tokenizer, mmlu_items, "before training")
-    val = evaluate(model, valid, args.batch_size)
+    val = evaluate(model, valid, args.max_batch_tokens)
     print(f"step 0 | valid loss {val:.3f}", flush=True)
     best = val
 
@@ -265,8 +361,8 @@ def main():
         for start in range(0, len(order), per_step):
             chunk = [train[i] for i in order[start : start + per_step]]
             grads, n_chunk = None, sum(len(ids) - n for ids, n in chunk)
-            for b in range(0, len(chunk), args.batch_size):
-                (loss, n), g = loss_and_grad(model, *to_batch(chunk[b : b + args.batch_size]))
+            for batch in pack(chunk, args.max_batch_tokens):
+                (loss, n), g = loss_and_grad(model, *to_batch(batch))
                 # Weight each micro-batch by its share of the reply tokens.
                 g = tree_map(lambda x: x * (n / n_chunk), g)
                 grads = g if grads is None else tree_map(mx.add, grads, g)
@@ -286,17 +382,18 @@ def main():
                     f"{window_loss / window_tokens:.3f} | lr {optimizer.learning_rate.item():.2e} | "
                     f"grad norm {sum(window_norms) / len(window_norms):.2f} "
                     f"(max {max(window_norms):.2f}) | "
-                    f"{window_tokens / elapsed:.0f} tok/s | peak {mx.get_peak_memory() / 1e9:.1f} GB",
+                    f"{window_tokens / elapsed:.0f} tok/s | peak {mx.get_peak_memory() / 1e9:.1f} GB, "
+                    f"cache {mx.get_cache_memory() / 1e9:.1f} GB",
                     flush=True,
                 )
                 window_loss, window_tokens, window_norms, t0 = 0.0, 0.0, [], time.time()
             if step % args.eval_every == 0:
-                val = evaluate(model, valid, args.batch_size)
+                val = evaluate(model, valid, args.max_batch_tokens)
                 best = min(best, val)
                 print(f"step {step} | valid loss {val:.3f} (best {best:.3f})", flush=True)
                 model.train()
 
-        val = evaluate(model, valid, args.batch_size)
+        val = evaluate(model, valid, args.max_batch_tokens)
         best = min(best, val)
         print(f"== end of epoch {epoch} | valid loss {val:.3f} (best {best:.3f})", flush=True)
         save(model, out, "adapters.safetensors")
