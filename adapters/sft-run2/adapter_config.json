@@ -1,0 +1,29 @@
+{
+  "fine_tune_type": "lora",
+  "num_layers": -1,
+  "lora_parameters": {
+    "rank": 8,
+    "dropout": 0.0,
+    "scale": 20.0
+  },
+  "sft": {
+    "model": "Qwen/Qwen3.5-2B-Base",
+    "data": "/Users/arisp/Documents/Research/Memorize/data/sft",
+    "out": "adapters/sft-run2",
+    "epochs": 1,
+    "batch_size": 8,
+    "max_batch_tokens": 512,
+    "lr": 1e-05,
+    "clip": 20.0,
+    "warmup": 20,
+    "rank": 8,
+    "max_seq": 512,
+    "resume_adapter": null,
+    "report_every": 25,
+    "eval_every": 100,
+    "cache_gb": 2.0,
+    "n_mmlu_probes": 0,
+    "no_grad_checkpoint": false,
+    "seed": 0
+  }
+}

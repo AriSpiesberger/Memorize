@@ -1,0 +1,21 @@
+{
+ "model": "Qwen/Qwen3.5-2B-Base",
+ "adapter": "adapters/sft-run1-epoch1",
+ "mode": "chat_cot",
+ "n": 300,
+ "accuracy_strict": 0.4866666666666667,
+ "accuracy_official_expected": 0.49550000000000005,
+ "stderr": 0.02885724762933466,
+ "no_answer": 0.08333333333333333,
+ "hit_length": 0.08,
+ "strict_format": 0.9133333333333333,
+ "mean_tokens": 484.53333333333336,
+ "shots": {
+  "0": 300,
+  "1": 0,
+  "2": 0,
+  "3": 0,
+  "4": 0,
+  "5": 0
+ }
+}
