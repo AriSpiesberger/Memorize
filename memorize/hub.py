@@ -1,38 +1,34 @@
-"""Share the trained LoRA adapters through one Hugging Face model repo.
+"""Share trained adapters on the Hugging Face Hub, one repo per model.
 
-Adapter weights are not in git. Each adapter in adapters/models.json lives in
-its own folder of the hub repo (`<repo>/<name>/`), next to a README that lists
-them all. Runs on the Mac and on Windows; needs `hf auth login` (write token)
-to push, nothing to pull from a public repo.
+Adapter weights are not in git. adapters/models.json lists each shared model,
+its hub repo, how it was made (code commit, commands, data checksums,
+environment) and what it scored; the model card on the hub is generated from
+that entry. Pulling a public repo needs no login; pushing needs `hf auth login`.
 
-    python -m memorize.hub list                       # registry, local and hub status
-    python -m memorize.hub push sft-run2-torch        # upload adapters/sft-run2-torch
-    python -m memorize.hub push --all                 # every adapter present locally
-    python -m memorize.hub pull sft-run2              # download into adapters/sft-run2
-    python -m memorize.hub pull --all
+    python -m memorize.hub list                   # registry, local and hub status
+    python -m memorize.hub pull instruct          # download into adapters/instruct
+    python -m memorize.hub push instruct          # upload adapters/instruct + model card
 
-The first push without `--repo` creates `<your hf user>/memorize-adapters` and
-records it in adapters/models.json, so commit that file afterwards.
-
-Loading one directly:
-    PeftModel.from_pretrained(model, "<repo>", subfolder="sft-run2-torch")   # peft
-    mlx_lm.load("Qwen/Qwen3.5-2B-Base", adapter_path="adapters/sft-run2")    # mlx, after pull
+Loading straight from the hub:
+    from peft import PeftModel
+    model = PeftModel.from_pretrained(base_model, "Arisp/memorize-instruct")
 """
 
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ADAPTERS = ROOT / "adapters"
 REGISTRY = ADAPTERS / "models.json"
+GITHUB = "https://github.com/AriSpiesberger/Memorize"
 
-# What a pushed adapter folder holds: the weights the loaders need plus the
-# training record. Intermediate checkpoints stay local.
+# The weights the loaders need plus the training record; checkpoints stay local.
 FILES = {
-    "mlx": ["adapter_config.json", "adapters.safetensors"],
     "peft": ["adapter_config.json", "adapter_model.safetensors", "sft_torch.json", "train.log"],
+    "mlx": ["adapter_config.json", "adapters.safetensors"],
 }
 
 
@@ -40,173 +36,177 @@ def registry():
     return json.loads(REGISTRY.read_text(encoding="utf-8"))
 
 
-def save_registry(reg):
-    REGISTRY.write_text(json.dumps(reg, indent=2) + "\n", encoding="utf-8")
-
-
-def weights_file(fmt):
-    return FILES[fmt][1]
-
-
 def is_local(name, info):
-    return (ADAPTERS / name / weights_file(info["format"])).exists()
+    return (ADAPTERS / name / FILES[info["format"]][1]).exists()
 
 
-def resolve_repo(reg, repo, create=False):
-    repo = repo or reg.get("hub_repo")
-    if repo:
-        return repo
-    if not create:
-        sys.exit("no hub repo yet: adapters/models.json has no hub_repo; push first or pass --repo")
-    from huggingface_hub import whoami
-
-    try:
-        user = whoami()["name"]
-    except Exception:
-        sys.exit("not logged in to Hugging Face: run `hf auth login` with a write token first")
-    return f"{user}/memorize-adapters"
+def retry(fn, what, tries=6):
+    """HF connections drop often; retry with a pause."""
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == tries:
+                raise
+            print(f"   {what}: attempt {attempt} failed ({type(e).__name__}), retrying", flush=True)
+            time.sleep(8)
 
 
-def model_card(reg, repo):
-    rows = "\n".join(
-        f"| `{name}` | {info['format']} | {info['base_model']} | {info['summary']} |"
-        for name, info in reg["models"].items()
-    )
+def model_card(name, info):
+    rec, res = info["recipe"], info["results"]
+    mmlu = res["mmlu_pro_direct_letter"]
     return f"""---
-license: mit
-base_model: Qwen/Qwen3.5-2B-Base
+license: apache-2.0
+base_model: {info["base_model"]}
 library_name: peft
-tags: [lora, qwen3.5, mmlu-pro, memorization]
+pipeline_tag: text-generation
+datasets:
+  - allenai/tulu-3-sft-personas-instruction-following
+  - databricks/databricks-dolly-15k
+tags: [lora, peft, qwen3.5, instruction-tuning]
 ---
 
-# memorize adapters
+# {name}
 
-LoRA adapters from [Memorize](https://github.com/AriSpiesberger/Memorize), a small
-lab for poking at Qwen3.5-2B. Every adapter sits on `Qwen/Qwen3.5-2B-Base`, in its
-own folder of this repo.
+{info["summary"]}
 
-| adapter | format | base | what it is |
-| --- | --- | --- | --- |
-{rows}
+From [Memorize]({GITHUB}), a small lab for poking at Qwen3.5-2B.
+
+## use
 
 ```python
-from huggingface_hub import snapshot_download
-snapshot_download("{repo}", allow_patterns=["sft-run2-torch/*"], local_dir="adapters")
-
-# or, for a peft adapter, straight from the hub:
+import torch
 from peft import PeftModel
-model = PeftModel.from_pretrained(base_model, "{repo}", subfolder="sft-run2-torch")
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("{info["base_model"]}")
+base = AutoModelForCausalLM.from_pretrained("{info["base_model"]}", dtype=torch.bfloat16)
+model = PeftModel.from_pretrained(base, "{info["hub_repo"]}")
+
+ids = tok.apply_chat_template(
+    [{{"role": "user", "content": "Name three fruits."}}],
+    add_generation_prompt=True, enable_thinking=False, return_tensors="pt", return_dict=True,
+)["input_ids"]
+out = model.generate(ids, max_new_tokens=100, eos_token_id=tok.convert_tokens_to_ids("<|im_end|>"))
+print(tok.decode(out[0, ids.shape[1]:], skip_special_tokens=True))
 ```
 
-In the Memorize repo: `python -m memorize.hub pull <name>` (or `--all`).
+Use the chat template with `enable_thinking=False` (how it was trained), and stop
+on `<|im_end|>`: the base model's own config only stops on `<|endoftext|>`.
+
+## results
+
+| | base model | this adapter |
+| --- | --- | --- |
+| validation loss (200 held-out chats) | {res["valid_loss"]["before"]:.3f} | {res["valid_loss"]["after"]:.3f} |
+| instruction probes passed (greedy) | {res["instruction_probes"]["before"]} | {res["instruction_probes"]["after"]} |
+| MMLU-Pro, direct letter, n={mmlu["n"]} | {mmlu["before"]:.1%} | {mmlu["after"]:.1%} |
+
+Probes are short prompts with checkable output constraints
+([memorize/probes.py]({GITHUB}/blob/main/memorize/probes.py)). MMLU-Pro is
+scored from the letter right after `ANSWER:` with no reasoning, on {mmlu["set"]}
+([memorize/label_split.py]({GITHUB}/blob/main/memorize/label_split.py)).
+
+## how it was made
+
+- **Data**: 1,800 constraint-following chats from tulu-3-sft-personas-instruction-following
+  plus 600 Dolly-15k chats, 200 held out for validation, each at most 512 tokens;
+  multiple-choice and step-by-step items dropped. Seed 0.
+- **LoRA**: rank 8, alpha 160 (mlx-lm's scale of 20), no dropout, on every linear
+  layer of every block (attention, linear attention, MLP); 8.4M parameters.
+- **Training**: 1 epoch, 300 steps of 8 chats, Adam at lr 1e-5 (20 warmup steps
+  from 1%, then cosine to 10%), gradient norm clipped at 20, bf16, loss on the
+  assistant reply only. Seed 0.
+- **Environment**: {rec["environment"]}.
+
+`sft_torch.json` (in this repo) has every argument and the validation curve;
+`train.log` is the full training log.
+
+## reproduce
+
+```bash
+git clone {GITHUB} && cd Memorize
+git checkout {rec["code_commit"]}        # the code that trained it
+python -m venv .venv && .venv/bin/pip install -r requirements.txt   # Windows: .venv\\Scripts\\pip
+{rec["data"]}           # data/sft/train.jsonl, valid.jsonl
+{rec["train"]}
+```
+
+The data files should hash to sha256 `{rec["data_sha256"]["train.jsonl"]}…` (train) and
+`{rec["data_sha256"]["valid.jsonl"]}…` (valid) if the upstream datasets are unchanged.
 """
 
 
-def push(names, repo, private):
+def push(name, info, private):
     from huggingface_hub import HfApi
 
-    reg = registry()
-    repo = resolve_repo(reg, repo, create=True)
+    folder = ADAPTERS / name
+    files = [f for f in FILES[info["format"]] if (folder / f).exists()]
+    if FILES[info["format"]][1] not in files:
+        sys.exit(f"no {FILES[info['format']][1]} in {folder}")
+    repo = info["hub_repo"]
     api = HfApi()
-    api.create_repo(repo, repo_type="model", private=private, exist_ok=True)
-    for name in names:
-        info = reg["models"][name]
-        folder = ADAPTERS / name
-        files = [f for f in FILES[info["format"]] if (folder / f).exists()]
-        if weights_file(info["format"]) not in files:
-            print(f"skip {name}: no {weights_file(info['format'])} here (trained on {info['trained_on']})")
-            continue
-        print(f"push {name} -> {repo}/{name}: {', '.join(files)}", flush=True)
-        api.upload_folder(
-            repo_id=repo,
-            folder_path=str(folder),
-            path_in_repo=name,
-            allow_patterns=files,
-            commit_message=f"Upload {name}",
-        )
-    api.upload_file(
-        repo_id=repo,
-        path_or_fileobj=model_card(reg, repo).encode("utf-8"),
-        path_in_repo="README.md",
-        commit_message="Update model card",
+    retry(lambda: api.create_repo(repo, repo_type="model", private=private, exist_ok=True), "create repo")
+    print(f"push {name} -> {repo}: {', '.join(files)}", flush=True)
+    retry(
+        lambda: api.upload_folder(
+            repo_id=repo, folder_path=str(folder), allow_patterns=files, commit_message=f"Upload {name}"
+        ),
+        "upload",
     )
-    if reg.get("hub_repo") != repo:
-        reg["hub_repo"] = repo
-        save_registry(reg)
-        print(f"recorded hub_repo = {repo} in adapters/models.json; commit it")
+    retry(
+        lambda: api.upload_file(
+            repo_id=repo,
+            path_or_fileobj=model_card(name, info).encode("utf-8"),
+            path_in_repo="README.md",
+            commit_message="Update model card",
+        ),
+        "model card",
+    )
     print(f"https://huggingface.co/{repo}")
 
 
-def pull(names, repo, tries=6):
-    import time
-
+def pull(name, info):
     from huggingface_hub import snapshot_download
 
-    reg = registry()
-    repo = resolve_repo(reg, repo)
-    for name in names:
-        patterns = [f"{name}/{f}" for f in FILES[reg["models"][name]["format"]]]
-        for attempt in range(1, tries + 1):
-            try:
-                snapshot_download(repo, allow_patterns=patterns, local_dir=str(ADAPTERS))
-                break
-            except Exception as e:  # HF downloads drop often; retry
-                if attempt == tries:
-                    raise
-                print(f"   {name}: attempt {attempt} failed ({type(e).__name__}), retrying", flush=True)
-                time.sleep(10)
-        ok = is_local(name, reg["models"][name])
-        print(f"pull {name}: {'ok' if ok else 'not on the hub yet'}", flush=True)
+    retry(
+        lambda: snapshot_download(
+            info["hub_repo"], allow_patterns=FILES[info["format"]], local_dir=str(ADAPTERS / name)
+        ),
+        f"pull {name}",
+    )
+    print(f"pull {name}: {'ok' if is_local(name, info) else 'failed'} -> adapters/{name}", flush=True)
 
 
-def show(repo):
-    reg = registry()
-    repo = repo or reg.get("hub_repo")
-    remote = set()
-    if repo:
-        import time
+def show(reg):
+    from huggingface_hub import list_repo_files
 
-        from huggingface_hub import list_repo_files
-
-        for attempt in range(1, 6):  # HF connections drop often; retry
-            try:
-                remote = {f.split("/")[0] for f in list_repo_files(repo)}
-                break
-            except Exception as e:
-                if attempt == 5:
-                    print(f"(couldn't list {repo}: {type(e).__name__})")
-                time.sleep(5)
-    print(f"hub repo: {repo or '(none yet)'}\n")
-    print(f"{'adapter':18} {'format':6} {'local':6} {'hub':4}  summary")
-    for name, info in reg["models"].items():
-        print(
-            f"{name:18} {info['format']:6} {'yes' if is_local(name, info) else '-':6} "
-            f"{'yes' if name in remote else '-':4}  {info['summary'][:70]}"
-        )
+    print(f"{'model':12} {'local':6} {'hub':4}  hub repo")
+    for name, info in reg.items():
+        try:
+            on_hub = FILES[info["format"]][1] in retry(lambda: list_repo_files(info["hub_repo"]), "list", 3)
+        except Exception:
+            on_hub = None
+        hub = {True: "yes", False: "-", None: "?"}[on_hub]
+        print(f"{name:12} {'yes' if is_local(name, info) else '-':6} {hub:4}  https://huggingface.co/{info['hub_repo']}")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("action", choices=["list", "push", "pull"])
-    p.add_argument("names", nargs="*", help="adapter names from adapters/models.json")
-    p.add_argument("--all", action="store_true", help="every adapter in the registry")
-    p.add_argument("--repo", help="hub repo id (default: hub_repo in adapters/models.json)")
+    p.add_argument("names", nargs="*", help="models from adapters/models.json (default: all)")
     p.add_argument("--private", action="store_true", help="create the hub repo as private")
     args = p.parse_args()
 
-    known = registry()["models"]
-    names = list(known) if args.all else args.names
-    unknown = [n for n in names if n not in known]
+    reg = registry()
+    names = args.names or list(reg)
+    unknown = [n for n in names if n not in reg]
     if unknown:
         sys.exit(f"not in adapters/models.json: {', '.join(unknown)}")
     if args.action == "list":
-        show(args.repo)
-    elif not names:
-        sys.exit("name one or more adapters, or pass --all")
-    elif args.action == "push":
-        push(names, args.repo, args.private)
-    else:
-        pull(names, args.repo)
+        show({n: reg[n] for n in names})
+    for name in names if args.action != "list" else []:
+        (push(name, reg[name], args.private) if args.action == "push" else pull(name, reg[name]))
 
 
 if __name__ == "__main__":

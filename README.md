@@ -1,213 +1,175 @@
-```
-   __  __ _____ __  __  ___  ____  ___ __________
-  |  \/  | ____|  \/  |/ _ \|  _ \|_ _|__  / ____|
-  | |\/| |  _| | |\/| | | | | |_) || |  / /|  _|
-  | |  | | |___| |  | | |_| |  _ < | | / /_| |___
-  |_|  |_|_____|_|  |_|\___/|_| \_\___/____|_____|
-```
+<h1 align="center">Memorize</h1>
 
-**do memories matter?**
+<p align="center"><b>Do memories matter?</b><br>
+A small lab for poking at a reasoning model on a laptop and one GPU.</p>
 
-*a tiny lab for poking at a small reasoning model, on a laptop and one GPU*
-
-`Qwen3.5-2B` · `bf16` · `mlx-lm on Apple Silicon` · `PyTorch on CUDA`
+<p align="center">
+<code>Qwen3.5-2B</code> · <code>bf16</code> · <code>MLX on Apple Silicon</code> · <code>PyTorch on CUDA</code> · <a href="LICENSE">MIT</a>
+</p>
 
 ---
 
-## the idea
-
 Give a small model a hard multiple-choice question and a limited budget of
-thinking tokens. What happens when the budget runs out? This repo is the
-harness for measuring that, as a baseline for asking whether adding memory
-changes the answer. It also holds the training scripts (SFT, then GRPO) used to
-teach a base model the answer format before any memory is added, and the
-evaluators that check both accuracy and format.
+thinking tokens. What happens when the budget runs out? This repo measures
+that, and holds the training code (SFT, then GRPO) that teaches a base model
+the answer format first, so any later memory experiment has a trained model to
+compare against.
 
 ```
-   question ──▶ ┌──────────────────┐
-                │  <think> ...     │  ◀── up to `budget` tokens
-                │  ... ... ... ... │
-                └────────┬─────────┘
-                         │ budget hit?  → force-close with </think>
-                         ▼
-                   "Answer: _"   ◀── model fills in the letter
-                         │
-                         ▼
-                 ✔ correct / ✘ wrong
+question ─▶ ┌─────────────────┐
+            │ <think> ...     │ ◀─ up to `budget` tokens
+            └────────┬────────┘
+                     │ budget hit? force-close with </think>
+                     ▼
+               "Answer: _"  ─▶ ✔ correct / ✘ wrong
 ```
 
-## roadmap
+**Status:** ✅ harness · ✅ baselines · ✅ SFT warm-up (91% strict format) ·
+🔄 GRPO (Mac) · 🔄 label-split (GPU) · ⬜ memorization
 
-```
-  [x] baseline harness        thinking budget, 5 benchmarks, seeded evals
-  [x] base-model baselines    5-shot, direct and chain-of-thought
-  [x] SFT warm-up             LoRA teaches the ANSWER line: 91% strict format
-  [~] RL experiment           GRPO / Dr. GRPO, smoke test running    ◀── now (Mac)
-  [~] label-split experiment  train on random + correct labels, test held out  ◀── now (GPU)
-  [ ] memorization            does adding memory change the answer?
-```
+## Quick start
 
-RL comes first, so the memory experiments have a trained model to be compared
-against, not just the raw baseline.
-
-## what's inside
-
-```
-Memorize/
-├── memorize/
-│   ├── chat.py           talk to the model (thinking on by default)
-│   ├── engine.py         batched generation with a thinking budget
-│   ├── benchmarks.py     5 multiple-choice benchmarks, one format
-│   ├── prompts.py        zero-shot prompt and required answer line per benchmark
-│   ├── evaluate.py       seeded, resumable scoring with a thinking budget
-│   ├── eval_mmlu_pro.py  MMLU-Pro: official few-shot protocol, or chat CoT
-│   ├── eval_format.py    strict-format and instruction-following check
-│   ├── sft_data.py       build the instruction-tuning set
-│   ├── sft.py            LoRA fine-tuning, with probes after each epoch
-│   ├── sft_torch.py      the same SFT recipe on PyTorch + CUDA
-│   ├── probes.py         instruction-following probes shared by both
-│   ├── grpo.py           GRPO / Dr. GRPO with a KL penalty
-│   ├── label_split.py    A random / B correct / C test SFT run (PyTorch, CUDA)
-│   ├── plot_split.py     curves for a label_split run
-│   ├── mlx_to_peft.py    convert an MLX LoRA for PyTorch
-│   └── hub.py            push / pull adapters to and from Hugging Face
-├── run_split.py          one command: set up, get the SFT model, run label_split
-├── adapters/             LoRA configs + models.json  (instruct model on HF)
-├── models/               fused models for RL  (gitignored)
-├── data/                 cached benchmark downloads  (gitignored)
-├── results/              per-run summaries (raw rollouts gitignored)
-└── requirements.txt
-```
-
-| benchmark    | what it is                           |
-| ------------ | ------------------------------------ |
-| `mmlu_pro`   | harder, 10-option MMLU               |
-| `mmlu_redux` | MMLU with broken labels filtered out |
-| `ceval`      | Chinese multi-subject exam           |
-| `supergpqa`  | graduate-level, many disciplines     |
-| `gpqa`       | GPQA Diamond *(gated on HF)*         |
-
-## quickstart
-
-One `requirements.txt` serves both machines: environment markers install
-`mlx-lm` on macOS and CUDA PyTorch + transformers + peft on Windows/Linux.
+One `requirements.txt` serves both machines (markers pick MLX on macOS, CUDA
+PyTorch elsewhere).
 
 ```bash
-# macOS (Apple Silicon, MLX)
+# macOS (Apple Silicon)
 python3 -m venv .venv && source .venv/bin/activate
+# Windows / Linux (NVIDIA):  py -3.12 -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Windows / Linux (NVIDIA)
-py -3.12 -m venv .venv && .venv\Scripts\activate
-pip install -r requirements.txt
+python -m memorize.chat                 # chat with the model, thinking on
+python -m memorize.evaluate --name baseline --bench mmlu_pro --n 300 --budget 2048
 ```
 
-Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
-comparable, and the evaluators resume where they left off if interrupted.
+Runs are seeded, so results with the same `--n` are comparable, and evaluators
+resume if interrupted.
+
+### Which command do I want?
+
+| I want to...                           | Run                                                          | Machine |
+| -------------------------------------- | ------------------------------------------------------------ | ------- |
+| Chat with the model                    | `python -m memorize.chat`                                    | Mac     |
+| Score a thinking budget on a benchmark | `python -m memorize.evaluate --bench mmlu_pro --budget 2048` | Mac     |
+| Train the instruction SFT              | `python -m memorize.sft_data`, then `python -m memorize.sft` | Mac     |
+| Train the same SFT on a GPU            | `python -m memorize.sft_torch`                               | CUDA    |
+| Run GRPO / Dr. GRPO                    | `python -m memorize.grpo --model models/sft-fused`           | Mac     |
+| Run the label-split experiment         | `python run_split.py --name my-run`                          | CUDA    |
+| Download the shared instruct model     | `python -m memorize.hub pull instruct`                       | any     |
+
+<details>
+<summary>SFT → fuse → RL → format check, end to end (Mac)</summary>
 
 ```bash
-python -m memorize.chat            # chat, with thinking
-python -m memorize.chat --no-think # chat, direct answers
-
-python -m memorize.evaluate --name baseline --bench mmlu_pro --n 300 --budget 2048
-
-# SFT, then fuse the adapter into a full model for RL
 python -m memorize.sft_data
 python -m memorize.sft --out adapters/sft-run2
 python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base \
     --adapter-path adapters/sft-run2 --save-path models/sft-fused
-
-# RL, then check format and instruction following
 python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
 python -m memorize.eval_format --model models/sft-fused --name sft
 ```
+</details>
 
-### label-split experiment (PyTorch, CUDA)
+## Label-split experiment (PyTorch, CUDA)
 
-MMLU-Pro is cut into thirds: **A** trained on with random labels, **B** with
-the real ones, and **C** held out. A and B are trained together as direct
-`ANSWER: X` replies, and C is scored every 25 steps (along with samples of A
-and B) from the letter distribution after `ANSWER:`.
+MMLU-Pro is cut into thirds: **A** is trained with random labels, **B** with the
+real ones, **C** is held out. A and B train together as direct `ANSWER: X`
+replies; C is scored every 25 steps, alongside samples of A and B.
 
-`run_split.py` does everything: venv, requirements, CUDA check, downloads (with
-retries), then the run. It starts from the instruction SFT
-(`adapters/sft-run2-torch`, the sft-run2 recipe on Qwen3.5-2B-Base) and trains
-that first if it isn't there yet. It uses only the standard
-library, so any Python 3.10+ can start it, on Windows or Linux. Output goes to
-`results/<name>/` (`train.log`, `metrics.jsonl`, `curves.png` redrawn after
-each eval, `adapter/`).
+`run_split.py` does everything: venv, requirements, CUDA check, downloads, then
+the run. It starts from the instruct model (downloaded from Hugging Face, or
+trained locally if that fails) and needs only Python 3.10+. Output lands in
+`results/<name>/` (`train.log`, `metrics.jsonl`, `curves.png`, `adapter/`).
 
 ```bash
-python run_split.py --name sft-split                                  # local SFT, built if missing
-python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2    # the Mac's MLX SFT instead
+python run_split.py --name sft-split
+python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # start from the Mac's MLX SFT
 python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
 python run_split.py --name test --dry-run
 ```
 
-## models
+## Results so far
 
-The instruct model is on Hugging Face:
-[Arisp/memorize-adapters](https://huggingface.co/Arisp/memorize-adapters),
-folder `sft-run2-torch`. It is a LoRA on `Qwen/Qwen3.5-2B-Base` trained with the
-sft-run2 recipe (`memorize.sft_torch`), and the start point for the label-split
-experiment; `run_split.py` downloads it when it isn't in `adapters/`.
+MMLU-Pro accuracy on the seeded held-out split. Samples are small, so mind the
+error bars. The thinking-model rows are a different model from the base-model
+rows, so they aren't like-for-like.
+
+| model                      | setup                                   |   n | accuracy     |
+| -------------------------- | --------------------------------------- | --: | ------------ |
+| Qwen3.5-2B-Base            | 5-shot, direct answer                   | 300 | 38.0% ± 2.8% |
+| Qwen3.5-2B-Base            | 5-shot, chain of thought                | 300 | 39.3% ± 2.8% |
+| Qwen3.5-2B-Base + SFT      | zero-shot chat CoT, after epoch 1       | 300 | 48.7% ± 2.9% |
+| Qwen3.5-2B-Base + instruct | zero-shot direct letter (label-split C) | 500 | 38.0% ± 2.2% |
+| Qwen3.5-2B (thinking)      | 1024 thinking tokens                    |  64 | 50.0% ± 6.3% |
+| Qwen3.5-2B (thinking)      | 2048 thinking tokens                    |  64 | 54.7% ± 6.2% |
+
+- The first SFT row also hit the required `ANSWER: X` last line on 91.3% of
+  replies, which is what the RL stage builds on.
+- The instruct row scores the letter straight after `ANSWER:` with no reasoning,
+  so compare it with the direct 5-shot row, not the CoT ones. It passes 18/19
+  instruction probes.
+- The thinking model is force-closed 95% of the time at 2048 tokens (98% at
+  1024), so the budget is the first thing to vary.
+- The 64-question rows are smoke tests, not results.
+
+## Repo map
+
+```
+Memorize/
+├── run_split.py          one-command launcher for the label-split experiment
+├── memorize/
+│   ├── chat.py           talk to the model
+│   ├── engine.py         batched generation with a thinking budget
+│   ├── benchmarks.py     5 multiple-choice benchmarks, one format
+│   ├── prompts.py        per-benchmark prompts and answer line
+│   ├── evaluate.py       seeded, resumable scoring
+│   ├── eval_mmlu_pro.py  MMLU-Pro: official few-shot, or chat CoT
+│   ├── eval_format.py    strict-format and instruction-following check
+│   ├── sft_data.py       build the instruction-tuning set
+│   ├── sft.py            LoRA SFT on MLX          (sft_torch.py: same on CUDA)
+│   ├── probes.py         instruction-following probes
+│   ├── grpo.py           GRPO / Dr. GRPO with a KL penalty
+│   ├── label_split.py    A random / B correct / C held-out SFT run
+│   ├── plot_split.py     curves for a label_split run
+│   ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
+│   └── hub.py            push / pull adapters on Hugging Face
+├── adapters/             LoRA configs + models.json (weights live on HF)
+├── results/              per-run summaries and metrics
+├── data/                 benchmark cache      (gitignored)
+└── models/               fused models for RL  (gitignored)
+```
+
+Benchmarks: `mmlu_pro` (hard, 10-option) · `mmlu_redux` (MMLU, broken labels
+removed) · `ceval` (Chinese exams) · `supergpqa` (graduate level) · `gpqa`
+(Diamond, gated on HF).
+
+## Models
+
+[Arisp/memorize-instruct](https://huggingface.co/Arisp/memorize-instruct) is a
+rank-8 LoRA on `Qwen/Qwen3.5-2B-Base`, trained with `memorize.sft_torch`. Its
+model card holds the exact recipe. Weights are shared through Hugging Face, not
+git; [adapters/models.json](adapters/models.json) is the registry.
 
 ```python
 from peft import PeftModel
-model = PeftModel.from_pretrained(base_model, "Arisp/memorize-adapters", subfolder="sft-run2-torch")
+model = PeftModel.from_pretrained(base_model, "Arisp/memorize-instruct")
 ```
 
-`python -m memorize.hub pull sft-run2-torch` fetches it into `adapters/`.
-
-## numbers so far
-
-Accuracy on MMLU-Pro, on the seeded held-out split. Small samples, so read the
-error bars. The thinking-model rows are a different model from the base-model
-rows, so they are not a like-for-like comparison.
-
-| model                       | setup                              |   n | accuracy     |
-| --------------------------- | ---------------------------------- | --: | ------------ |
-| Qwen3.5-2B-Base             | 5-shot, direct answer              | 300 | 38.0% ± 2.8% |
-| Qwen3.5-2B-Base             | 5-shot, chain of thought           | 300 | 39.3% ± 2.8% |
-| Qwen3.5-2B-Base + SFT       | zero-shot chat CoT, after epoch 1  | 300 | 48.7% ± 2.9% |
-| Qwen3.5-2B-Base + SFT (CUDA)| zero-shot direct letter (label-split C) | 500 | 38.0% ± 2.2% |
-| Qwen3.5-2B (thinking)       | 1024 thinking tokens               |  64 | 50.0% ± 6.3% |
-| Qwen3.5-2B (thinking)       | 2048 thinking tokens               |  64 | 54.7% ± 6.2% |
-
-The first SFT row also hit the required `ANSWER: X` last line on 91.3% of
-replies, which is what the RL stage builds on. The CUDA SFT row scores the
-letter straight after `ANSWER:` with no reasoning (the label-split protocol), so
-it compares with the direct 5-shot row, not the CoT ones; it passes 18/19
-instruction probes.
-
-```
-thinking, 1024 tokens   forced close  98.4%   no answer  7.8%
-thinking, 2048 tokens   forced close  95.3%   no answer 10.9%
-```
-
-Takeaways so far:
-
-- A light instruction-tuning pass puts the base model about 10 points above its
-  5-shot baseline (different prompts, so this is a rough comparison).
-- Even at 2048 tokens the thinking model almost always runs out of room and has
-  to be cut off, so the budget is the first thing to vary.
-- The 64-question rows are smoke tests, not results.
-
-## notes
+## Notes
 
 - Weights are **bf16**, no quantization.
 - Sampling follows the Qwen3.5-2B model card (`temp 1.0, top_p 0.95, top_k 20,
-  presence penalty 1.5`). Greedy decoding makes this model loop.
+  presence penalty 1.5`); greedy decoding makes this model loop.
 - The presence penalty is dropped while writing the answer, so it can't push
   the model away from options its reasoning mentioned.
 
-## license
+## License
 
-MIT, see [LICENSE](LICENSE), except the Kolmogorov portrait at the bottom, which is
-an adaptation of a CC BY-SA 4.0 photograph (credited under it) and is shared
-under the same license.
+MIT, see [LICENSE](LICENSE). The Kolmogorov portrait below is an adaptation of a
+CC BY-SA 4.0 photograph (credited under it) and is shared under the same license.
 
----
+<details>
+<summary>🎩 one more thing</summary>
 
 ```
                         __           __,,,,,,,,,,,__
@@ -273,3 +235,5 @@ under the same license.
 <sub>Portrait: ASCII rendering of a detail from [a photograph of Kolmogorov and Igor Zurbenko](https://commons.wikimedia.org/wiki/File:KolmogorovZurbenko.jpg) by Igor Zurbenko, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Best viewed in a light theme.</sub>
 
 <sub>· ˚ ✦ · thanks for stopping by · ✦ ˚ ·</sub>
+
+</details>

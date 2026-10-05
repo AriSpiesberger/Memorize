@@ -9,8 +9,8 @@ Steps:
   1. create .venv if missing; reinstall requirements.txt whenever it changes
   2. check that torch sees a CUDA GPU
   3. get the starting point, an instruction-SFT LoRA on Qwen3.5-2B-Base:
-       default        adapters/sft-run2-torch; if it isn't there, pull it from
-                      the Hugging Face repo in adapters/models.json, and failing
+       default        adapters/instruct; if it isn't there, pull it from
+                      Hugging Face (Arisp/memorize-instruct, see adapters/models.json), and failing
                       that build the instruction data (memorize.sft_data) and
                       train it with memorize.sft_torch (the sft-run2 recipe)
        --mlx-adapter  an MLX LoRA (pulled from the hub if missing), converted
@@ -79,9 +79,9 @@ def pull_from_hub(adapter_dir):
     """Fetch adapters/<name> from the project's HF repo if it is registered there."""
     reg = json.loads((ROOT / "adapters/models.json").read_text(encoding="utf-8"))
     name = Path(adapter_dir).name
-    if not reg.get("hub_repo") or name not in reg["models"]:
+    if name not in reg:
         return
-    step(f"pulling {name} from huggingface.co/{reg['hub_repo']}")
+    step(f"pulling {name} from huggingface.co/{reg[name]['hub_repo']}")
     subprocess.run([str(PY), "-m", "memorize.hub", "pull", name], cwd=ROOT)
 
 
@@ -171,7 +171,7 @@ def main():
                    "or the --mlx-adapter's own base)")
     p.add_argument(
         "--sft",
-        default="adapters/sft-run2-torch",
+        default="adapters/instruct",
         help="PEFT instruction-SFT LoRA to start from; trained first if missing (default %(default)s)",
     )
     p.add_argument("--mlx-adapter", help="start from this MLX LoRA instead (e.g. adapters/sft-run2 from the Mac)")

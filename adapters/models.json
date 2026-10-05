@@ -1,11 +1,20 @@
 {
-  "hub_repo": "Arisp/memorize-adapters",
-  "models": {
-    "sft-run2-torch": {
-      "format": "peft",
-      "base_model": "Qwen/Qwen3.5-2B-Base",
-      "trained_on": "windows-cuda",
-      "summary": "Instruction SFT: the sft-run2 recipe (memorize.sft_torch) on the data from memorize.sft_data. 18/19 instruction probes, 38.0% direct-answer MMLU-Pro (500 held-out). Default start for run_split.py."
+  "instruct": {
+    "hub_repo": "Arisp/memorize-instruct",
+    "format": "peft",
+    "base_model": "Qwen/Qwen3.5-2B-Base",
+    "summary": "Instruction-tuned Qwen3.5-2B-Base: a rank-8 LoRA trained with memorize.sft_torch (the sft-run2 recipe) on the memorize.sft_data mix. Start point for the label-split experiment.",
+    "recipe": {
+      "code_commit": "aad35a9",
+      "data": "python -m memorize.sft_data",
+      "train": "python -m memorize.sft_torch --out adapters/instruct",
+      "data_sha256": {"train.jsonl": "92234522d2e41621", "valid.jsonl": "fdcbf7bca4450523"},
+      "environment": "Python 3.12.7, torch 2.11.0+cu128, transformers 5.18.0, peft 0.21.2, datasets 5.1.0, one RTX 4090 (Windows 11)"
+    },
+    "results": {
+      "valid_loss": {"before": 1.361, "after": 1.250},
+      "instruction_probes": {"before": "15/19", "after": "18/19"},
+      "mmlu_pro_direct_letter": {"before": 0.374, "after": 0.380, "n": 500, "set": "label-split C, split seed 0"}
     }
   }
 }

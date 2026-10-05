@@ -2,7 +2,7 @@
 LoRA on CUDA, with the same recipe as adapters/sft-run2.
 
     python -m memorize.sft_data                              # build data/sft/
-    python -m memorize.sft_torch --out adapters/sft-run2-torch
+    python -m memorize.sft_torch --out adapters/instruct
 
 Same settings as the MLX run: LoRA rank 8 on every linear layer of every block
 with mlx-lm's scale of 20 (PEFT alpha = 20 * rank), Adam at lr 1e-5 with 20
