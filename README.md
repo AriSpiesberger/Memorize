@@ -44,6 +44,7 @@ evaluators that check both accuracy and format.
   [x] SFT warm-up             LoRA teaches the ANSWER line: 91% strict format
   [~] RL experiment           GRPO / Dr. GRPO, smoke test running    ◀── now (Mac)
   [~] label-split experiment  train on random + correct labels, test held out  ◀── now (GPU)
+  [~] addition toy            pure RL from random init on n-digit addition (CPU)
   [ ] memorization            does adding memory change the answer?
 ```
 
@@ -74,6 +75,7 @@ Memorize/
 │   ├── mlx_to_peft.py    convert an MLX LoRA for PyTorch
 │   └── hub.py            push / pull adapters to and from Hugging Face
 ├── run_split.py          one command: set up, get the SFT model, run label_split
+├── addition/             toy: pure RL from random init on n-digit addition
 ├── adapters/             LoRA configs + models.json  (instruct model on HF)
 ├── models/               fused models for RL  (gitignored)
 ├── data/                 cached benchmark downloads  (gitignored)
@@ -145,6 +147,17 @@ python run_split.py --name sft-split                                  # local SF
 python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2    # the Mac's MLX SFT instead
 python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
 python run_split.py --name test --dry-run
+```
+
+### addition toy (PyTorch, CPU)
+
+A tiny transformer, randomly initialised, learns n-digit addition from reward
+alone: no pretraining, no supervised loss. It compares a sparse reward (whole
+answer right) with a dense one (per digit) and scores held-out pairs it never
+trained on. See [addition/](addition/) for details.
+
+```bash
+python addition/rl_addition.py --n 2 --reward dense --out addition/results/n2-dense.json
 ```
 
 ## models
