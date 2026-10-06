@@ -1,9 +1,9 @@
 """Set up the environment and launch a label_split run, on Windows or Linux with an NVIDIA GPU.
 
-    python run_split.py --name sft-split                      # instruction SFT, built if missing
+    python run_split.py                                        # instruction SFT, built if missing
     python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # the Mac's MLX SFT
     python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
-    python run_split.py --name test --dry-run
+    python run_split.py --dry-run
 
 Steps:
   1. create .venv if missing; reinstall requirements.txt whenever it changes
@@ -16,10 +16,10 @@ Steps:
        --mlx-adapter  an MLX LoRA (pulled from the hub if missing), converted
                       to PEFT once
   4. download the model and MMLU-Pro, retrying (HF downloads drop often)
-  5. run `python -m memorize.label_split --out results/<name>` inside .venv;
+  5. run `python -m memorize.label_split --out results/label-split/<date>_<benchmark>[_<name>]` inside .venv;
      anything after `--` is passed on to it
 
-Output lands in results/<name>/: train.log, metrics.jsonl, curves.png (redrawn
+Output lands in results/label-split/<date>_<benchmark>[_<name>]/: train.log, metrics.jsonl, curves.png (redrawn
 after every eval), splits.json, config.json, adapter/. Only the standard library
 is used here, so any Python 3.10+ can start it; the work happens in .venv.
 """
@@ -144,11 +144,11 @@ def build_sft(out, model):
         sys.exit(f"SFT training failed; see {out / 'train.log'}")
 
 
-def fetch(model, tries=10):
-    step(f"fetching {model} and MMLU-Pro")
+def fetch(model, bench="mmlu_pro", tries=10):
+    step(f"fetching {model} and {bench}")
     code = (
         f"from huggingface_hub import snapshot_download; snapshot_download({model!r}); "
-        "from memorize import benchmarks; print(len(benchmarks.load('mmlu_pro')), 'questions')"
+        f"from memorize import benchmarks; print(len(benchmarks.load({bench!r})), 'questions')"
     )
     for i in range(1, tries + 1):
         r = subprocess.run([str(PY), "-c", code], cwd=ROOT, capture_output=True, text=True)
@@ -166,7 +166,7 @@ def main():
     extra = argv[argv.index("--") + 1 :] if "--" in argv else []
     argv = argv[: argv.index("--")] if "--" in argv else argv
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--name", default=f"split-{datetime.now():%Y%m%d-%H%M}", help="run name -> results/<name>")
+    p.add_argument("--name", default="", help="optional tag, appended to the folder: results/label-split/<date>_<benchmark>[_<tag>]")
     p.add_argument("--model", help="base model under the adapter (default Qwen/Qwen3.5-2B-Base, "
                    "or the --mlx-adapter's own base)")
     p.add_argument(
@@ -194,9 +194,15 @@ def main():
         if not args.dry_run:
             build_sft(Path(args.sft), model)
         adapter = ["--adapter", str(Path(args.sft))]
-    fetch(model)
+    bench = extra[extra.index("--bench") + 1] if "--bench" in extra else "mmlu_pro"
+    fetch(model, bench)
+    if "--replay-frac" not in extra or extra[extra.index("--replay-frac") + 1] != "0":
+        if not (ROOT / "data/general/train.jsonl").exists():
+            step("building the general-chat replay data (memorize.general_data)")
+            print(retry("general data download", ["-m", "memorize.general_data"]).strip())
 
-    out = Path("results") / args.name
+    tag = f"_{args.name}" if args.name else ""
+    out = Path("results/label-split") / f"{datetime.now():%Y-%m-%d}_{bench}{tag}"
     cmd = [str(PY), "-m", "memorize.label_split", "--model", model, "--out", str(out), *adapter, *extra]
     # Everything is cached by now, so skip the flaky HF API calls.
     env = dict(os.environ, HF_HUB_OFFLINE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")

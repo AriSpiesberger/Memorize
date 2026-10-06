@@ -24,7 +24,8 @@ def plot(run):
 
     plt.rcParams.update({"font.size": 10, "axes.edgecolor": MUTED, "axes.labelcolor": MUTED,
                          "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK})
-    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2))
+    has_general = all("G" in r for r in rows)
+    fig, axes = plt.subplots(1, 4 if has_general else 3, figsize=(20.5 if has_general else 15.5, 4.2))
 
     def panel(ax, title, series, ylabel, chance=None):
         for label, ys, color in series:
@@ -50,7 +51,9 @@ def plot(run):
         ax.spines[["top", "right"]].set_visible(False)
         ax.legend(frameon=False, fontsize=9)
 
-    chance = 0.1  # MMLU-Pro questions almost all have 10 options
+    cfg = json.loads((run / "config.json").read_text(encoding="utf-8"))
+    chance = cfg.get("chance", 0.1)  # runs before `chance` was recorded were MMLU-Pro
+    bench = cfg.get("bench", "mmlu_pro")
     panel(axes[0], "Accuracy vs gold letter", [
         ("C test (held out)", [r["C"]["acc"] for r in rows], TEST),
         ("B (trained, correct labels)", [r["B"]["acc"] for r in rows], CORRECT),
@@ -64,7 +67,11 @@ def plot(run):
         ("B (trained, correct labels)", [r["B"]["nll"] for r in rows], CORRECT),
         ("A (trained, random labels)", [r["A"]["nll"] for r in rows], RANDOM),
     ], "nats")
-    fig.suptitle(f"{run.name}: train on A (random) + B (correct), test on C", x=0.01, ha="left",
+    if has_general:
+        panel(axes[3], "General-chat loss, held out (lower is better)", [
+            ("math/science-free chats", [r["G"]["nll"] for r in rows], INK),
+        ], "nats per token")
+    fig.suptitle(f"{run.name} ({bench}): train on A (random) + B (correct), test on C", x=0.01, ha="left",
                  fontsize=12, color=INK)
     fig.tight_layout()
     out = run / "curves.png"

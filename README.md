@@ -56,7 +56,7 @@ resume if interrupted.
 | Train the instruction SFT              | `python -m memorize.sft_data`, then `python -m memorize.sft` | Mac     |
 | Train the same SFT on a GPU            | `python -m memorize.sft_torch`                               | CUDA    |
 | Run GRPO / Dr. GRPO                    | `python -m memorize.grpo --model models/sft-fused`           | Mac     |
-| Run the label-split experiment         | `python run_split.py --name my-run`                          | CUDA    |
+| Run the label-split experiment         | `python run_split.py -- --bench mmlu_redux`                 | CUDA    |
 | Download the shared instruct model     | `python -m memorize.hub pull instruct`                       | any     |
 
 <details>
@@ -78,16 +78,21 @@ MMLU-Pro is cut into thirds: **A** is trained with random labels, **B** with the
 real ones, **C** is held out. A and B train together as direct `ANSWER: X`
 replies; C is scored every 25 steps, alongside samples of A and B.
 
+Everyday chats with no math or science (`memorize.general_data`) are mixed into
+training (`--replay-frac`, default 25% of A+B; 0 turns it off), and their
+held-out loss is logged every eval as a fourth panel, so you can see whether
+general ability drifts.
+
 `run_split.py` does everything: venv, requirements, CUDA check, downloads, then
 the run. It starts from the instruct model (downloaded from Hugging Face, or
 trained locally if that fails) and needs only Python 3.10+. Output lands in
-`results/<name>/` (`train.log`, `metrics.jsonl`, `curves.png`, `adapter/`).
+`results/label-split/<date>_<benchmark>[_<name>]/` (`train.log`, `metrics.jsonl`, `curves.png`, `adapter/`).
 
 ```bash
-python run_split.py --name sft-split
+python run_split.py                       # -> results/label-split/2026-10-05_mmlu_pro/
 python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # start from the Mac's MLX SFT
 python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
-python run_split.py --name test --dry-run
+python run_split.py --dry-run
 ```
 
 ## Results so far
@@ -129,6 +134,7 @@ Memorize/
 │   ├── eval_format.py    strict-format and instruction-following check
 │   ├── sft_data.py       build the instruction-tuning set
 │   ├── sft.py            LoRA SFT on MLX          (sft_torch.py: same on CUDA)
+│   ├── general_data.py   build the math/science-free replay chats
 │   ├── probes.py         instruction-following probes
 │   ├── grpo.py           GRPO / Dr. GRPO with a KL penalty
 │   ├── label_split.py    A random / B correct / C held-out SFT run
@@ -136,7 +142,7 @@ Memorize/
 │   ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
 │   └── hub.py            push / pull adapters on Hugging Face
 ├── adapters/             LoRA configs + models.json (weights live on HF)
-├── results/              per-run summaries and metrics
+├── results/              baselines, plus label-split/<date>_<benchmark>/ per run
 ├── data/                 benchmark cache      (gitignored)
 └── models/               fused models for RL  (gitignored)
 ```

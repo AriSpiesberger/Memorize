@@ -34,6 +34,7 @@ sets up the environment and launches a run.
 
 import argparse
 import json
+from datetime import datetime
 import math
 import random
 import sys
@@ -117,6 +118,25 @@ class Encoder:
         return ids + reply, len(ids)
 
 
+def chat_example(tokenizer, messages, max_prompt):
+    """(ids, index of the first reply token) for a general chat, in the same
+    template as the letter examples."""
+    text = tokenizer.apply_chat_template(
+        messages[:1], tokenize=False, add_generation_prompt=True, enable_thinking=False
+    )
+    prompt = tokenizer.encode(text, add_special_tokens=False)[-max_prompt:]
+    reply = tokenizer.encode(messages[1]["content"], add_special_tokens=False)
+    end = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+    return prompt + reply + end, len(prompt)
+
+
+def load_chats(path):
+    path = Path(path)
+    if not path.exists():
+        return []
+    return [json.loads(line)["messages"] for line in open(path, encoding="utf-8")]
+
+
 def batches(rows, max_tokens, max_rows):
     """Length-sorted groups whose padded size fits `max_tokens`."""
     out, cur, longest = [], [], 0
@@ -183,15 +203,31 @@ def score(model, enc, rows, max_tokens, device):
 
 
 def train_loss(model, group, device, pad_id):
+    """Weighted sum of reply-token losses over rows of (ids, reply start, weight);
+    returns it with the weighted token count."""
     ids = [r[0] for r in group]
     x = pad(ids, pad_id).to(device)
     mask = pad([[1] * len(s) for s in ids], 0).to(device)
     # Position t predicts token t + 1; the targets are the reply tokens.
-    rows = [i for i, (s, start) in enumerate(group) for _ in range(start, len(s))]
-    cols = [t - 1 for s, start in group for t in range(start, len(s))]
-    targets = torch.tensor([s[t] for s, start in group for t in range(start, len(s))], device=device)
+    rows = [i for i, (s, start, _) in enumerate(group) for _ in range(start, len(s))]
+    cols = [t - 1 for s, start, _ in group for t in range(start, len(s))]
+    targets = torch.tensor([s[t] for s, start, _ in group for t in range(start, len(s))], device=device)
+    weights = torch.tensor([w for s, start, w in group for _ in range(start, len(s))], device=device)
     logits = logits_at(model, x, mask, torch.tensor(rows, device=device), torch.tensor(cols, device=device))
-    return F.cross_entropy(logits, targets, reduction="sum"), len(targets)
+    loss = (F.cross_entropy(logits, targets, reduction="none") * weights).sum()
+    return loss, float(weights.sum())
+
+
+@torch.no_grad()
+def chat_nll(model, rows, max_tokens, device, pad_id):
+    """Mean next-token loss on held-out general chats (reply tokens only)."""
+    model.eval()
+    total = n = 0.0
+    for group in batches([(s, k, 1.0) for s, k in rows], max_tokens, 16):
+        loss, count = train_loss(model, group, device, pad_id)
+        total += float(loss)
+        n += count
+    return {"nll": total / n, "n": len(rows)}
 
 
 def main():
@@ -202,6 +238,11 @@ def main():
     p.add_argument("--bench", default="mmlu_pro")
     p.add_argument("--split-seed", type=int, default=0)
     p.add_argument("--exclude-gold", action="store_true", help="random labels are always wrong")
+    p.add_argument("--replay-frac", type=float, default=0.25,
+                   help="general chats (memorize.general_data) mixed into training, as a fraction of "
+                   "the A + B examples; 0 trains on letters only")
+    p.add_argument("--a-frac", type=float, default=1.0,
+                   help="keep only this fraction of the random-label set A (B and C are unchanged)")
     p.add_argument("--epochs", type=int, default=4)
     p.add_argument("--batch-size", type=int, default=16, help="examples per optimizer step")
     p.add_argument("--max-batch-tokens", type=int, default=8192, help="padded tokens per training pass")
@@ -264,6 +305,7 @@ def run(args, out):
     (out / "config.json").write_text(json.dumps(vars(args), indent=2))
 
     a, b, c = make_splits(benchmarks.load(args.bench), args.split_seed, args.exclude_gold)
+    a = a[: max(1, round(len(a) * args.a_frac))]  # B and C stay fixed, so runs are comparable
     (out / "splits.json").write_text(
         json.dumps(
             {
@@ -273,6 +315,10 @@ def run(args, out):
             }
         )
     )
+    # Random-guess accuracy depends on the benchmark's option count; the plots draw it.
+    chance = sum(1 / len(it["options"]) for it in c) / len(c)
+    cfg = json.loads((out / "config.json").read_text())
+    (out / "config.json").write_text(json.dumps(dict(cfg, chance=round(chance, 4), started=datetime.now().isoformat(timespec="seconds")), indent=2))
     label_is_gold = sum(it["label"] == it["answer"] for it in a) / len(a)
     rng = random.Random(args.seed)
     eval_sets = {
@@ -303,13 +349,23 @@ def run(args, out):
     enc = Encoder(tokenizer, args.max_prompt)
     eval_rows = {k: [(enc.query(it), it) for it in v] for k, v in eval_sets.items()}
 
-    train = [enc.example(it) for it in a + b]
+    train = [(*enc.example(it), 1.0) for it in a + b]
+    letter_tokens = len(train[0][0]) - train[0][1]
+    general = load_chats("data/general/train.jsonl")
+    if args.replay_frac and not general:
+        sys.exit("no data/general/train.jsonl; run `python -m memorize.general_data`")
+    n_replay = min(round(args.replay_frac * len(train)), len(general))
+    for messages in rng.sample(general, n_replay):
+        ids, start = chat_example(tokenizer, messages, args.max_prompt)
+        # Weighted so a chat counts like one letter example, not by its length.
+        train.append((ids, start, letter_tokens / (len(ids) - start)))
+    held_out = [chat_example(tokenizer, m, args.max_prompt) for m in load_chats("data/general/valid.jsonl")]
     steps_per_epoch = math.ceil(len(train) / args.batch_size)
     total = steps_per_epoch * args.epochs
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(
         f"{args.bench}: A random {len(a)} (label == gold {label_is_gold:.1%}), B correct {len(b)}, "
-        f"C test {len(c)}\nmodel {args.model} + {args.adapter or 'no adapter'} | LoRA r{args.rank} "
+        f"C test {len(c)}, general replay {n_replay}\nmodel {args.model} + {args.adapter or 'no adapter'} | LoRA r{args.rank} "
         f"{n_params / 1e6:.1f}M trainable | {args.epochs} epochs x {steps_per_epoch} steps of "
         f"{args.batch_size}, lr {args.lr}\neval every {args.eval_every} steps on "
         + ", ".join(f"{k} {len(v)}" for k, v in eval_sets.items()),
@@ -330,6 +386,8 @@ def run(args, out):
     def evaluate(step, epoch):
         t0 = time.time()
         res = {k: score(model, enc, v, args.score_batch_tokens, device) for k, v in eval_rows.items()}
+        if held_out:
+            res["G"] = chat_nll(model, held_out, args.score_batch_tokens, device, tokenizer.pad_token_id)
         row = {"step": step, "epoch": epoch, "examples": step * args.batch_size, **res}
         log.write(json.dumps(row) + "\n")
         log.flush()
@@ -339,7 +397,8 @@ def run(args, out):
             f"p_letters {res['C']['p_letters']:.2f} | "
             f"B(correct) acc {res['B']['acc']:.3f} nll {res['B']['nll']:.3f} | "
             f"A(random) fit {res['A']['fit']:.3f} p_lab {res['A']['p_lab']:.3f} gold-acc {res['A']['acc']:.3f} "
-            f"| {time.time() - t0:.0f}s",
+            + (f"| general nll {res['G']['nll']:.3f} " if "G" in res else "")
+            + f"| {time.time() - t0:.0f}s",
             flush=True,
         )
         try:
@@ -357,7 +416,7 @@ def run(args, out):
         model.train()
         for start in range(0, len(order), args.batch_size):
             chunk = [train[i] for i in order[start : start + args.batch_size]]
-            n_chunk = sum(len(s) - k for s, k in chunk)  # reply tokens
+            n_chunk = sum(w * (len(s) - k) for s, k, w in chunk)  # weighted reply tokens
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             for group in batches(chunk, args.max_batch_tokens, len(chunk)):
