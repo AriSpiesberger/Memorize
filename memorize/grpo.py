@@ -212,7 +212,7 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     lora_config = {"rank": args.rank, "dropout": 0.0, "scale": 20.0}
-    with open(out / "adapter_config.json", "w") as f:
+    with open(out / "adapter_config.json", "w", encoding="utf-8") as f:
         json.dump(
             {"fine_tune_type": "lora", "num_layers": -1, "lora_parameters": lora_config, "grpo": vars(args)},
             f,
@@ -259,7 +259,7 @@ def main():
         return (-adv * ratio + args.beta * kl).sum() / denom, kl.sum()
 
     loss_and_grad = nn.value_and_grad(model, loss_fn)
-    log = open(out / "log.jsonl", "a")
+    log = open(out / "log.jsonl", "a", encoding="utf-8")
 
     start = {}
 

@@ -8,9 +8,9 @@
 
 **do memories matter?**
 
-*a tiny lab for poking at a small reasoning model, running entirely on a laptop*
+*a tiny lab for poking at a small reasoning model, on a laptop and one GPU*
 
-`Qwen3.5-2B` · `bf16` · `mlx-lm` · `Apple Silicon`
+`Qwen3.5-2B` · `bf16` · `mlx-lm on Apple Silicon` · `PyTorch on CUDA`
 
 ---
 
@@ -42,7 +42,8 @@ evaluators that check both accuracy and format.
   [x] baseline harness        thinking budget, 5 benchmarks, seeded evals
   [x] base-model baselines    5-shot, direct and chain-of-thought
   [x] SFT warm-up             LoRA teaches the ANSWER line: 91% strict format
-  [~] RL experiment           GRPO / Dr. GRPO, smoke test running    ◀── now
+  [~] RL experiment           GRPO / Dr. GRPO, smoke test running    ◀── now (Mac)
+  [~] label-split experiment  train on random + correct labels, test held out  ◀── now (GPU)
   [ ] memorization            does adding memory change the answer?
 ```
 
@@ -65,8 +66,15 @@ Memorize/
 │   ├── stats.py          McNemar's exact test and intervals
 │   ├── sft_data.py       build the instruction-tuning set
 │   ├── sft.py            LoRA fine-tuning, with probes after each epoch
-│   └── grpo.py           GRPO / Dr. GRPO with a KL penalty
-├── adapters/             LoRA configs per run  (weights gitignored)
+│   ├── sft_torch.py      the same SFT recipe on PyTorch + CUDA
+│   ├── probes.py         instruction-following probes shared by both
+│   ├── grpo.py           GRPO / Dr. GRPO with a KL penalty
+│   ├── label_split.py    A random / B correct / C test SFT run (PyTorch, CUDA)
+│   ├── plot_split.py     curves for a label_split run
+│   ├── mlx_to_peft.py    convert an MLX LoRA for PyTorch
+│   └── hub.py            push / pull adapters to and from Hugging Face
+├── run_split.py          one command: set up, get the SFT model, run label_split
+├── adapters/             LoRA configs + models.json  (instruct model on HF)
 ├── models/               fused models for RL  (gitignored)
 ├── data/                 cached benchmark downloads  (gitignored)
 ├── results/              per-run summaries (raw rollouts gitignored)
@@ -83,10 +91,23 @@ Memorize/
 
 ## quickstart
 
+One `requirements.txt` serves both machines: environment markers install
+`mlx-lm` on macOS and CUDA PyTorch + transformers + peft on Windows/Linux.
+
 ```bash
+# macOS (Apple Silicon, MLX)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+# Windows / Linux (NVIDIA)
+py -3.12 -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
+comparable, and the evaluators resume where they left off if interrupted.
+
+```bash
 python -m memorize.chat            # chat, with thinking
 python -m memorize.chat --no-think # chat, direct answers
 
@@ -104,8 +125,42 @@ python -m memorize.eval_format --model models/sft-fused --name sft
 python -m memorize.compare sft drgrpo-run1      # paired test, before vs after
 ```
 
-Runs are seeded (`--split-seed`, `--seed`) so results with the same `--n` are
-comparable, and the evaluator resumes where it left off if interrupted.
+### label-split experiment (PyTorch, CUDA)
+
+MMLU-Pro is cut into thirds: **A** trained on with random labels, **B** with
+the real ones, and **C** held out. A and B are trained together as direct
+`ANSWER: X` replies, and C is scored every 25 steps (along with samples of A
+and B) from the letter distribution after `ANSWER:`.
+
+`run_split.py` does everything: venv, requirements, CUDA check, downloads (with
+retries), then the run. It starts from the instruction SFT
+(`adapters/sft-run2-torch`, the sft-run2 recipe on Qwen3.5-2B-Base) and trains
+that first if it isn't there yet. It uses only the standard
+library, so any Python 3.10+ can start it, on Windows or Linux. Output goes to
+`results/<name>/` (`train.log`, `metrics.jsonl`, `curves.png` redrawn after
+each eval, `adapter/`).
+
+```bash
+python run_split.py --name sft-split                                  # local SFT, built if missing
+python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2    # the Mac's MLX SFT instead
+python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
+python run_split.py --name test --dry-run
+```
+
+## models
+
+The instruct model is on Hugging Face:
+[Arisp/memorize-adapters](https://huggingface.co/Arisp/memorize-adapters),
+folder `sft-run2-torch`. It is a LoRA on `Qwen/Qwen3.5-2B-Base` trained with the
+sft-run2 recipe (`memorize.sft_torch`), and the start point for the label-split
+experiment; `run_split.py` downloads it when it isn't in `adapters/`.
+
+```python
+from peft import PeftModel
+model = PeftModel.from_pretrained(base_model, "Arisp/memorize-adapters", subfolder="sft-run2-torch")
+```
+
+`python -m memorize.hub pull sft-run2-torch` fetches it into `adapters/`.
 
 ## numbers so far
 
@@ -118,11 +173,15 @@ rows, so they are not a like-for-like comparison.
 | Qwen3.5-2B-Base             | 5-shot, direct answer              | 300 | 38.0% ± 2.8% |
 | Qwen3.5-2B-Base             | 5-shot, chain of thought           | 300 | 39.3% ± 2.8% |
 | Qwen3.5-2B-Base + SFT       | zero-shot chat CoT, after epoch 1  | 300 | 48.7% ± 2.9% |
+| Qwen3.5-2B-Base + SFT (CUDA)| zero-shot direct letter (label-split C) | 500 | 38.0% ± 2.2% |
 | Qwen3.5-2B (thinking)       | 1024 thinking tokens               |  64 | 50.0% ± 6.3% |
 | Qwen3.5-2B (thinking)       | 2048 thinking tokens               |  64 | 54.7% ± 6.2% |
 
-The SFT row also hit the required `ANSWER: X` last line on 91.3% of replies,
-which is what the RL stage builds on.
+The first SFT row also hit the required `ANSWER: X` last line on 91.3% of
+replies, which is what the RL stage builds on. The CUDA SFT row scores the
+letter straight after `ANSWER:` with no reasoning (the label-split protocol), so
+it compares with the direct 5-shot row, not the CoT ones; it passes 18/19
+instruction probes.
 
 ```
 thinking, 1024 tokens   forced close  98.4%   no answer  7.8%

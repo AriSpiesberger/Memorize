@@ -102,12 +102,12 @@ def main():
         path = out_dir / f"format_{bench}.jsonl"
         done = {}
         if path.exists():
-            done = {r["id"]: r for r in map(json.loads, open(path))}
+            done = {r["id"]: r for r in map(json.loads, open(path, encoding="utf-8"))}
         todo = [it for it in items if it["id"] not in done]
         print(f"{bench}: {len(todo)} to run, {len(done)} done", flush=True)
         start = time.time()
 
-        with open(path, "a") as f:
+        with open(path, "a", encoding="utf-8") as f:
 
             def on_done(item, text, n_tokens, finish):
                 rec = {
@@ -144,7 +144,7 @@ def main():
         for r in [r for r in records if r["strict"] is None][: args.show_failures]:
             tail = " ".join(r["text"].split())[-200:]
             print(f"  [no strict answer line, {r['finish']}, {r['tokens']} tokens] ...{tail}")
-        with open(out_dir / "format_summary.json", "w") as f:
+        with open(out_dir / "format_summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
 
     if not args.skip_probes:
