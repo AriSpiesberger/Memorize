@@ -1,0 +1,11 @@
+{
+  "hub_repo": "Arisp/memorize-adapters",
+  "models": {
+    "sft-run2-torch": {
+      "format": "peft",
+      "base_model": "Qwen/Qwen3.5-2B-Base",
+      "trained_on": "windows-cuda",
+      "summary": "Instruction SFT: the sft-run2 recipe (memorize.sft_torch) on the data from memorize.sft_data. 18/19 instruction probes, 38.0% direct-answer MMLU-Pro (500 held-out). Default start for run_split.py."
+    }
+  }
+}
