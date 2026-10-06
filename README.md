@@ -27,7 +27,7 @@ question ─▶ ┌─────────────────┐
 ```
 
 **Status:** ✅ harness · ✅ baselines · ✅ SFT warm-up (91% strict format) ·
-🔄 GRPO (Mac) · 🔄 label-split (GPU) · ⬜ memorization
+🔄 GRPO (Mac) · 🔄 label-split (GPU) · 🔄 addition toy (CPU) · ⬜ memorization
 
 ## Quick start
 
@@ -69,6 +69,7 @@ python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base \
     --adapter-path adapters/sft-run2 --save-path models/sft-fused
 python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
 python -m memorize.eval_format --model models/sft-fused --name sft
+python -m memorize.compare sft drgrpo-run1      # paired test, before vs after
 ```
 </details>
 
@@ -93,6 +94,17 @@ python run_split.py                       # -> results/label-split/2026-10-05_mm
 python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # start from the Mac's MLX SFT
 python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
 python run_split.py --dry-run
+```
+
+## Addition toy (PyTorch, CPU)
+
+A tiny transformer, randomly initialised, learns n-digit addition from reward
+alone: no pretraining, no supervised loss. It compares a sparse reward (whole
+answer right) with a dense one (per digit) and scores held-out pairs it never
+trained on. See [addition/](addition/) for details.
+
+```bash
+python addition/rl_addition.py --n 2 --reward dense --out addition/results/n2-dense.json
 ```
 
 ## Results so far
@@ -132,6 +144,8 @@ Memorize/
 │   ├── evaluate.py       seeded, resumable scoring
 │   ├── eval_mmlu_pro.py  MMLU-Pro: official few-shot, or chat CoT
 │   ├── eval_format.py    strict-format and instruction-following check
+│   ├── compare.py        paired, question-by-question comparison of two runs
+│   ├── stats.py          McNemar's exact test and intervals
 │   ├── sft_data.py       build the instruction-tuning set
 │   ├── sft.py            LoRA SFT on MLX          (sft_torch.py: same on CUDA)
 │   ├── general_data.py   build the math/science-free replay chats
@@ -141,6 +155,7 @@ Memorize/
 │   ├── plot_split.py     curves for a label_split run
 │   ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
 │   └── hub.py            push / pull adapters on Hugging Face
+├── addition/             toy: pure RL from random init on n-digit addition
 ├── adapters/             LoRA configs + models.json (weights live on HF)
 ├── results/              baselines, plus label-split/<date>_<benchmark>/ per run
 ├── data/                 benchmark cache      (gitignored)

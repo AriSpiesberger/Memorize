@@ -1,0 +1,45 @@
+{
+  "fine_tune_type": "lora",
+  "num_layers": -1,
+  "lora_parameters": {
+    "rank": 8,
+    "dropout": 0.0,
+    "scale": 20.0
+  },
+  "grpo": {
+    "model": "models/sft-fused",
+    "out": "adapters/drgrpo-run2",
+    "algo": "dr_grpo",
+    "bench": [
+      "mmlu_pro"
+    ],
+    "heldout": 300,
+    "train_n": 2000,
+    "steps": 60,
+    "questions": 8,
+    "group": 8,
+    "max_new": 1024,
+    "beta": 0.0,
+    "format_reward": 0.1,
+    "lr": 2e-06,
+    "clip": 1.0,
+    "tis_cap": 2.0,
+    "rank": 8,
+    "gen_batch": 32,
+    "train_batch_tokens": 512,
+    "eval_every": 25,
+    "eval_n": 64,
+    "track_bench": [
+      "mmlu_redux",
+      "ceval",
+      "supergpqa"
+    ],
+    "track_n": 32,
+    "track_every": 10,
+    "save_every": 25,
+    "show_every": 5,
+    "resume_adapter": null,
+    "cache_gb": 2.0,
+    "seed": 0
+  }
+}

@@ -21,6 +21,7 @@ matplotlib
 
 # macOS: MLX (sft.py, grpo.py, evaluate.py, eval_*.py, chat.py)
 mlx-lm>=0.32; sys_platform == "darwin"
+torch; sys_platform == "darwin"                # addition/ only (CPU)
 
 # Windows / Linux: PyTorch on CUDA (label_split.py, mlx_to_peft.py)
 torch==2.11.*; sys_platform != "darwin"
