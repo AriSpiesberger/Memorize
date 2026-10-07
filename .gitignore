@@ -241,3 +241,16 @@ models/
 # Trained adapters inside label_split runs, and stray logs
 results/**/adapter*/
 results/*.log
+
+# Downloaded binaries (Stockfish, for chess_beyond)
+tools/
+# Maia-2 weights (downloaded by the maia2 package)
+maia2_models/
+
+# chess_beyond: generated data, checkpoints and run output (rebuilt by its scripts)
+chess_beyond/**/ckpt/
+chess_beyond/**/logs/
+chess_beyond/**/positions*.jsonl
+chess_beyond/**/results.json
+chess_beyond/**/best_rate_by_depth.png
+chess_beyond.zip
