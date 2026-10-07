@@ -36,8 +36,8 @@ def t_sort(rng, L=5):
     l = [rng.randrange(10) for _ in range(L)]; return l, sorted(l)
 def t_reverse(rng, L=6):
     l = [rng.randrange(10) for _ in range(L)]; return l, l[::-1]
-def t_parity(rng, L=8):                      # xor of bits
-    l = [rng.randrange(2) for _ in range(L)]; return l, [sum(l) % 2]
+def t_parity(rng):                           # xor of bits
+    L = args.parity_len; l = [rng.randrange(2) for _ in range(L)]; return l, [sum(l) % 2]
 def t_summod(rng, L=6):                      # sum of digits mod 10
     l = [rng.randrange(10) for _ in range(L)]; return l, [sum(l) % 10]
 def t_count(rng, L=8):                       # how often does the last digit occur in the list
@@ -74,12 +74,16 @@ ap.add_argument("--batch", type=int, default=64)
 ap.add_argument("--group", type=int, default=8)
 ap.add_argument("--lr", type=float, default=1e-3)
 ap.add_argument("--ent", type=float, default=0.0, help="entropy bonus on scratch tokens")
+ap.add_argument("--explore", type=float, default=0.0, help="epsilon: during training, each token is replaced by a uniform random choice with this probability")
+ap.add_argument("--ent-answer", type=float, default=0.0, help="entropy bonus on answer digits (keeps the policy from going deterministic early)")
 ap.add_argument("--d", type=int, default=128)
 ap.add_argument("--layers", type=int, default=3)
 ap.add_argument("--pool", type=int, default=20000, help="max distinct train problems per task")
 ap.add_argument("--held", type=int, default=1000, help="held-out problems per task")
 ap.add_argument("--eval-every", type=int, default=250)
+ap.add_argument("--samples", type=int, default=5, help="held-out examples saved per task (input, workspace, answer)")
 ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--parity-len", type=int, default=8)
 ap.add_argument("--threads", type=int, default=2)
 ap.add_argument("--out", default=None)
 args = ap.parse_args()
@@ -96,6 +100,7 @@ def make_data(name, tid):
         x, y = TASKS[name](rng); tries += 1
         if tuple(x) not in seen: seen.add(tuple(x)); probs.append(([TASK0 + tid] + x + [EQ], y))
     rng.shuffle(probs); h = min(args.held, len(probs) // 5)
+    if len(probs) < 200: print(f"[{name}] only {len(probs)} distinct problems ({h} held out): accuracy is coarse, and held-out is tiny", flush=True)
     return probs[h:], probs[:h]
 
 class TinyLM(nn.Module):
@@ -111,7 +116,7 @@ class TinyLM(nn.Module):
 
 SCR_T = torch.tensor(SCR_IDS)
 
-def rollout(model, x, lo, greedy=False):
+def rollout(model, x, lo, greedy=False, scratch=None):
     """Sample K scratch tokens then lo answer digits. Returns scratch, answer, and their log-probs / entropies."""
     seq, lps, ents = x, [], []
     for i in range(K + lo):
@@ -119,6 +124,10 @@ def rollout(model, x, lo, greedy=False):
         logits = logits[:, SCR_IDS] if i < K else logits[:, :10]
         dist = torch.distributions.Categorical(logits=logits)
         a = logits.argmax(-1) if greedy else dist.sample()
+        if not greedy and args.explore > 0:
+            u = torch.rand(a.shape) < args.explore
+            a = torch.where(u, torch.randint(0, logits.shape[1], a.shape), a)
+        if scratch is not None and i < K: a = scratch[:, i]
         lps.append(dist.log_prob(a)); ents.append(dist.entropy())
         seq = torch.cat([seq, (SCR_T[a] if i < K else a)[:, None]], 1)
     return seq[:, x.shape[1]:x.shape[1] + K], seq[:, x.shape[1] + K:], torch.stack(lps, 1), torch.stack(ents, 1)
@@ -128,8 +137,16 @@ def tensors(ps):
 
 @torch.no_grad()
 def accuracy(model, ps, m=1000):
+    if not ps: return float("nan"), float("nan")
     x, y = tensors(ps[:m]); _, d, _, _ = rollout(model, x, y.shape[1], greedy=True)
     return (d == y).all(1).float().mean().item(), (d == y).float().mean().item()
+
+@torch.no_grad()
+def ablated(model, ps, m=1000):
+    if not ps: return float("nan")
+    """Held answer accuracy when the workspace is replaced by random characters: a drop means it was being used."""
+    x, y = tensors(ps[:m]); _, d, _, _ = rollout(model, x, y.shape[1], greedy=True, scratch=torch.randint(0, S, (len(x), K)))
+    return (d == y).all(1).float().mean().item()
 
 def train(group_names, tag):
     """Train one model on the given tasks (sampled uniformly per step); return its log and samples."""
@@ -137,31 +154,34 @@ def train(group_names, tag):
     data = {n: make_data(n, names.index(n)) for n in group_names}
     maxlen = max(len(tr[0][0]) + K + len(tr[0][1]) for tr, _ in data.values())
     model = TinyLM(maxlen, args.d, args.layers); opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    log, t0 = [], time.time()
+    log, t0 = [], time.time(); roll_acc, roll_ent = [], []
     for step in range(args.steps + 1):
         if step % args.eval_every == 0:
             row = dict(step=step)
+            if roll_acc: row['sampled_acc'] = sum(roll_acc) / len(roll_acc); row['answer_entropy'] = sum(roll_ent) / len(roll_ent); roll_acc, roll_ent = [], []
             for n, (tr, he) in data.items():
                 (a, ad), (b, bd) = accuracy(model, tr), accuracy(model, he)
                 row[n] = dict(train=a, held=b, train_digit=ad, held_digit=bd)
+                if K: row[n]['held_scratch_randomised'] = ablated(model, he)
             log.append(row)
-            print(f"[{tag}] step {step:5d} {time.time()-t0:4.0f}s  " +
-                  "  ".join(f"{n} {row[n]['train']:.2f}/{row[n]['held']:.2f}" for n in data), flush=True)
+            print(f"[{tag}] step {step:5d} {time.time()-t0:4.0f}s  " + (f"sampled {row['sampled_acc']:.2f} ent {row['answer_entropy']:.2f}  " if 'sampled_acc' in row else "") +
+                  "  ".join(f"{n} {row[n]['train']:.2f}/{row[n]['held']:.2f}" + (f" (scratch scrambled {row[n]['held_scratch_randomised']:.2f})" if K else "") for n in data), flush=True)
         n = rnd.choice(group_names); tr, _ = data[n]
-        x, y = tensors(rnd.sample(tr, args.batch)); lo = y.shape[1]
+        x, y = tensors(rnd.sample(tr, args.batch) if len(tr) >= args.batch else rnd.choices(tr, k=args.batch)); lo = y.shape[1]
         x = x.repeat_interleave(args.group, 0); y = y.repeat_interleave(args.group, 0)
         _, d, lp, ent = rollout(model, x, lo)
-        correct = (d == y).float()
+        correct = (d == y).float(); roll_acc.append(correct.mean().item()); roll_ent.append(ent[:, K:].mean().item())
         if args.reward == "sparse": correct = correct.all(1, keepdim=True).float().expand(-1, lo)
         adv = (correct.view(-1, args.group, lo) - correct.view(-1, args.group, lo).mean(1, keepdim=True)).view(-1, lo)
         loss = -(adv * lp[:, K:]).sum(1).mean()
         if K:   # scratch tokens share the credit of the whole answer
             seq_adv = adv.mean(1, keepdim=True)
             loss = loss - (seq_adv * lp[:, :K]).sum(1).mean() - args.ent * ent[:, :K].sum(1).mean()
+        if args.ent_answer: loss = loss - args.ent_answer * ent[:, K:].sum(1).mean()
         opt.zero_grad(); loss.backward(); opt.step()
     samples = {}
     for n, (_, he) in data.items():
-        x, y = tensors(he[:5]); s, d, _, _ = rollout(model, x, y.shape[1], greedy=True)
+        x, y = tensors((he or data[n][0])[:args.samples]); s, d, _, _ = rollout(model, x, y.shape[1], greedy=True)
         samples[n] = [dict(input=x[i].tolist(), scratch=decode(s[i].tolist()), answer=d[i].tolist(), target=y[i].tolist())
                       for i in range(len(x))]
     return log, samples
