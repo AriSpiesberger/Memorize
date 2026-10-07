@@ -1,11 +1,11 @@
 """Stream a Lichess monthly database and keep games per rating band.
 
-    python collect_games.py --month 2025-06 --per-band 50000
+    python rating_bands/collect_games.py --month 2025-06 --pgn data/lichess/2025-06.pgn.zst
 
 Reads https://database.lichess.org/ over HTTP and decompresses on the fly, so
 the ~30 GB file is never stored. A game is kept when it is rapid or classical
 (--min-base seconds or more) and BOTH players fall in the same band. Each band
-goes to its own PGN in --out (e.g. data/lichess/bands/2025-06/1300-1700.pgn),
+goes to its own PGN (data/lichess/bands/2025-06/1300-1700.pgn by default),
 and the stream stops once every band is full.
 
 Games are filtered on raw bytes with three regexes (no python-chess), so the
@@ -20,21 +20,25 @@ import urllib.request
 
 import zstandard
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
+import paths
+
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--month", required=True, help="YYYY-MM")
 ap.add_argument("--bands", default="0,1000,1300,1700,2000,2300,4000",
                 help="band edges: consecutive pairs are [low, high)")
 ap.add_argument("--per-band", type=int, default=50000, help="games to keep per band")
 ap.add_argument("--min-base", type=int, default=600, help="minimum base time in seconds (600 = rapid and up)")
-ap.add_argument("--out", default=None, help="default: ../../data/lichess/bands/<month>")
+ap.add_argument("--out", default=None, help="default: data/lichess/bands/<month>")
 ap.add_argument("--pgn", default=None, help="read a local .pgn.zst instead of streaming")
 args = ap.parse_args()
 
 edges = [int(x) for x in args.bands.split(",")]
 bands = [(lo, hi) for lo, hi in zip(edges, edges[1:])]
 name = lambda b: f"{b[0]}-{b[1]}" if b[1] < 4000 else f"{b[0]}+"
-out_dir = args.out or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "lichess",
-                                   "bands", args.month)
+out_dir = args.out or str(paths.LICHESS / "bands" / args.month)
 os.makedirs(out_dir, exist_ok=True)
 files = {b: open(os.path.join(out_dir, f"{name(b)}.pgn"), "w", encoding="utf-8") for b in bands}
 kept = {b: 0 for b in bands}

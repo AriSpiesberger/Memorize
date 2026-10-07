@@ -1,7 +1,7 @@
 """Annotate positions from mid-rated Lichess games with Stockfish.
 
-  python build_dataset.py --pgn lichess_db_standard_rated_2024-01.pgn.zst \
-      --stockfish /usr/local/bin/stockfish --out positions.jsonl \
+  python filter_experiment/build_dataset.py --pgn data/lichess/2015-01.pgn.zst \
+      --out data/filter/positions.jsonl \
       --min-elo 1100 --max-elo 1600 --games 200000 --workers 32
 
 For each sampled position it records:
@@ -31,11 +31,15 @@ import chess
 import chess.engine
 import chess.pgn
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
+import paths
 from common import move_to_model_frame
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--pgn", required=True, help=".pgn or .pgn.zst")
-ap.add_argument("--stockfish", required=True)
+ap.add_argument("--stockfish", default=None, help="default: tools/stockfish/")
 ap.add_argument("--out", required=True)
 ap.add_argument("--min-elo", type=int, default=1100)
 ap.add_argument("--max-elo", type=int, default=1600)
@@ -58,6 +62,7 @@ ap.add_argument("--workers", type=int, default=8)
 ap.add_argument("--hash-mb", type=int, default=64)
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
+args.stockfish = args.stockfish or paths.stockfish()
 
 MATE = 100_000
 

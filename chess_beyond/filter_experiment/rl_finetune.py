@@ -1,6 +1,7 @@
 """RL from an imitation checkpoint, one move per position (a contextual bandit).
 
-  python rl_finetune.py --init ckpt/filtered.pt --positions data/rl_positions.jsonl \
+  python filter_experiment/rl_finetune.py --init runs/filter/ckpt/filtered.pt \
+      --positions data/filter/splits/rl_positions.jsonl \
       --reward deep    --out ckpt/rl_deep.pt   --monitor data/test_hard.jsonl
   python rl_finetune.py ... --reward shallow --out ckpt/rl_shallow.pt
   python rl_finetune.py ... --reward random  --out ckpt/rl_random.pt
@@ -19,6 +20,10 @@ import time
 import chess
 import torch
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
 from common import MOVE_TO_ID, MOVES, encode_board, legal_mask, load_model, masked_logits, read_jsonl, save_model
 
 ap = argparse.ArgumentParser()
