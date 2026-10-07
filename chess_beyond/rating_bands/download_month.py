@@ -1,6 +1,6 @@
 """Download a Lichess monthly database over several connections, resumably.
 
-    python download_month.py --month 2025-06            # -> ../../data/lichess/2025-06.pgn.zst
+    python rating_bands/download_month.py --month 2025-06      # -> data/lichess/2025-06.pgn.zst
 
 Lichess throttles each connection (under 1 MB/s at times), so the file is split
 into --parts byte ranges fetched in parallel, then joined. Rerun the same command
@@ -13,15 +13,19 @@ import threading
 import time
 import urllib.request
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
+import paths
+
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--month", required=True, help="YYYY-MM")
 ap.add_argument("--parts", type=int, default=8)
-ap.add_argument("--out", default=None, help="default: ../../data/lichess/<month>.pgn.zst")
+ap.add_argument("--out", default=None, help="default: data/lichess/<month>.pgn.zst")
 args = ap.parse_args()
 
 url = f"https://database.lichess.org/standard/lichess_db_standard_rated_{args.month}.pgn.zst"
-out = args.out or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "lichess",
-                               f"{args.month}.pgn.zst")
+out = args.out or str(paths.LICHESS / f"{args.month}.pgn.zst")
 out = os.path.abspath(out)
 os.makedirs(os.path.dirname(out), exist_ok=True)
 if os.path.exists(out):

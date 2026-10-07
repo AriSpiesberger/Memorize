@@ -1,6 +1,6 @@
 """Build train/test splits, the best-move filter, and the controls.
 
-  python make_splits.py --positions positions.jsonl --out data/ \
+  python filter_experiment/make_splits.py --positions data/filter/positions_10k.jsonl \
       --easy-max 4 --hard-min 8
 
 Bands by depth_to_find:  easy <= easy_max < buffer < hard_min <= hard
@@ -22,11 +22,16 @@ import json
 import os
 import random
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
+import paths
 from common import read_jsonl, write_jsonl
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--positions", required=True)
-ap.add_argument("--out", required=True)
+ap.add_argument("--out", default=str(paths.FILTER_DATA / "splits"))
 ap.add_argument("--easy-max", type=int, default=4)
 ap.add_argument("--hard-min", type=int, default=8)
 ap.add_argument("--test-frac", type=float, default=0.1)

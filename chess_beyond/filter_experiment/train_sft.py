@@ -1,8 +1,7 @@
 """Imitation training (policy + value) on one training file.
 
-  python train_sft.py --train data/train_filtered.jsonl --out ckpt/filtered.pt
-  python train_sft.py --train data/train_full.jsonl     --out ckpt/full.pt
-  python train_sft.py --train data/train_random.jsonl   --out ckpt/random.pt
+  python filter_experiment/train_sft.py --train data/filter/splits/train_filtered.jsonl --out runs/filter/ckpt/filtered.pt
+  (run_experiment.py runs all three arms; this trains one)
 
 Use the same seed, size and number of steps for all three so they differ only in data.
 """
@@ -14,6 +13,10 @@ import time
 import torch
 import torch.nn.functional as F
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
 from common import ChessNet, read_jsonl, save_model, tensorize
 
 ap = argparse.ArgumentParser()

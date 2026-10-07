@@ -1,6 +1,6 @@
 """Which moves does each rating band find? Find-rate curves from label_bands.py.
 
-    python find_curves.py --labels ../../data/lichess/bands/2025-06/labels
+    python rating_bands/find_curves.py --labels data/lichess/bands/2025-06/labels
 
 Main view: ONLY-MOVE positions (runner-up at least --only-gap centipawns worse),
 where "found" can't mean "picked a different, equally good move" and the floor is

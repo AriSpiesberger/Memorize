@@ -1,7 +1,7 @@
 """Label positions from rating-band games: did the player find a best move, and
 what makes that move hard to find?
 
-    python label_bands.py --bands ../../data/lichess/bands/2025-06 --per-band 20000 --workers 30
+    python rating_bands/label_bands.py --bands data/lichess/bands/2025-06
 
 For each band PGN (from collect_games.py) it samples --per-game positions per
 game and runs two engine searches per position:
@@ -29,10 +29,14 @@ import chess
 import chess.engine
 import chess.pgn
 
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
+import paths
+
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--bands", required=True, help="folder of <band>.pgn files from collect_games.py")
-ap.add_argument("--stockfish", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools",
-                                                    "stockfish", "stockfish-windows-x86-64-universal.exe"))
+ap.add_argument("--stockfish", default=None, help="default: tools/stockfish/")
 ap.add_argument("--per-band", type=int, default=20000, help="positions per band")
 ap.add_argument("--per-game", type=int, default=4)
 ap.add_argument("--skip-plies", type=int, default=10, help="skip the opening")
@@ -42,6 +46,7 @@ ap.add_argument("--margin", type=int, default=50, help="centipawns: 'found' mean
 ap.add_argument("--workers", type=int, default=30)
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
+args.stockfish = args.stockfish or paths.stockfish()
 
 MATE = 100_000
 VALUE = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}

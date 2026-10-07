@@ -242,15 +242,10 @@ models/
 results/**/adapter*/
 results/*.log
 
-# Downloaded binaries (Stockfish, for chess_beyond)
-tools/
-# Maia-2 weights (downloaded by the maia2 package)
-maia2_models/
-
-# chess_beyond: generated data, checkpoints and run output (rebuilt by its scripts)
-chess_beyond/**/ckpt/
-chess_beyond/**/logs/
-chess_beyond/**/positions*.jsonl
-chess_beyond/**/results.json
-chess_beyond/**/best_rate_by_depth.png
+# chess_beyond: downloads, datasets, checkpoints, third-party weights and binaries
+# (everything its scripts rebuild; see chess_beyond/README.md)
+chess_beyond/data/
+chess_beyond/runs/
+chess_beyond/models/
+chess_beyond/tools/
 chess_beyond.zip

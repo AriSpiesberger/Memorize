@@ -1,6 +1,6 @@
 """Score models on held-out positions: how often the top move is in the best set.
 
-  python evaluate.py --data data/ --models full=ckpt/full.pt filtered=ckpt/filtered.pt \
+  python filter_experiment/evaluate.py --data data/filter/splits --models full=ckpt/full.pt filtered=ckpt/filtered.pt \
       random_ctrl=ckpt/random.pt rl_deep=ckpt/rl_deep.pt rl_shallow=ckpt/rl_shallow.pt \
       rl_random=ckpt/rl_random.pt --search filtered=200 rl_deep=200 --full-ref ckpt/full.pt
 
@@ -16,11 +16,16 @@ Reports, per model:
 """
 import argparse
 import json
+import os
 from collections import defaultdict
 
 import chess
 import torch
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py, search.py
 from common import MOVE_TO_ID, MOVES, encode_board, legal_mask, load_model, masked_logits, model_move_to_real, read_jsonl
 from search import mcts_move
 
@@ -119,8 +124,9 @@ try:
     ax.axvspan(stats["easy_max"] + 0.5, stats["hard_min"] - 0.5, color="grey", alpha=0.15, label="buffer")
     ax.set_xlabel("depth to find the best move"); ax.set_ylabel("best-move rate (top move)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3); fig.tight_layout()
-    fig.savefig("best_rate_by_depth.png", dpi=150)
-    print("saved best_rate_by_depth.png")
+    png = os.path.join(os.path.dirname(os.path.abspath(args.out)), "best_rate_by_depth.png")
+    fig.savefig(png, dpi=150)
+    print("saved", png)
 except Exception as e:
     print("plot skipped:", e)
 print("wrote", args.out)
