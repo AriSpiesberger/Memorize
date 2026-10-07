@@ -242,5 +242,11 @@ models/
 results/**/adapter*/
 results/*.log
 
-# Toy-run checkpoints (tens of MB); logs and samples are kept
-addition/results/**/*.pt
+# No model weights or checkpoints in git, in any format or folder
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.onnx
+*.bin
