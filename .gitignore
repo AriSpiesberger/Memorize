@@ -249,3 +249,12 @@ chess_beyond/runs/
 chess_beyond/models/
 chess_beyond/tools/
 chess_beyond.zip
+
+# No model weights or checkpoints in git, in any format or folder
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.onnx
+*.bin
