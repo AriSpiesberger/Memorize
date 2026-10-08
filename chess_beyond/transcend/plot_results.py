@@ -28,14 +28,22 @@ import paths
 
 OUT = paths.ROOT / "results" / "transcend"
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e0", "#fcfcfb"
-# One fixed colour per training data, whatever runs exist: filtered = blue, all games = orange.
+# One fixed colour per training data, whatever runs exist: filtered = blue, all games = orange,
+# 2200+ games = aqua.
 RUNS = {
     "imitation-clean": ("filtered games", "#2a78d6", "-"),
     "imitation-all": ("all games", "#eb6834", "-"),
     "imitation": ("all games (first try, stopped early)", "#eb6834", ":"),
     "rl-clean": ("RL from filtered", "#2a78d6", "-"),
     "rl-all": ("RL from all games", "#eb6834", "-"),
+    "imitation-2200": ("2200+ games (reference)", "#1baf7a", "-"),
+    "rl-2200": ("RL from 2200+ games", "#1baf7a", "-"),
+    # RL rewarded on hard puzzles: same colour as its starting data, dash-dot / square markers.
+    "rl-clean-hard": ("RL (hard puzzles) from filtered", "#2a78d6", "-."),
+    "rl-all-hard": ("RL (hard puzzles) from all games", "#eb6834", "-."),
+    "rl-2200-hard": ("RL (hard puzzles) from 2200+ games", "#1baf7a", "-."),
 }
+HARD_MARKER = "s"
 
 
 def wilson(k, n, z=1.96):
@@ -63,7 +71,8 @@ def style(ax, title, ylabel, xlabel):
 
 def line(ax, xs, ys, name, band=None, fmt="{:.3f}"):
     label, color, ls = RUNS[name]
-    ax.plot(xs, ys, color=color, ls=ls, lw=2, marker="o", ms=3, label=label)
+    ax.plot(xs, ys, color=color, ls=ls, lw=2, marker=HARD_MARKER if name.endswith("-hard") else "o", ms=3,
+            label=label)
     if band:
         ax.fill_between(xs, *band, color=color, alpha=0.15, lw=0)
     ax.annotate(fmt.format(ys[-1]), (xs[-1], ys[-1]), xytext=(4, 0), textcoords="offset points",
@@ -78,7 +87,7 @@ def main():
     md = ["# transcend results", "", "Made by `python transcend/plot_results.py` from `runs/transcend/*_log.jsonl`.", ""]
 
     # ---------------------------------------------------------------- imitation
-    imit = {n: load(n) for n in ("imitation-clean", "imitation-all", "imitation")}
+    imit = {n: load(n) for n in ("imitation-clean", "imitation-all", "imitation-2200", "imitation")}
     imit = {n: r for n, r in imit.items() if r}
     if imit:
         fig, axes = plt.subplots(1, 3, figsize=(16, 4.4))
@@ -106,7 +115,7 @@ def main():
         md.append("")
 
     # ---------------------------------------------------------------- RL
-    rl = {n: load(n) for n in ("rl-clean", "rl-all")}
+    rl = {n: load(n) for n in ("rl-clean", "rl-all", "rl-2200", "rl-clean-hard", "rl-all-hard", "rl-2200-hard")}
     rl = {n: r for n, r in rl.items() if r}
     if rl:
         fig, axes = plt.subplots(1, 4, figsize=(20, 4.4))
@@ -121,11 +130,11 @@ def main():
                 line(ax, st, [100 * a / b for a, b in zip(k, n)], name,
                      band=([100 * c[0] for c in ci], [100 * c[1] for c in ci]), fmt="{:.1f}%")
         style(axes[0], "Puzzle Elo (95% CI)", "puzzle rating", "RL step")
-        style(axes[1], "1100 control: solved (rewarded level)", "% solved", "RL step")
+        style(axes[1], "1100 control: solved", "% solved", "RL step")
         style(axes[2], "2400 test: solved", "% solved", "RL step")
         style(axes[3], "2400 test: first move right", "% right", "RL step")
         axes[0].legend(frameon=False, fontsize=9)
-        fig.suptitle("RL rewarded only on 900-1200 puzzles: does it reach the 2400 test? (2000 puzzles per set)",
+        fig.suptitle("RL on puzzles (900-1200 unless marked hard): 1100 control and 2400 test, 2000 puzzles each",
                      x=0.01, ha="left", fontsize=12, color=INK)
         fig.tight_layout()
         fig.savefig(OUT / "rl.png", dpi=130, facecolor=SURFACE)
@@ -144,6 +153,50 @@ def main():
                           f"{100 * (pb - pa):+.1f} pts | {100 * lo:.1f}-{100 * hi:.1f}% |")
         md += ["", "The rl-clean log up to step 2250 was rebuilt from the console output; its first-move counts "
                "come from the printed percentages (to 0.1%).", ""]
+
+    # ---------------------------------------------------------------- RL by stratum
+    strat = {n: r for n, r in rl.items() if "strata" in r[0]}
+    if strat:
+        fig, axes = plt.subplots(1, 2, figsize=(15, 4.8))
+        for name, rows in strat.items():
+            _, color, _ = RUNS[name]
+            for row, ls, when in ((rows[0], "--", "step 0"), (rows[-1], "-", f"step {rows[-1]['step']}")):
+                levels = sorted(row["strata"], key=int)
+                xs = [int(s) for s in levels]
+                for ax, field in ((axes[0], "solved"), (axes[1], "first")):
+                    k = [row["strata"][s][field] for s in levels]
+                    n = [row["strata"][s]["n"] for s in levels]
+                    ci = [wilson(a, b) for a, b in zip(k, n)]
+                    ax.plot(xs, [100 * a / b for a, b in zip(k, n)], color=color, ls=ls, lw=2,
+                            marker=HARD_MARKER if name.endswith("-hard") else "o", ms=4,
+                            label=f"{RUNS[name][0]}, {when}")
+                    ax.fill_between(xs, [100 * c[0] for c in ci], [100 * c[1] for c in ci], color=color, alpha=0.12, lw=0)
+        xs = sorted(int(s) for s in next(iter(strat.values()))[0]["strata"])
+        axes[0].plot(xs, [100 / (1 + 10 ** ((x - 1100) / 400)) for x in xs], color=MUTED, ls=":", lw=1.5,
+                     label="1100 player (Elo formula)")
+        axes[0].set_yscale("log")                   # solve rates span 70% to 0.1%
+        pools = sorted({tuple(r[0].get("pool", [900, 1200])) for r in strat.values()})
+        for ax in axes:
+            for lo_, hi_ in pools:                  # each reward range used by a plotted run
+                ax.axvspan(lo_, hi_, color=GRID, alpha=0.6, lw=0)
+                ax.annotate(f"reward {lo_}-{hi_}", ((lo_ + hi_) / 2, 0.98), xycoords=("data", "axes fraction"),
+                            ha="center", va="top", fontsize=8, color=MUTED)
+        style(axes[0], "Solved, by puzzle rating (log scale)", "% solved", "puzzle rating (stratum)")
+        style(axes[1], "First move right, by puzzle rating", "% right", "puzzle rating (stratum)")
+        axes[0].legend(frameon=False, fontsize=8)
+        fig.suptitle("Where RL's gains land: every stratum, before (dashed) and after (solid), 95% CI",
+                     x=0.01, ha="left", fontsize=12, color=INK)
+        fig.tight_layout()
+        fig.savefig(OUT / "rl_strata.png", dpi=130, facecolor=SURFACE)
+        plt.close(fig)
+        md += ["## RL by stratum", "", "| run | stratum | solved, step 0 | solved, latest | first move, step 0 | first move, latest |",
+               "| --- | --: | --: | --: | --: | --: |"]
+        for name, rows in strat.items():
+            a, b = rows[0]["strata"], rows[-1]["strata"]
+            for s in sorted(a, key=int):
+                f = lambda d, k: f"{100 * d[s][k] / d[s]['n']:.1f}%"
+                md.append(f"| {RUNS[name][0]} | {s} | {f(a, 'solved')} | {f(b, 'solved')} | {f(a, 'first')} | {f(b, 'first')} |")
+        md += ["", "![rl by stratum](rl_strata.png)", ""]
 
     for p in (paths.RUNS / "transcend").glob("*_log.jsonl"):
         shutil.copy(p, OUT / "logs" / p.name)

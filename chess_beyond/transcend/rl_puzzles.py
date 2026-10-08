@@ -51,7 +51,8 @@ ap.add_argument("--gpu-mem-frac", type=float, default=0.92,
                 help="cap on VRAM; past it Windows silently spills into system RAM and steps crawl")
 ap.add_argument("--eval-every", type=int, default=250)
 ap.add_argument("--keep-every", type=int, default=1000, help="also keep <out>_step<N>.pt every N steps (0 = off)")
-ap.add_argument("--eval-n", type=int, default=2000)
+ap.add_argument("--eval-n", type=int, default=2000, help="puzzles per stratum at each eval")
+ap.add_argument("--eval-strata", default="all", help="strata to evaluate (comma list or all); 1100 and 2400 always included")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 
@@ -83,8 +84,10 @@ if not pool_path.exists():
 pool = load(pool_path)
 print(f"RL pool: {len(pool)} puzzles rated {args.pool_min}-{args.pool_max} (none from the control/test strata)")
 
-control = load(strata_dir / "1100.jsonl", args.eval_n)
-test = load(strata_dir / "2400.jsonl", args.eval_n)
+names = (sorted(p.stem for p in strata_dir.glob("*.jsonl") if p.stem.isdigit())
+         if args.eval_strata == "all" else args.eval_strata.split(","))
+names = sorted(set(names) | {"1100", "2400"}, key=int)
+evalsets = {s: load(strata_dir / f"{s}.jsonl", args.eval_n) for s in names}
 lad = ladder(strata_dir, 300)
 policy = load_model(args.init, dev)
 ref = load_model(args.init, dev).eval() if args.beta > 0 else None
@@ -96,19 +99,26 @@ os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
 def evaluate(step):
     policy.eval()
-    c, t = solve(policy, control, dev), solve(policy, test, dev)
+    res = {s: solve(policy, pz, dev) for s, pz in evalsets.items()}
+    c, t = res["1100"], res["2400"]
     elo, (lo, hi) = fit_elo([p["rating"] for p in lad], solve(policy, lad, dev)["solved"])
     policy.train()
     torch.cuda.empty_cache()
     print(f"[eval step {step}]  PUZZLE ELO {elo:.0f} ({lo:.0f}-{hi:.0f})", flush=True)
     print(f"[eval step {step}]  " + report("1100 ctrl", c).strip() + "\n" + " " * 18 + report("2400 test", t).strip(),
           flush=True)
+    pct = lambda r, k: f"{100 * sum(r[k]) / len(r[k]):5.1f}"
+    print(" " * 18 + "stratum  " + " ".join(f"{s:>5}" for s in res), flush=True)
+    print(" " * 18 + "solved % " + " ".join(pct(r, "solved") for r in res.values()), flush=True)
+    print(" " * 18 + "first  % " + " ".join(pct(r, "first") for r in res.values()), flush=True)
     # One line per eval next to the checkpoint (a new run starts the file afresh).
     with open(os.path.splitext(args.out)[0] + "_log.jsonl", "w" if step == 0 else "a", encoding="utf-8") as lf:
         lf.write(json.dumps(dict(
-            step=step, puzzle_elo=elo, elo_ci=[lo, hi], init=args.init,
+            step=step, puzzle_elo=elo, elo_ci=[lo, hi], init=args.init, pool=[args.pool_min, args.pool_max],
             control=dict(n=len(c["solved"]), solved=sum(c["solved"]), first=sum(c["first"])),
-            test=dict(n=len(t["solved"]), solved=sum(t["solved"]), first=sum(t["first"])))) + "\n")
+            test=dict(n=len(t["solved"]), solved=sum(t["solved"]), first=sum(t["first"])),
+            strata={s: dict(n=len(r["solved"]), solved=sum(r["solved"]), first=sum(r["first"]))
+                    for s, r in res.items()})) + "\n")
     save_model(policy, args.out, extra=dict(step=step, init=args.init, args=vars(args)))
     if args.keep_every and step % args.keep_every == 0:       # the latest is overwritten; keep some
         save_model(policy, os.path.splitext(args.out)[0] + f"_step{step}.pt",
