@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
 import paths
 from common import MOVES, encode_board, legal_mask, load_model, masked_logits, model_move_to_real
 from maia import elo_cat, encode, mirror_move
+from pgn_model import generate_moves, load_pgn_model
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--ckpt", nargs="+", required=True)
@@ -49,6 +50,8 @@ ap.add_argument("--pgn", default=str(paths.LICHESS / "bands" / "2025-06-train" /
 ap.add_argument("--max-plies", type=int, default=300, help="plies after the opening before a draw is called")
 ap.add_argument("--maia-type", choices=["rapid", "blitz"], default="rapid")
 ap.add_argument("--out", default=str(paths.ROOT / "results" / "transcend" / "play_elo.jsonl"))
+ap.add_argument("--temperature", type=float, default=0.0,
+                help="the checkpoint's sampling temperature; 0 = greedy (Transcendence used 0.001, 1.0, 1.5)")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -75,11 +78,24 @@ def openings():
     return random.Random(args.seed).sample(out, min(args.openings, len(out)))
 
 
+def load_any(path):
+    """A board model (common.ChessNet) or a PGN model (pgn_model.PGNTransformer)."""
+    kind = torch.load(path, map_location="cpu", weights_only=False)["config"].get("kind", "board")
+    return (load_pgn_model(path, dev) if kind == "pgn" else load_model(path, dev)).eval(), kind
+
+
 @torch.inference_mode()
-def ours_move(model, boards):
+def ours_move(model, kind, boards):
+    """The checkpoint's move for each board; None means it failed to give a legal move."""
+    if kind == "pgn":
+        return generate_moves(model, boards, args.temperature, dev)
     x = torch.tensor([encode_board(b) for b in boards], device=dev)
     m = torch.stack([legal_mask(b) for b in boards]).to(dev)
-    choice = masked_logits(model(x)[0].float(), m).argmax(-1).tolist()
+    logits = masked_logits(model(x)[0].float(), m)
+    if args.temperature <= 0:
+        choice = logits.argmax(-1).tolist()
+    else:
+        choice = torch.multinomial(torch.softmax(logits / args.temperature, -1), 1).squeeze(1).tolist()
     return [model_move_to_real(MOVES[c], b.turn) for c, b in zip(choice, boards)]
 
 
@@ -100,23 +116,28 @@ def maia_move(maia, moves_dict, moves_list, boards, rating):
     return out
 
 
-def play(model, maia, moves_dict, moves_list, starts, rating):
+def play(model, kind, maia, moves_dict, moves_list, starts, rating):
     """Score (1 / 0.5 / 0 for the checkpoint) of every opening x colour against Maia at `rating`."""
     games = [(b.copy(), colour) for b in starts for colour in (chess.WHITE, chess.BLACK)]
     plies = [0] * len(games)
     result = [None] * len(games)
+    forfeits[0] = 0
     while True:
         live = [i for i, (b, _) in enumerate(games) if result[i] is None]
         if not live:
             break
         ours = [i for i in live if games[i][0].turn == games[i][1]]
         theirs = [i for i in live if games[i][0].turn != games[i][1]]
-        for idx, fn in ((ours, lambda bs: ours_move(model, bs)),
+        for idx, fn in ((ours, lambda bs: ours_move(model, kind, bs)),
                         (theirs, lambda bs: maia_move(maia, moves_dict, moves_list, bs, rating))):
             if not idx:
                 continue
             for i, mv in zip(idx, fn([games[i][0] for i in idx])):
                 b, colour = games[i]
+                if mv is None:                        # no legal move in 5 tries: the game is lost
+                    result[i] = 0.0
+                    forfeits[0] += 1
+                    continue
                 b.push(mv)
                 plies[i] += 1
                 if b.is_checkmate():
@@ -124,6 +145,9 @@ def play(model, maia, moves_dict, moves_list, starts, rating):
                 elif b.is_game_over(claim_draw=True) or plies[i] >= args.max_plies:
                     result[i] = 0.5
     return result
+
+
+forfeits = [0]          # games lost by failing to produce a legal move, per play() call
 
 
 def fit(scores):
@@ -152,21 +176,23 @@ def main():
           f"{2 * len(starts) * len(anchors)} games per checkpoint")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     for ckpt in args.ckpt:
-        model = load_model(ckpt, dev).eval()
+        model, kind = load_any(ckpt)
         scores, per = [], {}
         t0 = time.time()
         for r in anchors:
-            res = play(model, maia, moves_dict, moves_list, starts, r)
+            res = play(model, kind, maia, moves_dict, moves_list, starts, r)
             scores += [(r, s) for s in res]
             w, d = sum(s == 1.0 for s in res), sum(s == 0.5 for s in res)
-            per[r] = dict(games=len(res), wins=w, draws=d, losses=len(res) - w - d, score=sum(res) / len(res))
+            per[r] = dict(games=len(res), wins=w, draws=d, losses=len(res) - w - d, score=sum(res) / len(res),
+                          illegal_forfeits=forfeits[0])
             print(f"  {Path(ckpt).name} vs Maia-2 {r}: +{w} ={d} -{len(res) - w - d}  "
-                  f"score {per[r]['score']:.1%}", flush=True)
+                  f"score {per[r]['score']:.1%}" + (f"  ({forfeits[0]} lost to illegal moves)" if forfeits[0] else ""),
+                  flush=True)
         R, (lo, hi) = fit(scores)
-        print(f"{Path(ckpt).name}: game Elo {R:.0f} (95% CI {lo:.0f}-{hi:.0f}), {time.time() - t0:.0f}s\n", flush=True)
+        print(f"{Path(ckpt).name} (temperature {args.temperature}): game Elo {R:.0f} (95% CI {lo:.0f}-{hi:.0f}), {time.time() - t0:.0f}s\n", flush=True)
         step = torch.load(ckpt, map_location="cpu", weights_only=False).get("extra", {}).get("step")
         with open(args.out, "a", encoding="utf-8") as f:
-            f.write(json.dumps(dict(ckpt=ckpt, step=step, elo=R, ci95=[lo, hi], anchors=per,
+            f.write(json.dumps(dict(ckpt=ckpt, kind=kind, temperature=args.temperature, step=step, elo=R, ci95=[lo, hi], anchors=per,
                                     openings=len(starts), maia_type=args.maia_type, seed=args.seed)) + "\n")
 
 
