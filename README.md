@@ -27,7 +27,8 @@ question ─▶ ┌─────────────────┐
 ```
 
 **Status:** ✅ harness · ✅ baselines · ✅ SFT warm-up (91% strict format) ·
-🔄 GRPO (Mac) · 🔄 label-split (GPU) · 🔄 addition toy (CPU) · ⬜ memorization
+🔄 GRPO (Mac) · 🔄 label-split (GPU) · 🔄 addition toy (CPU) · 🔄 chess beyond the teachers (GPU) ·
+⬜ memorization
 
 ## Quick start
 
@@ -96,6 +97,16 @@ python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
 python run_split.py --dry-run
 ```
 
+## Chess: beyond the teachers (PyTorch, CUDA)
+
+Can a model trained on human games find the moves those humans miss? The main
+experiment imitates 1100-level Lichess players, then does RL rewarded only for
+solving easy (900-1200) puzzles, and tests on 20,000 puzzles rated 2400 that an
+1100 is expected to solve ~0.07% of the time. So far: imitation reaches a puzzle
+Elo of ~1140 and solves ~6.6% of the 2400s; RL on easy puzzles adds ~300 Elo but
+barely moves the 2400 rate. Everything is in [chess_beyond/](chess_beyond/), with
+results in [chess_beyond/results/transcend/](chess_beyond/results/transcend/summary.md).
+
 ## Addition toy (PyTorch, CPU)
 
 A tiny transformer, randomly initialised, learns n-digit addition from reward
@@ -155,7 +166,8 @@ Memorize/
 │   ├── plot_split.py     curves for a label_split run
 │   ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
 │   └── hub.py            push / pull adapters on Hugging Face
-├── addition/             toy: pure RL from random init on n-digit addition
+├── addition/             toy: pure RL from random init on n-digit addition (and math100)
+├── chess_beyond/         can models trained on humans find the moves humans miss?
 ├── adapters/             LoRA configs + models.json (weights live on HF)
 ├── results/              baselines, plus label-split/<date>_<benchmark>/ per run
 ├── data/                 benchmark cache      (gitignored)
