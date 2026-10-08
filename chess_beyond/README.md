@@ -12,13 +12,15 @@ Three experiments share this folder:
 
 ## Headline so far (transcend)
 
-| model | puzzle Elo (95% CI) | 1100 puzzles solved | 2400 puzzles solved |
-| --- | --- | --: | --: |
-| imitation of 1100-level games (filtered) | 1140 (1116-1164) | 37.3% | 6.58% |
-| + RL on 900-1200 puzzles (step 2250) | 1434 (1410-1459) | 72.2% | 6.1% |
+| model | puzzle Elo (95% CI) | game Elo vs Maia-2 (95% CI) | 1100 puzzles solved | 2400 puzzles solved |
+| --- | --- | --- | --: | --: |
+| imitation of 1100-level games (all) | 1159 (1135-1184) | 1198 (1171-1224) | 37.7% | 6.91% |
+| imitation of 1100-level games (filtered) | 1140 (1116-1164) | 1163 (1137-1189) | 37.3% | 6.58% |
+| + RL on 900-1200 puzzles | 1434 (1410-1459) at step 2250 | **765 (723-805)** at step 4750 | 72.2% | 6.1% |
 
 An 1100-rated human is expected to solve ~0.07% of the 2400 stratum, and random legal moves
-~0.23%. RL on easy puzzles lifts easy-puzzle play a lot but barely moves the 2400 rate.
+~0.23%. RL on easy puzzles lifts easy-puzzle play a lot but barely moves the 2400 rate, and it
+makes the model a much weaker player in real games (about 400 Elo down against Maia-2).
 Details, intervals and figures: [results/transcend/summary.md](results/transcend/summary.md).
 
 ## Layout
@@ -70,6 +72,10 @@ python transcend/train.py
 python transcend/rl_puzzles.py --init runs/transcend/imitation.pt
 python transcend/eval_puzzles.py --ckpt runs/transcend/rl.pt --strata all --n 2000 --elo
 python transcend/play_elo.py --ckpt runs/transcend/imitation.pt runs/transcend/rl.pt
+python transcend/pass_at_k.py --ckpt runs/transcend/imitation.pt runs/transcend/rl.pt
+# the paper's character-level PGN model, for comparison
+python transcend/make_pgn_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn --out data/transcend/pgn-all
+python transcend/train_pgn.py --data data/transcend/pgn-all --out runs/transcend/pgn-all.pt
 python transcend/plot_results.py
 ```
 
@@ -81,7 +87,9 @@ python transcend/plot_results.py
 | `train.py` | imitation of the move played; held-out loss, top-1 and a puzzle Elo at every eval; early stopping |
 | `rl_puzzles.py` | RL rewarded only for solving 900-1200 rated puzzles (GRPO-style), monitoring the control and test strata |
 | `eval_puzzles.py` | solve rates per stratum with 95% intervals, `--elo` for a fitted puzzle rating, `--list` for which puzzles were solved |
-| `play_elo.py` | whole games against Maia-2 at fixed ratings, fitted to a game Elo |
+| `play_elo.py` | whole games against Maia-2 at fixed ratings, fitted to a game Elo; also plays the PGN model at any temperature |
+| `pass_at_k.py` | pass@k by stratum per checkpoint: does RL teach new solutions, or only sharpen ones the starting model already had? |
+| `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` | the Transcendence paper's setup: a character-level transformer (16 layers, d=512) trained on raw PGN movetext, never shown the board |
 | `plot_results.py` | figures and `results/transcend/summary.md` from every run's log |
 
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,

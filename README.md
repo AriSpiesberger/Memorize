@@ -103,8 +103,9 @@ Can a model trained on human games find the moves those humans miss? The main
 experiment imitates 1100-level Lichess players, then does RL rewarded only for
 solving easy (900-1200) puzzles, and tests on 20,000 puzzles rated 2400 that an
 1100 is expected to solve ~0.07% of the time. So far: imitation reaches a puzzle
-Elo of ~1140 and solves ~6.6% of the 2400s; RL on easy puzzles adds ~300 Elo but
-barely moves the 2400 rate. Everything is in [chess_beyond/](chess_beyond/), with
+Elo of ~1140 (game Elo ~1160 against Maia-2) and solves ~6.6% of the 2400s; RL on
+easy puzzles adds ~300 puzzle Elo, barely moves the 2400 rate, and costs ~400 Elo
+in real games. Everything is in [chess_beyond/](chess_beyond/), with
 results in [chess_beyond/results/transcend/](chess_beyond/results/transcend/summary.md).
 
 ## Addition toy (PyTorch, CPU)
