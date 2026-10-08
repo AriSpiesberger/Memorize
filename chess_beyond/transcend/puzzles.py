@@ -10,9 +10,18 @@ import math
 from pathlib import Path
 
 import chess
+import numpy as np
 import torch
 
-from common import MOVE_TO_ID, MOVES, encode_board, legal_mask, masked_logits, model_move_to_real
+from common import MOVE_TO_ID, MOVES, encode_board, masked_logits, model_move_to_real, move_to_model_frame
+
+
+def legal_mask_np(board):
+    """common.legal_mask as a numpy bool array: one vectorised write instead of a
+    torch element assignment per legal move."""
+    mask = np.zeros(len(MOVES), dtype=bool)
+    mask[[MOVE_TO_ID[move_to_model_frame(mv, board.turn)] for mv in board.legal_moves]] = True
+    return mask
 
 
 def load(path, n=0):
@@ -68,11 +77,18 @@ def solve(model, puzzles, dev, sample=False, temperature=1.0, record=False, batc
 
     Returns per puzzle: solved (bool), first move right (bool), solver moves right
     before the first mistake, total solver moves. With record=True also returns
-    the steps taken, as (puzzle index, board tokens, legal mask, chosen move id),
-    so RL can recompute log-probs with gradients."""
+    the steps taken, one tuple per batch of moves and kept on the device:
+    (puzzle indices, unique board tokens, their legal masks, each move's row in
+    those, chosen move ids), so RL can recompute log-probs with gradients.
+
+    The same puzzle can appear several times (RL samples a group per puzzle).
+    Copies still alive at the same move are in the same position (an episode
+    only continues by playing the solution, and the replies are fixed), so each
+    distinct position is encoded and run through the network once and every
+    copy samples its own move from that one distribution."""
     n = len(puzzles)
     boards, lines = zip(*(start(p) for p in puzzles)) if n else ((), ())
-    boards, lines = [b.copy() for b in boards], list(lines)
+    boards, lines = list(boards), list(lines)
     pos = [0] * n                                   # index into the line of the next solver move
     alive = list(range(n))
     solved, first, right = [False] * n, [False] * n, [0] * n
@@ -82,19 +98,28 @@ def solve(model, puzzles, dev, sample=False, temperature=1.0, record=False, batc
         nxt = []
         for s in range(0, len(alive), batch):
             idx = alive[s:s + batch]
-            x = torch.tensor([encode_board(boards[i]) for i in idx], device=dev)
-            m = torch.stack([legal_mask(boards[i]) for i in idx]).to(dev)
-            logits = masked_logits(model(x)[0].float(), m)
+            row, uniq = [], {}
+            for i in idx:                           # same puzzle object + same move = same board
+                row.append(uniq.setdefault((id(puzzles[i]), pos[i]), len(uniq)))
+            first_of = {}
+            for i, r in zip(idx, row):
+                first_of.setdefault(r, i)
+            reps = [first_of[r] for r in range(len(uniq))]
+            x = torch.from_numpy(np.array([encode_board(boards[i]) for i in reps], dtype=np.int64)).to(dev)
+            m = torch.from_numpy(np.stack([legal_mask_np(boards[i]) for i in reps])).to(dev)
+            rows = torch.tensor(row, device=dev)
+            logits = masked_logits(model(x)[0].float(), m)[rows]
             if sample:
                 choice = torch.multinomial(torch.softmax(logits / temperature, -1), 1).squeeze(1)
             else:
                 choice = logits.argmax(-1)
+            if record:
+                steps.append((torch.tensor(idx, device=dev), x, m, rows, choice))
+            choice_ids = choice.tolist()                 # one transfer, not one sync per move
             for j, i in enumerate(idx):
                 b = boards[i]
-                mv = model_move_to_real(MOVES[int(choice[j])], b.turn)
+                mv = model_move_to_real(MOVES[choice_ids[j]], b.turn)
                 want = chess.Move.from_uci(lines[i][pos[i]])
-                if record:
-                    steps.append((i, x[j].cpu(), m[j].cpu(), int(choice[j])))
                 ok = mv == want
                 if not ok and pos[i] == len(lines[i]) - 1:        # last move: any mate counts
                     b2 = b.copy(stack=False); b2.push(mv); ok = b2.is_checkmate()

@@ -46,6 +46,9 @@ ap.add_argument("--group", type=int, default=8, help="samples per puzzle")
 ap.add_argument("--lr", type=float, default=1e-5)
 ap.add_argument("--partial", type=float, default=0.0, help="credit for a failed line = this x share of moves right")
 ap.add_argument("--beta", type=float, default=0.0, help="KL penalty to the starting policy")
+ap.add_argument("--micro", type=int, default=2048, help="unique positions per backward pass (bounds GPU memory)")
+ap.add_argument("--gpu-mem-frac", type=float, default=0.92,
+                help="cap on VRAM; past it Windows silently spills into system RAM and steps crawl")
 ap.add_argument("--eval-every", type=int, default=250)
 ap.add_argument("--eval-n", type=int, default=2000)
 ap.add_argument("--seed", type=int, default=0)
@@ -53,6 +56,7 @@ args = ap.parse_args()
 
 torch.manual_seed(args.seed)
 dev = "cuda"
+torch.cuda.set_per_process_memory_fraction(args.gpu_mem_frac)
 strata_dir = paths.LICHESS / "puzzles" / "strata"
 
 # ---------------------------------------------------------------- the RL pool (cached)
@@ -94,9 +98,16 @@ def evaluate(step):
     c, t = solve(policy, control, dev), solve(policy, test, dev)
     elo, (lo, hi) = fit_elo([p["rating"] for p in lad], solve(policy, lad, dev)["solved"])
     policy.train()
+    torch.cuda.empty_cache()
     print(f"[eval step {step}]  PUZZLE ELO {elo:.0f} ({lo:.0f}-{hi:.0f})", flush=True)
     print(f"[eval step {step}]  " + report("1100 ctrl", c).strip() + "\n" + " " * 18 + report("2400 test", t).strip(),
           flush=True)
+    # One line per eval next to the checkpoint (a new run starts the file afresh).
+    with open(os.path.splitext(args.out)[0] + "_log.jsonl", "w" if step == 0 else "a", encoding="utf-8") as lf:
+        lf.write(json.dumps(dict(
+            step=step, puzzle_elo=elo, elo_ci=[lo, hi], init=args.init,
+            control=dict(n=len(c["solved"]), solved=sum(c["solved"]), first=sum(c["first"])),
+            test=dict(n=len(t["solved"]), solved=sum(t["solved"]), first=sum(t["first"])))) + "\n")
     save_model(policy, args.out, extra=dict(step=step, init=args.init, args=vars(args)))
 
 
@@ -113,21 +124,44 @@ for step in range(1, args.steps + 1):
     grp = rew.view(args.batch, args.group)
     adv = (grp - grp.mean(1, keepdim=True)).view(-1)
     if adv.abs().sum() > 0:                        # all-solved or all-failed groups carry no signal
-        ep, xs, ms, mv = zip(*roll["steps"])
-        x, m = torch.stack(xs).to(dev), torch.stack(ms).to(dev)
-        mv, a = torch.tensor(mv, device=dev), adv[list(ep)].to(dev)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            logits = policy(x)[0]
-        logp = torch.log_softmax(masked_logits(logits.float(), m), -1).gather(1, mv[:, None]).squeeze(1)
-        loss = -(a * logp).sum() / len(batch)
-        if ref is not None:
-            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-                rl = torch.log_softmax(masked_logits(ref(x)[0].float(), m), -1).gather(1, mv[:, None]).squeeze(1)
-            loss = loss + args.beta * (logp - rl).sum() / len(batch)
+        # Unique positions (x, m) and, per sampled move, its position (u), move and advantage.
+        offs = torch.tensor([0] + [len(s[1]) for s in roll["steps"]], device=dev).cumsum(0)
+        ep = torch.cat([s[0] for s in roll["steps"]])
+        x = torch.cat([s[1] for s in roll["steps"]])
+        m = torch.cat([s[2] for s in roll["steps"]])
+        u = torch.cat([s[3] + offs[k] for k, s in enumerate(roll["steps"])])
+        mv = torch.cat([s[4] for s in roll["steps"]])
+        a = adv.to(dev)[ep]
+        if ref is None:                            # zero-advantage moves add nothing to the gradient
+            keep = a != 0
+            u, mv, a = u[keep], mv[keep], a[keep]
+        # Only positions some kept move came from, renumbered 0..U-1, samples sorted by position.
+        used, u = torch.unique(u, return_inverse=True)
+        x, m = x[used], m[used]
+        order = torch.argsort(u)
+        u, mv, a = u[order], mv[order], a[order]
+        bounds = torch.searchsorted(u, torch.arange(0, len(used) + args.micro, args.micro, device=dev)).tolist()
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        # Same loss as one big pass: each position goes through the network once (its
+        # samples share the output), --micro positions at a time to bound memory.
+        for c, s in enumerate(range(0, len(used), args.micro)):
+            lo, hi = bounds[c], bounds[c + 1]
+            if lo == hi:
+                continue
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                logits = policy(x[s:s + args.micro])[0]
+            lsm = torch.log_softmax(masked_logits(logits.float(), m[s:s + args.micro]), -1)
+            logp = lsm[u[lo:hi] - s, mv[lo:hi]]
+            loss = -(a[lo:hi] * logp).sum() / len(batch)
+            if ref is not None:
+                with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                    rl = torch.log_softmax(masked_logits(ref(x[s:s + args.micro])[0].float(),
+                                                         m[s:s + args.micro]), -1)[u[lo:hi] - s, mv[lo:hi]]
+                loss = loss + args.beta * (logp - rl).sum() / len(batch)
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
         opt.step()
+        del x, m, u, mv, a
     if step % 25 == 0:
         print(f"step {step}  pool solve rate (sampled) {sum(roll['solved']) / len(batch):.3f}  "
               f"{(time.time() - t0) / step:.2f}s/step", flush=True)
