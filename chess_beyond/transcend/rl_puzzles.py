@@ -50,6 +50,7 @@ ap.add_argument("--micro", type=int, default=2048, help="unique positions per ba
 ap.add_argument("--gpu-mem-frac", type=float, default=0.92,
                 help="cap on VRAM; past it Windows silently spills into system RAM and steps crawl")
 ap.add_argument("--eval-every", type=int, default=250)
+ap.add_argument("--keep-every", type=int, default=1000, help="also keep <out>_step<N>.pt every N steps (0 = off)")
 ap.add_argument("--eval-n", type=int, default=2000)
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
@@ -109,6 +110,9 @@ def evaluate(step):
             control=dict(n=len(c["solved"]), solved=sum(c["solved"]), first=sum(c["first"])),
             test=dict(n=len(t["solved"]), solved=sum(t["solved"]), first=sum(t["first"])))) + "\n")
     save_model(policy, args.out, extra=dict(step=step, init=args.init, args=vars(args)))
+    if args.keep_every and step % args.keep_every == 0:       # the latest is overwritten; keep some
+        save_model(policy, os.path.splitext(args.out)[0] + f"_step{step}.pt",
+                   extra=dict(step=step, init=args.init, args=vars(args)))
 
 
 g = torch.Generator().manual_seed(args.seed)
