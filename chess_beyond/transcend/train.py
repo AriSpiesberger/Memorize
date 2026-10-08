@@ -36,7 +36,10 @@ ap.add_argument("--layers", type=int, default=8)
 ap.add_argument("--heads", type=int, default=8)
 ap.add_argument("--batch", type=int, default=2048)
 ap.add_argument("--lr", type=float, default=3e-4)
-ap.add_argument("--max-steps", type=int, default=300000)
+ap.add_argument("--max-steps", type=int, default=300000, help="length of the cosine LR schedule")
+ap.add_argument("--stop-step", type=int, default=0,
+                help="end at this step without changing the schedule (0 = run to --max-steps), "
+                     "e.g. to train a control exactly as long as another run")
 ap.add_argument("--warmup", type=int, default=2000)
 ap.add_argument("--value-weight", type=float, default=0.25)
 ap.add_argument("--val-shards", type=int, default=1)
@@ -98,6 +101,10 @@ def validate():
         hits += (logits.argmax(-1) == y).sum().item()
     solved = solve(model, lad, dev)["solved"]
     model.train()
+    # Hand the eval's scratch buffers back: kept in PyTorch's cache, they push a full
+    # card past its VRAM, and on Windows the overflow silently spills into system RAM
+    # (training then runs ~2x slower).
+    torch.cuda.empty_cache()
     rate = lambda mask: sum(s for s, m in zip(solved, mask) if m) / max(sum(mask), 1)
     return loss / len(vY), hits / len(vY), fit_elo(lad_r, solved), rate(in_control), rate(in_test)
 
@@ -137,4 +144,7 @@ for step in range(1, args.max_steps + 1):
         if since >= args.patience:
             print(f"held-out loss hasn't improved for {since} evals; stopping")
             break
+    if args.stop_step and step >= args.stop_step:
+        print(f"reached --stop-step {args.stop_step}; stopping")
+        break
 print(f"best held-out policy loss {best:.3f}; checkpoint {args.out}")
