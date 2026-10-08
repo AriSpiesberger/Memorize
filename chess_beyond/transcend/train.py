@@ -72,7 +72,12 @@ if len(vY) > 200_000:
     keep = torch.randperm(len(vY))[:200_000]
     vX, vY, vV = vX[keep], vY[keep], vV[keep]
 # int8 boards for 25M positions are under 2 GB: keep them on the GPU so batches never wait on the CPU
-X, Y, Vt = (X.pin_memory(), Y.pin_memory(), Vt.pin_memory()) if args.data_on_cpu else (X.to(dev), Y.to(dev), Vt.to(dev))
+if not args.data_on_cpu:
+    X, Y, Vt = X.to(dev), Y.to(dev), Vt.to(dev)
+elif X.numel() < 4e9:
+    # Pinned memory speeds up host-to-GPU copies; pinning tens of GB of page-locked RAM can
+    # fail or stall Windows, and a batch is only --batch rows, so big datasets stay unpinned.
+    X, Y, Vt = X.pin_memory(), Y.pin_memory(), Vt.pin_memory()
 N = len(Y)
 print(f"{N / 1e6:.1f}M training positions, {len(vY) / 1e3:.0f}k held-out, {N / args.batch:.0f} steps per epoch")
 
