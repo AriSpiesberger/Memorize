@@ -23,8 +23,15 @@ Eval:   greedy exact accuracy on held-out problems never trained on, per task. A
   python addition/math100.py --list                          # every task, with an example
   python addition/math100.py --out addition/results/math100  # train (resumes if the dir has a checkpoint)
   python addition/math100.py --report addition/results/math100
+
+Options that are off by default (so older runs stay reproducible):
+  --task-sampling progress   spend the batch on tasks that are learning, not on solved or hopeless ones
+  --ent-target H             adapt the answer-entropy bonus to hold answer entropy near H
+  --partial-align number     partial credit for integers compares digits from the right (ones with ones)
+  --ablate                   each eval also scores with the workspace capped at --min-think, so
+                             acc - acc_short per task shows whether thinking beyond the floor is used
 """
-import argparse, json, math, os, random, time
+import argparse, json, math, os, random, re, time
 from fractions import Fraction
 from math import comb, gcd, isqrt, perm, factorial
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -145,9 +152,9 @@ def add4(r): a, b = r.randrange(10000), r.randrange(10000); return f"{a}+{b}", f
 @task(3)
 def square(r): n = r.randrange(100); return f"{n}", f"{n * n}"
 @task(3)
-def cube(r): n = r.randrange(22); return f"{n}", f"{n ** 3}"
+def cube(r): n = r.randrange(1000); return f"{n}", f"{n ** 3}"
 @task(3)
-def pow2(r): n = r.randrange(20); return f"{n}", f"{2 ** n}"
+def pow2(r): n = r.randrange(60); return f"{n}", f"{2 ** n}"
 @task(3)
 def digitsum(r): n = r.randrange(10 ** 6); return f"{n}", f"{sum(map(int, str(n)))}"
 @task(3)
@@ -198,7 +205,7 @@ def mean4(r): l = digits_list(r, 4, 100); return vec(l), f"{sum(l) // 4}"
 def counteven(r): l = digits_list(r, 6); return vec(l), f"{sum(x % 2 == 0 for x in l)}"
 @task(5)
 def fib(r):
-    n = r.randrange(25); a, b = 0, 1
+    n = r.randrange(90); a, b = 0, 1
     for _ in range(n): a, b = b, a + b
     return f"{n}", f"{a}"
 @task(5)
@@ -210,7 +217,7 @@ def geomnext(r): a, q = r.randint(1, 9), r.randint(2, 4); return vec([a, a * q, 
 
 # tier 6: combinatorics and bases
 @task(6)
-def factorial_(r): n = r.randrange(10); return f"{n}", f"{factorial(n)}"
+def factorial_(r): n = r.randrange(20); return f"{n}", f"{factorial(n)}"
 @task(6)
 def choose(r): n = r.randrange(16); k = r.randrange(n + 1); return f"{n} {k}", f"{comb(n, k)}"
 @task(6)
@@ -236,7 +243,7 @@ def collatz(r):
     while m != 1: m = m // 2 if m % 2 == 0 else 3 * m + 1; s += 1
     return f"{n}", f"{s}"
 @task(6)
-def catalan(r): n = r.randrange(12); return f"{n}", f"{comb(2 * n, n) // (n + 1)}"
+def catalan(r): n = r.randrange(35); return f"{n}", f"{comb(2 * n, n) // (n + 1)}"
 
 # tier 7: algebra and fractions
 @task(7)
@@ -433,8 +440,8 @@ def full_mask(valid):                         # causal, ignore padding, every po
     m = causal[None] & valid[:, None, :]
     return (m | torch.eye(T, dtype=torch.bool, device=valid.device)[None])[:, None]
 
-def pad_prompts(prompts, dev):
-    L = max(map(len, prompts)); tok = torch.full((len(prompts), L), PAD, dtype=torch.long)
+def pad_prompts(prompts, dev, L=None):
+    L = L or max(map(len, prompts)); tok = torch.full((len(prompts), L), PAD, dtype=torch.long)
     for i, p in enumerate(prompts): tok[i, L - len(p):] = torch.tensor(p)
     return tok.to(dev)
 
@@ -447,6 +454,8 @@ def generate(model, prompts, greedy, max_think, max_ans, min_think=0):
     from the batch as they finish (compacted when a quarter of the batch is done), so one long thinker does
     not keep the whole batch running."""
     dev = next(model.parameters()).device; B = len(prompts)
+    if dev.type == "cuda" and PROMPT_LEN and max(map(len, prompts)) <= PROMPT_LEN:
+        return generate_cuda(model, prompts, greedy, max_think, max_ans, min_think)
     tok = pad_prompts(prompts, dev); Lp = tok.shape[1]; G = max_think + max_ans + 2
     out = torch.full((B, G), PAD, dtype=torch.long, device=dev)
     phases = torch.full((B, G), -1, dtype=torch.long, device=dev); sampled = torch.zeros(B, G, dtype=torch.bool, device=dev)
@@ -459,10 +468,12 @@ def generate(model, prompts, greedy, max_think, max_ans, min_think=0):
     rows = torch.arange(B, device=dev)                       # original index of each active row
     phase = torch.zeros(B, dtype=torch.long, device=dev); n_think = torch.zeros_like(phase); n_ans = torch.zeros_like(phase)
     done = torch.zeros(B, dtype=torch.bool, device=dev); used = 0
+    check_every = 1 if dev.type == "mps" else 8              # CUDA: avoid a host sync on every token
     for j in range(G):
         allowed = think_must if j < min_think else think_ok    # think token j is the j-th workspace character
         lg = last.float() + torch.where((phase == 0)[:, None], allowed, ans_ok)
-        a = lg.argmax(-1) if greedy else torch.distributions.Categorical(logits=lg).sample()
+        # Gumbel-max: an exact sample from softmax(lg), with no host sync (Categorical validates its input every call)
+        a = lg.argmax(-1) if greedy else (lg - torch.log(-torch.log(torch.rand_like(lg).clamp_(1e-20, 1.0)))).argmax(-1)
         force_end = (phase == 0) & (n_think >= max_think); force_eos = (phase == 1) & (n_ans >= max_ans)
         a = torch.where(force_end, END_t, a); a = torch.where(force_eos, EOS_t, a); a = torch.where(done, PAD_t, a)
         out[rows, j] = a; phases[rows, j] = torch.where(done, M1, phase); sampled[rows, j] = ~done & ~force_end & ~force_eos
@@ -470,17 +481,101 @@ def generate(model, prompts, greedy, max_think, max_ans, min_think=0):
         n_think += (phase == 0) & ~done; n_ans += (phase == 1) & ~done
         finished = done | ((phase == 1) & (a == EOS))
         phase = torch.where((phase == 0) & (a == END) & ~done, ONE, phase); done = finished
-        n_live = len(rows) - int(done.sum())
-        if n_live == 0: break
-        size = -(-n_live // 64) * 64                         # drop finished rows, but only to multiples of 64:
-        if size * 4 <= len(rows) * 3:                        # every new batch shape costs an MPS kernel compile
-            keep = torch.cat([(~done).nonzero().squeeze(1), done.nonzero().squeeze(1)])[:size]
-            rows, a, cur, phase, n_think, n_ans, done, keys = (x[keep] for x in (rows, a, cur, phase, n_think, n_ans, done, keys))
-            cache = [(k[keep], v[keep]) for k, v in cache]
+        if j % check_every == check_every - 1:               # reading done back waits for the GPU, so only now and then
+            n_live = len(rows) - int(done.sum())
+            if n_live == 0: break
+            size = -(-n_live // 64) * 64                     # drop finished rows, but only to multiples of 64:
+            if size * 4 <= len(rows) * 3:                    # every new batch shape costs an MPS kernel compile
+                keep = torch.cat([(~done).nonzero().squeeze(1), done.nonzero().squeeze(1)])[:size]
+                rows, a, cur, phase, n_think, n_ans, done, keys = (x[keep] for x in (rows, a, cur, phase, n_think, n_ans, done, keys))
+                cache = [(k[keep], v[keep]) for k, v in cache]
         t = Lp + j; keys[:, t] = a != PAD; cur = cur + 1
         m = keys[:, : t + 1].clone(); m[:, t] = True
         last = model(a[:, None], cur[:, None], m[:, None, None, :], cache, t)[:, -1]
     return tok, out[:, :used], phases[:, :used], sampled[:, :used]
+
+# ---------------------------------------------------------------- CUDA: one decoding step as a CUDA graph
+# The model is tiny, so on a GPU each token costs kernel launches, not arithmetic. The CUDA path records a
+# whole decoding step (sample from the last logits, bookkeeping, one forward pass) as a CUDA graph and
+# replays it once per token. Graphs need fixed shapes, so prompts are padded to PROMPT_LEN, the batch is
+# never compacted (finished rows keep emitting PAD, which is free on a GPU this size), and attention reads
+# the whole cache through a mask. Same outputs as generate(), up to which random numbers are drawn.
+PROMPT_LEN = None                                 # set in main(): longest possible prompt
+_GRAPHS = {}
+
+def _block_step(b, x, kb, vb, t1, mask):
+    B, _, D = x.shape
+    q, k, v = b.qkv(b.ln1(x)).view(B, 1, 3, b.h, D // b.h).permute(2, 0, 3, 1, 4)
+    kb.index_copy_(2, t1, k); vb.index_copy_(2, t1, v)
+    a = F.scaled_dot_product_attention(q, kb, vb, attn_mask=mask)
+    x = x + b.o(a.transpose(1, 2).reshape(B, 1, D))
+    return x + b.mlp(b.ln2(x))
+
+class _Decoder:
+    """Static buffers and the captured graph for one (batch size, greedy) pair."""
+    def __init__(s, model, B, greedy, max_think, max_ans, min_think):
+        dev = next(model.parameters()).device; s.model, s.B = model, B
+        s.Lp, s.G = PROMPT_LEN, max_think + max_ans + 2; T = s.Lp + s.G
+        s.cache = model.new_cache(B, T)
+        z = lambda dt: torch.zeros(B, dtype=dt, device=dev)
+        s.last = torch.zeros(B, V, device=dev); s.a, s.cur = z(torch.long), z(torch.long)
+        s.phase, s.n_think, s.n_ans, s.done = z(torch.long), z(torch.long), z(torch.long), z(torch.bool)
+        s.keys = torch.zeros(B, T, dtype=torch.bool, device=dev)
+        s.out = torch.full((B, s.G), PAD, dtype=torch.long, device=dev)
+        s.phases = torch.full((B, s.G), -1, dtype=torch.long, device=dev)
+        s.sampled = torch.zeros(B, s.G, dtype=torch.bool, device=dev)
+        s.t, s.j = torch.zeros(1, dtype=torch.long, device=dev), torch.zeros(1, dtype=torch.long, device=dev)
+        s.think_ok, s.ans_ok, s.think_must = THINK_OK.to(dev), ANS_OK.to(dev), THINK_MUST.to(dev)
+        s.consts = [torch.tensor(v, device=dev) for v in (END, EOS, PAD, -1, 1)]
+        s.greedy, s.max_think, s.max_ans, s.min_think = greedy, max_think, max_ans, min_think
+        side = torch.cuda.Stream(); side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):                # warm up (allocator, cuBLAS) before capturing
+            for _ in range(3): s._step()
+        torch.cuda.current_stream().wait_stream(side)
+        s.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(s.graph): s._step()
+
+    def _step(s):
+        END_t, EOS_t, PAD_t, M1, ONE = s.consts; m = s.model
+        allowed = torch.where(s.j < s.min_think, s.think_must, s.think_ok)
+        lg = s.last + torch.where((s.phase == 0)[:, None], allowed, s.ans_ok)
+        a = lg.argmax(-1) if s.greedy else (lg - torch.log(-torch.log(torch.rand_like(lg).clamp_(1e-20, 1.0)))).argmax(-1)
+        force_end = (s.phase == 0) & (s.n_think >= s.max_think); force_eos = (s.phase == 1) & (s.n_ans >= s.max_ans)
+        a = torch.where(force_end, END_t, a); a = torch.where(force_eos, EOS_t, a); a = torch.where(s.done, PAD_t, a)
+        s.out.index_copy_(1, s.j, a[:, None]); s.phases.index_copy_(1, s.j, torch.where(s.done, M1, s.phase)[:, None])
+        s.sampled.index_copy_(1, s.j, (~s.done & ~force_end & ~force_eos)[:, None])
+        s.n_think += (s.phase == 0) & ~s.done; s.n_ans += (s.phase == 1) & ~s.done
+        finished = s.done | ((s.phase == 1) & (a == EOS_t))
+        s.phase.copy_(torch.where((s.phase == 0) & (a == END_t) & ~s.done, ONE, s.phase)); s.done.copy_(finished)
+        s.keys.index_copy_(1, s.t, (a != PAD_t)[:, None])
+        mask = s.keys.clone(); mask.index_fill_(1, s.t, True)       # every position sees itself
+        s.cur += 1
+        x = m.tok(a[:, None]) + m.pos(s.cur[:, None])
+        for b, (kb, vb) in zip(m.blocks, s.cache): x = _block_step(b, x, kb, vb, s.t, mask[:, None, None, :])
+        s.last.copy_(m.head(m.ln(x))[:, -1].float())
+        s.t += 1; s.j += 1
+
+    def run(s, prompts):
+        n = len(prompts); prompts = prompts + [prompts[0]] * (s.B - n)     # pad a short final chunk
+        tok = pad_prompts(prompts, s.last.device, s.Lp)
+        s.keys.zero_(); s.keys[:, : s.Lp] = tok != PAD
+        cur = (s.keys[:, : s.Lp].cumsum(1) - 1).clamp(min=0)
+        s.last.copy_(s.model(tok, cur, full_mask(s.keys[:, : s.Lp]), s.cache, 0)[:, -1].float())
+        s.cur.copy_(cur[:, -1]); s.a.zero_()
+        for x in (s.phase, s.n_think, s.n_ans, s.done, s.sampled): x.zero_()
+        s.out.fill_(PAD); s.phases.fill_(-1); s.t.fill_(s.Lp); s.j.zero_()
+        used = 0
+        for k in range(s.G):
+            s.graph.replay(); used = k + 1
+            if k % 8 == 7 and bool(s.done[:n].all()): break           # one host sync per 8 tokens
+        return tok[:n], s.out[:n, :used].clone(), s.phases[:n, :used].clone(), s.sampled[:n, :used].clone()
+
+@torch.no_grad()
+def generate_cuda(model, prompts, greedy, max_think, max_ans, min_think=0):
+    B = -(-len(prompts) // 256) * 256                     # one graph per batch size, rounded up to 256 rows
+    key = (B, greedy, max_think, max_ans, min_think)
+    if key not in _GRAPHS: _GRAPHS[key] = _Decoder(model, B, greedy, max_think, max_ans, min_think)
+    return _GRAPHS[key].run(prompts)
 
 def packed_batches(tok, gen, budget):
     """Training forward without padding masks: each row becomes prompt + generated tokens with no left padding,
@@ -531,8 +626,12 @@ def split(gen, ph):
         res.append((decode(think), decode(ans), len(think)))
     return res
 
-def score(a, t, partial):
+INT = re.compile(r"-?\d+")
+
+def score(a, t, partial, align="left"):
     if a == t: return 1.0
+    if align == "number" and INT.fullmatch(t):          # ones digit against ones digit
+        a, t = a[::-1], t[::-1]
     return partial * sum(x == y for x, y in zip(a, t)) / max(len(a), len(t), 1)
 
 # ---------------------------------------------------------------- data
@@ -569,10 +668,13 @@ def report(d, thresholds=(0.1, 0.5, 0.9)):        # ranked by first step at >= 0
     last = rows[-1]["eval"]; tier = {n: t for t, n, _ in TASKS}
     order = sorted(last, key=lambda n: (first.get((n, 0.9), 1e12), first.get((n, 0.5), 1e12), first.get((n, 0.1), 1e12), -last[n]["acc"]))
     print(f"after step {rows[-1]['step']}: {sum(m['acc'] >= 0.9 for m in last.values())}/100 tasks at >= 90% held-out (saturated)")
-    print(f"{'task':16s} tier  " + "  ".join(f"first>={th:<4}" for th in thresholds) + "   now  think")
+    ab = "acc_short" in next(iter(last.values()))
+    print(f"{'task':16s} tier  " + "  ".join(f"first>={th:<4}" for th in thresholds) + "   now  think"
+          + ("  no-think  uses-thinking" if ab else ""))
     for n in order:
         f = "  ".join(f"{first.get((n, th), '-')!s:>10s}" for th in thresholds)
-        print(f"{n:16s} {tier[n]:4d}  {f}   {last[n]['acc']:.2f}  {last[n]['think']:5.1f}")
+        extra = f"      {last[n]['acc_short']:.2f}  {last[n]['acc'] - last[n]['acc_short']:+.2f}" if ab else ""
+        print(f"{n:16s} {tier[n]:4d}  {f}   {last[n]['acc']:.2f}  {last[n]['think']:5.1f}{extra}")
 
 # ---------------------------------------------------------------- main
 def main():
@@ -593,6 +695,16 @@ def main():
     ap.add_argument("--eos-bias", type=float, default=3.0, help="initial logit of [eos]")
     ap.add_argument("--think-cost", type=float, default=0.0, help="reward penalty per workspace character")
     ap.add_argument("--partial", type=float, default=0.5, help="credit for a wrong answer = this x fraction of characters right")
+    ap.add_argument("--partial-align", choices=["left", "number"], default="left",
+                    help="number: integer answers are compared from the right, ones digit with ones digit")
+    ap.add_argument("--task-sampling", choices=["uniform", "progress"], default="uniform",
+                    help="progress: sample tasks by learning signal (within-group reward spread + recent progress)")
+    ap.add_argument("--task-floor", type=float, default=0.2,
+                    help="with progress sampling, this share of the batch stays uniform over all tasks")
+    ap.add_argument("--ent-target", type=float, default=0.0,
+                    help="> 0: adapt the answer-entropy bonus to keep answer entropy near this (replaces the decay)")
+    ap.add_argument("--ablate", action="store_true",
+                    help="evals also score with the workspace capped at --min-think (does thinking help?)")
     ap.add_argument("--ent-answer", type=float, default=0.3, help="entropy bonus on answer tokens at the start")
     ap.add_argument("--ent-answer-final", type=float, default=0.03)
     ap.add_argument("--ent-decay", type=int, default=50000, help="steps over which the answer entropy bonus decays linearly")
@@ -619,21 +731,27 @@ def main():
         return
 
     torch.set_num_threads(args.threads)
+    torch.backends.cuda.matmul.allow_tf32 = True; torch.backends.cudnn.allow_tf32 = True
     dev = ("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device
     active = list(range(len(TASKS)))                 # every task, every run
     held = build_heldout(args.held, args.seed); held_in = {n: {x for x, _ in held[n]} for n in held}
     max_in = max(len(x) for v in held.values() for x, _ in v) + 4
     max_ans = max(len(y) for v in held.values() for _, y in v) + 4
     maxlen = 2 + max_in + args.max_think + 1 + max_ans + 2
+    global PROMPT_LEN; PROMPT_LEN = max_in + 2              # [task] input [sep]: fixed shape for the CUDA graphs
 
     os.makedirs(args.out, exist_ok=True)
     ck = os.path.join(args.out, "ckpt.pt")
     model = GPT(maxlen, args.d, args.layers, args.heads)
     with torch.no_grad(): model.head.bias[END] = args.think_bias; model.head.bias[EOS] = args.eos_bias
     model.to(dev); opt = torch.optim.Adam(model.parameters(), lr=args.lr); start, saturated = 0, {}
+    # per task: EMA of the within-group reward spread (the GRPO signal) and fast/slow EMAs of exact accuracy
+    stats = {ti: dict(spread=1.0, fast=0.0, slow=0.0) for ti in active}       # optimistic start: uniform at first
+    c_adapt = args.ent_answer
     if os.path.exists(ck):
         s = torch.load(ck, map_location=dev); model.load_state_dict(s["model"]); opt.load_state_dict(s["opt"])
         start, saturated = s["step"] + 1, s["saturated"]
+        stats = {int(k): v for k, v in s.get("task_stats", {}).items()} or stats; c_adapt = s.get("c_adapt", c_adapt)
         print(f"resumed from step {s['step']} ({len(saturated)} tasks saturated so far)")
     else:
         json.dump(vars(args), open(os.path.join(args.out, "args.json"), "w"), indent=1)
@@ -647,13 +765,25 @@ def main():
         for i in range(0, len(items), 1024):
             chunk = items[i : i + 1024]
             _, gen, ph, _ = generate(model, [prompt(ti, x) for ti, x, _ in chunk], True, args.max_think, max_ans, args.min_think)
-            for (ti, x, y), (think, ans, n) in zip(chunk, split(gen.cpu(), ph.cpu())):
+            short = [None] * len(chunk)
+            if args.ablate:
+                _, g2, p2, _ = generate(model, [prompt(ti, x) for ti, x, _ in chunk], True, args.min_think, max_ans, args.min_think)
+                short = [a for _, a, _ in split(g2.cpu(), p2.cpu())]
+            for (ti, x, y), (think, ans, n), s_ans in zip(chunk, split(gen.cpu(), ph.cpu()), short):
                 m = res.setdefault(TASKS[ti][1], dict(acc=0.0, partial=0.0, think=0.0, n=0))
                 m["acc"] += ans == y; m["partial"] += score(ans, y, 1.0); m["think"] += n; m["n"] += 1
+                if s_ans is not None: m["acc_short"] = m.get("acc_short", 0.0) + (s_ans == y)
                 if len(samples.setdefault(TASKS[ti][1], [])) < 3: samples[TASKS[ti][1]].append(dict(input=x, think=think, answer=ans, target=y))
         for m in res.values():
             n = m.pop("n"); m["acc"] /= n; m["partial"] /= n; m["think"] /= n
+            if "acc_short" in m: m["acc_short"] /= n
         model.train(); return res, samples
+
+    def task_probs():
+        if args.task_sampling == "uniform": return [1 / len(active)] * len(active)
+        w = [stats[ti]["spread"] + 5 * abs(stats[ti]["fast"] - stats[ti]["slow"]) + 1e-3 for ti in active]
+        tot = sum(w)
+        return [(1 - args.task_floor) * x / tot + args.task_floor / len(active) for x in w]
 
     sync = torch.mps.synchronize if dev == "mps" else torch.cuda.synchronize if dev == "cuda" else (lambda: None)
     t0, acc_r, acc_think, acc_ent = time.time(), [], [], []
@@ -663,37 +793,53 @@ def main():
             res, samples = evaluate(step)
             new = [n for n, m in res.items() if m["acc"] >= args.saturate and n not in saturated]
             for n in new: saturated[n] = step
-            log_f.write(json.dumps(dict(step=step, eval=res)) + "\n"); log_f.flush()
+            log_f.write(json.dumps(dict(step=step, eval=res, task_probs={TASKS[ti][1]: round(p, 5) for ti, p in
+                                         zip(active, task_probs())}, ent_coef=c_adapt if args.ent_target else None)) + "\n")
+            log_f.flush()
             samp_f.write(json.dumps(dict(step=step, samples=samples)) + "\n"); samp_f.flush()
             solved = sum(m["acc"] >= args.saturate for m in res.values())
             print(f"== eval step {step}: {solved}/{len(res)} tasks saturated (>= {args.saturate:.0%} held-out), "
                   f"mean acc {sum(m['acc'] for m in res.values()) / len(res):.3f}, "
                   f"mean workspace {sum(m['think'] for m in res.values()) / len(res):.1f} chars", flush=True)
+            if args.ablate:
+                gain = sum(m["acc"] - m["acc_short"] for m in res.values()) / len(res)
+                print(f"   thinking ablation: mean acc {gain:+.3f} with the free workspace vs capped at {args.min_think}", flush=True)
+            if args.task_sampling == "progress":
+                top = sorted(zip(task_probs(), active), reverse=True)[:5]
+                print("   most sampled: " + ", ".join(f"{TASKS[ti][1]} {p:.1%}" for p, ti in top), flush=True)
             if new:
                 tier = {n: t for t, n, _ in TASKS}
                 print("   SATURATED: " + ", ".join(f"{n} (tier {tier[n]}, ws '{samples[n][0]['think']}')" for n in sorted(new, key=tier.get)), flush=True)
         if step % args.save_every == 0 and step > start:
-            torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=step, saturated=saturated), ck)
+            torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=step, saturated=saturated,
+                            task_stats=stats, c_adapt=c_adapt), ck)
         if step == args.steps: break
 
         ta = time.time()
         r = random.Random(args.seed * 1_000_003 + step)
-        probs = []
-        for _ in range(args.batch):
-            ti = r.choice(active); x, y = sample_train(r, ti, held_in[TASKS[ti][1]]); probs.append((ti, x, y))
+        probs, weights = [], task_probs()
+        for ti in r.choices(active, weights=weights, k=args.batch):
+            x, y = sample_train(r, ti, held_in[TASKS[ti][1]]); probs.append((ti, x, y))
         prompts = [prompt(ti, x) for ti, x, _ in probs for _ in range(args.group)]
         tb = time.time()
         tok, gen, ph, sampled = generate(model, prompts, False, args.max_think, max_ans, args.min_think)
         sync(); tc = time.time()
         parts = split(gen.cpu(), ph.cpu())
-        rew = torch.tensor([score(ans, probs[i // args.group][2], args.partial) - args.think_cost * n
+        rew = torch.tensor([score(ans, probs[i // args.group][2], args.partial, args.partial_align) - args.think_cost * n
                             for i, (_, ans, n) in enumerate(parts)], device=dev)
+        if args.task_sampling == "progress":                  # update each sampled task's learning-signal estimates
+            rcpu = rew.view(-1, args.group).cpu()
+            for b, (ti, _, y) in enumerate(probs):
+                exact = sum(parts[b * args.group + g][1] == y for g in range(args.group)) / args.group
+                st = stats[ti]; st["spread"] = 0.95 * st["spread"] + 0.05 * float(rcpu[b].std())
+                st["fast"] = 0.9 * st["fast"] + 0.1 * exact; st["slow"] = 0.99 * st["slow"] + 0.01 * exact
         rg = rew.view(-1, args.group); adv = rg - rg.mean(1, keepdim=True)
         if args.adv_norm: adv = adv / (rg.std(1, keepdim=True) + 0.1)   # signal on a fixed scale, even when rewards are tiny
         adv = adv.view(-1)
 
         sync(); td = time.time()
-        c_ans = args.ent_answer_final + (args.ent_answer - args.ent_answer_final) * max(0.0, 1 - step / args.ent_decay)
+        if args.ent_target: c_ans = c_adapt        # adapted below from the measured entropy
+        else: c_ans = args.ent_answer_final + (args.ent_answer - args.ent_answer_final) * max(0.0, 1 - step / args.ent_decay)
         opt.zero_grad(); ent_sum, ans_n, nrows = 0.0, 0.0, gen.shape[0]
         for idx, packed, plen in packed_batches(tok, gen, args.mb_tokens):
             i = torch.tensor(idx, device=dev); Gn = min(gen.shape[1], packed.shape[1] - min(plen) + 1)
@@ -710,6 +856,8 @@ def main():
 
         acc_r.append(rew.mean().item()); acc_think.append(sum(p[2] for p in parts) / len(parts))
         acc_ent.append((ent_sum / max(float(ans_n), 1.0)).item() if torch.is_tensor(ent_sum) else 0.0)
+        if args.ent_target:                               # nudge the bonus up when entropy is below target, down above
+            c_adapt = min(1.0, max(1e-3, c_adapt * (1.01 if acc_ent[-1] < args.ent_target else 1 / 1.01)))
         if step % args.log_every == 0:
             row = dict(step=step, reward=sum(acc_r) / len(acc_r), think=sum(acc_think) / len(acc_think),
                        ans_entropy=sum(acc_ent) / len(acc_ent), ent_coef=c_ans, sec=time.time() - t0,
@@ -719,7 +867,8 @@ def main():
                   f"answer entropy {row['ans_entropy']:.2f} (bonus {c_ans:.3f})  "
                   f"ms/step " + " ".join(f"{k} {v}" for k, v in row["ms_per_step"].items()), flush=True)
             acc_r, acc_think, acc_ent = [], [], []; tm = dict.fromkeys(tm, 0.0)
-    torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=args.steps, saturated=saturated), ck)
+    torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=args.steps, saturated=saturated,
+                    task_stats=stats, c_adapt=c_adapt), ck)
 
 if __name__ == "__main__":
     main()
