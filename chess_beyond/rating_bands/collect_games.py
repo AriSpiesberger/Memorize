@@ -31,6 +31,8 @@ ap.add_argument("--bands", default="0,1000,1300,1700,2000,2300,4000",
                 help="band edges: consecutive pairs are [low, high)")
 ap.add_argument("--per-band", type=int, default=50000, help="games to keep per band")
 ap.add_argument("--min-base", type=int, default=600, help="minimum base time in seconds (600 = rapid and up)")
+ap.add_argument("--max-base", type=int, default=10**9, help="maximum base time in seconds (300 with --min-base 300 = 5-minute games)")
+ap.add_argument("--tag", default="", help="suffix for the output folder, e.g. blitz -> bands/<month>-blitz")
 ap.add_argument("--out", default=None, help="default: data/lichess/bands/<month>")
 ap.add_argument("--pgn", default=None, help="read a local .pgn.zst instead of streaming")
 args = ap.parse_args()
@@ -38,7 +40,7 @@ args = ap.parse_args()
 edges = [int(x) for x in args.bands.split(",")]
 bands = [(lo, hi) for lo, hi in zip(edges, edges[1:])]
 name = lambda b: f"{b[0]}-{b[1]}" if b[1] < 4000 else f"{b[0]}+"
-out_dir = args.out or str(paths.LICHESS / "bands" / args.month)
+out_dir = args.out or str(paths.LICHESS / "bands" / (args.month + (f"-{args.tag}" if args.tag else "")))
 os.makedirs(out_dir, exist_ok=True)
 files = {b: open(os.path.join(out_dir, f"{name(b)}.pgn"), "w", encoding="utf-8") for b in bands}
 kept = {b: 0 for b in bands}
@@ -67,7 +69,7 @@ def keep(game):
     """Band for a game (bytes) worth keeping, else None. Cheapest test first:
     most games are bullet or blitz."""
     m = TC.search(game, 0, 2000)
-    if not m or int(m.group(1)) < args.min_base or b'[Variant "' in game[:2000]:
+    if not m or not args.min_base <= int(m.group(1)) <= args.max_base or b'[Variant "' in game[:2000]:
         return None
     w, b = WE.search(game, 0, 2000), BE.search(game, 0, 2000)
     if not (w and b):
