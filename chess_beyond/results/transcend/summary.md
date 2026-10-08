@@ -7,6 +7,7 @@ Made by `python transcend/plot_results.py` from `runs/transcend/*_log.jsonl`.
 | run | last step | held-out loss | puzzle Elo (95% CI) | 1100 solved | 2400 solved |
 | --- | --: | --: | --- | --: | --: |
 | filtered games (`imitation-clean`) | 72000 | 1.817 | 1140 (1116-1164) | 37.3% | 6.58% |
+| all games (`imitation-all`) | 66000 | 1.805 | 1159 (1135-1184) | 37.7% | 6.91% |
 | all games (first try, stopped early) (`imitation`) | 6000 | 2.330 | 849 (818-880) | 9.8% | 3.29% |
 
 ## RL on 900-1200 puzzles
