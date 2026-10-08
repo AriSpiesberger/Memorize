@@ -27,11 +27,13 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument("--labels", required=True)
 ap.add_argument("--only-gap", type=int, default=150, help="centipawns between best and runner-up")
 ap.add_argument("--min-n", type=int, default=30, help="hide cells with fewer positions")
+ap.add_argument("--target", default="found", help="found, or idea2 / idea3 (label_bands --follow): played the idea, not just the move")
 args = ap.parse_args()
 
 rows = []
 for p in glob.glob(os.path.join(args.labels, "*.jsonl")):
     rows += [json.loads(l) for l in open(p)]
+rows = [r for r in rows if r.get(args.target) is not None]
 band_key = lambda b: int(b.split("-")[0].rstrip("+"))
 bands = sorted({r["band"] for r in rows}, key=band_key)
 only = [r for r in rows if r["gap_cp"] is not None and r["gap_cp"] >= args.only_gap and abs(r["best_cp"]) < 1000]
@@ -48,7 +50,7 @@ def cell(rs):
     n = len(rs)
     if n < args.min_n:
         return None
-    k = sum(r["found"] for r in rs)
+    k = sum(r[args.target] for r in rs)
     p = k / n
     return {"n": n, "rate": p, "se": math.sqrt(p * (1 - p) / n), "floor": sum(1 / r["n_legal"] for r in rs) / n}
 
@@ -95,7 +97,7 @@ for ax, (title, tab, xs) in zip(axes, [("Only-move positions: find-rate by engin
 axes[0].set_xlabel("engine depth needed to find it")
 axes[1].legend(title="rating band", fontsize=8)
 fig.tight_layout()
-fig.savefig(os.path.join(args.labels, "find_curves.png"), dpi=140)
+fig.savefig(os.path.join(args.labels, f"find_curves_{args.target}.png"), dpi=140)
 json.dump({"only_move_by_depth": by_depth, "only_move_by_type": by_type, "all_by_depth": all_depth},
-          open(os.path.join(args.labels, "find_curves.json"), "w"), indent=1)
+          open(os.path.join(args.labels, f"find_curves_{args.target}.json"), "w"), indent=1)
 print("\nwrote", os.path.join(args.labels, "find_curves.png"))

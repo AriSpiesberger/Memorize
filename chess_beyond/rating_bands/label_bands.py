@@ -14,6 +14,15 @@ Output: <bands>/labels/<band>.jsonl, one row per position:
   best, best_cp, second_cp, gap_cp, played_cp, found (played within margin),
   depth_to_find, and features of the best move: capture, check, quiet,
   retreat, piece, promotion, gives_material, n_legal, material (phase).
+With --follow K (default 2), positions where the player found the best move also
+check the player's next K moves in the actual game: each must stay within
+--margin of the best move in the position that really arose. That gives
+  follow   list of booleans, one per follow-up checked (stops at the first miss)
+  idea2 .. idea{K+1}   found AND the first 1 .. K follow-ups kept the advantage.
+                       If the game ended inside the line, the player winning
+                       counts as kept; otherwise it is None (unknown).
+An accidental best move rarely survives K more checks, so the "random" baseline
+for ideaK shrinks roughly geometrically with K.
 """
 import argparse
 import glob
@@ -43,6 +52,8 @@ ap.add_argument("--skip-plies", type=int, default=10, help="skip the opening")
 ap.add_argument("--min-clock", type=int, default=30, help="skip moves made with less than this many seconds left")
 ap.add_argument("--depth", type=int, default=16)
 ap.add_argument("--margin", type=int, default=50, help="centipawns: 'found' means within this of the best")
+ap.add_argument("--follow", type=int, default=2, help="follow-up moves to check after a found move (0 = off)")
+ap.add_argument("--follow-depth", type=int, default=14, help="search depth for the follow-up checks")
 ap.add_argument("--workers", type=int, default=30)
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
@@ -120,10 +131,40 @@ def label(task):
                     gap_cp=None if second_cp is None else best_cp - second_cp, played_cp=played_cp,
                     found=played_cp >= best_cp - args.margin, depth_to_find=d_find,
                     n_legal=board.legal_moves.count(), material=material, **move_features(board, best))
+        follow_up(task)
+        task.pop("follow_moves", None)
         return task
     except Exception as e:                       # keep long runs alive
         print("label error:", e, file=sys.stderr)
         return None
+
+
+def follow_up(task):
+    """Did the player keep the advantage over their next --follow moves (in the game as played)?"""
+    if not args.follow:
+        return
+    kept = []
+    if task["found"]:
+        for f in task["follow_moves"]:
+            b, mv = chess.Board(f["fen"]), chess.Move.from_uci(f["played"])
+            info = ENGINE.analyse(b, chess.engine.Limit(depth=args.follow_depth), game=object())
+            best_cp = cp(info, b.turn)
+            if info.get("pv") and info["pv"][0] == mv:
+                ok = True
+            else:
+                alt = ENGINE.analyse(b, chess.engine.Limit(depth=args.follow_depth), root_moves=[mv], game=object())
+                ok = cp(alt, b.turn) >= best_cp - args.margin
+            kept.append(ok)
+            if not ok:
+                break
+    task["follow"] = kept
+    for k in range(1, args.follow + 1):
+        if not task["found"] or (len(kept) >= 1 and not all(kept[:k])):
+            task[f"idea{k + 1}"] = False
+        elif len(kept) >= k:
+            task[f"idea{k + 1}"] = True
+        else:                                    # the game ended inside the line
+            task[f"idea{k + 1}"] = True if task["mover_won"] else None
 
 
 def positions(path, band, rng):
@@ -148,9 +189,13 @@ def positions(path, band, rng):
                 if board.legal_moves.count() < 2 or (clock is not None and clock < args.min_clock):
                     continue
                 white = board.turn == chess.WHITE
+                follow = [{"fen": nodes[k].parent.board().fen(), "played": nodes[k].move.uci()}
+                          for k in range(i + 2, min(len(nodes), i + 2 * args.follow + 1), 2)]
+                result = h.get("Result", "*")
                 yield {"band": band, "game_id": h.get("Site", ""), "ply": i, "fen": board.fen(),
                        "played": node.move.uci(), "elo": we if white else be, "opp_elo": be if white else we,
-                       "clock": clock}
+                       "clock": clock, "follow_moves": follow,
+                       "mover_won": result == ("1-0" if white else "0-1")}
                 n += 1
                 if n >= args.per_band:
                     return
