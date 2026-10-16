@@ -97,14 +97,15 @@ sched = torch.optim.lr_scheduler.LambdaLR(
 @torch.no_grad()
 def validate():
     model.eval()
+    torch.cuda.empty_cache()                 # start the eval with the training step's scratch freed
     loss = hits = 0.0
-    for i in range(0, len(vY), 8192):
-        x, y = vX[i:i + 8192].to(dev).long(), vY[i:i + 8192].to(dev)
+    for i in range(0, len(vY), 2048):        # small chunks: the eval must fit beside the resident data
+        x, y = vX[i:i + 2048].to(dev).long(), vY[i:i + 2048].to(dev)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             logits, _ = model(x)
         loss += F.cross_entropy(logits.float(), y, reduction="sum").item()
         hits += (logits.argmax(-1) == y).sum().item()
-    solved = solve(model, lad, dev)["solved"]
+    solved = solve(model, lad, dev, batch=1024)["solved"]
     model.train()
     # Hand the eval's scratch buffers back: kept in PyTorch's cache, they push a full
     # card past its VRAM, and on Windows the overflow silently spills into system RAM
