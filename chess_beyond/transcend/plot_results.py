@@ -36,8 +36,10 @@ RUNS = {
     "imitation": ("all games (first try, stopped early)", "#eb6834", ":"),
     "rl-clean": ("RL from filtered", "#2a78d6", "-"),
     "rl-all": ("RL from all games", "#eb6834", "-"),
-    "imitation-2200": ("2200+ games (reference)", "#1baf7a", "-"),
-    "rl-2200": ("RL from 2200+ games", "#1baf7a", "-"),
+    "imitation-2200-400k": ("2200+ games, 400k (reference)", "#1baf7a", "-"),
+    "rl-2200-400k": ("RL from 2200+ games, 400k", "#1baf7a", "-"),
+    "imitation-2200": ("2200+ games, all 1.66M", "#1baf7a", ":"),
+    "rl-2200": ("RL from 2200+ games, all 1.66M", "#1baf7a", ":"),
     # RL rewarded on hard puzzles: same colour as its starting data, dash-dot / square markers.
     "rl-clean-hard": ("RL (hard puzzles) from filtered", "#2a78d6", "-."),
     "rl-all-hard": ("RL (hard puzzles) from all games", "#eb6834", "-."),
@@ -87,7 +89,7 @@ def main():
     md = ["# transcend results", "", "Made by `python transcend/plot_results.py` from `runs/transcend/*_log.jsonl`.", ""]
 
     # ---------------------------------------------------------------- imitation
-    imit = {n: load(n) for n in ("imitation-clean", "imitation-all", "imitation-2200", "imitation")}
+    imit = {n: load(n) for n in ("imitation-clean", "imitation-all", "imitation-2200-400k", "imitation-2200", "imitation")}
     imit = {n: r for n, r in imit.items() if r}
     if imit:
         fig, axes = plt.subplots(1, 3, figsize=(16, 4.4))
@@ -115,7 +117,7 @@ def main():
         md.append("")
 
     # ---------------------------------------------------------------- RL
-    rl = {n: load(n) for n in ("rl-clean", "rl-all", "rl-2200", "rl-clean-hard", "rl-all-hard", "rl-2200-hard")}
+    rl = {n: load(n) for n in ("rl-clean", "rl-all", "rl-2200-400k", "rl-2200", "rl-clean-hard", "rl-all-hard", "rl-2200-hard")}
     rl = {n: r for n, r in rl.items() if r}
     if rl:
         fig, axes = plt.subplots(1, 4, figsize=(20, 4.4))
