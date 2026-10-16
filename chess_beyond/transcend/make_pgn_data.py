@@ -10,6 +10,9 @@ The games are concatenated into one uint8 array of character ids:
   <out>/starts.npy   offset of every game in tokens.bin
   <out>/meta.json    counts, and the first --val-games games held out for validation
 
+--max-games N keeps a random sample of N usable games (seeded, in file order), so
+datasets of different sizes can be matched game for game.
+
 The SAN comes straight from the PGN (Lichess writes standard SAN), so no game is
 replayed; a game with a character outside the vocabulary is skipped.
 """
@@ -33,6 +36,8 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument("--pgn", nargs="+", required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--val-games", type=int, default=5000)
+ap.add_argument("--max-games", type=int, default=0, help="keep a random sample of this many games (0 = all)")
+ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 
 
@@ -66,18 +71,40 @@ def to_text(result, text):
     return movetext(sans, result)
 
 
+def usable():
+    for path in args.pgn:
+        for result, text in games(path):
+            g = to_text(result, text)
+            if g is not None and all(ord(ch) < 256 and lut[ord(ch)] != 255 for ch in g):
+                yield g
+
+
+lut = np.full(256, 255, dtype=np.uint8)
+for c, i in STOI.items():
+    lut[ord(c)] = i
+keep = None
+if args.max_games:
+    total = sum(1 for _ in usable())                 # first pass: how many usable games there are
+    if total < args.max_games:
+        sys.exit(f"only {total} usable games, fewer than --max-games {args.max_games}")
+    rng = np.random.default_rng(args.seed)
+    keep = np.zeros(total, dtype=bool)
+    keep[rng.choice(total, args.max_games, replace=False)] = True
+    print(f"{total} usable games; keeping a random {args.max_games}", flush=True)
+
 out = Path(args.out)
 out.mkdir(parents=True, exist_ok=True)
 t0 = time.time()
 buf, starts, pos, kept, skipped = bytearray(), [], 0, 0, 0
-lut = np.full(256, 255, dtype=np.uint8)
-for c, i in STOI.items():
-    lut[ord(c)] = i
+n_seen = 0
 for path in args.pgn:
     for result, text in games(path):
         g = to_text(result, text)
         if g is None or any(ord(ch) > 255 or lut[ord(ch)] == 255 for ch in g):
             skipped += 1
+            continue
+        n_seen += 1
+        if keep is not None and not keep[n_seen - 1]:
             continue
         starts.append(pos)
         enc = lut[np.frombuffer(g.encode("ascii"), dtype=np.uint8)]
@@ -88,7 +115,7 @@ for path in args.pgn:
             print(f"\r{kept} games, {pos / 1e6:.0f}M characters, {time.time() - t0:.0f}s", end="", flush=True)
 (out / "tokens.bin").write_bytes(bytes(buf))
 np.save(out / "starts.npy", np.array(starts, dtype=np.int64))
-meta = dict(games=kept, skipped=skipped, characters=pos, val_games=args.val_games, sources=args.pgn,
+meta = dict(games=kept, skipped=skipped, max_games=args.max_games, seed=args.seed, characters=pos, val_games=args.val_games, sources=args.pgn,
             mean_chars=pos / max(kept, 1))
 (out / "meta.json").write_text(json.dumps(meta, indent=1))
 print(f"\n{kept} games ({skipped} skipped), {pos / 1e6:.1f}M characters "
