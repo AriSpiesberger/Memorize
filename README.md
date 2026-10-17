@@ -27,8 +27,8 @@ question ─▶ ┌─────────────────┐
 ```
 
 **Status:** ✅ harness · ✅ baselines · ✅ SFT warm-up (91% strict format) ·
-🔄 GRPO (Mac) · 🔄 label-split (GPU) · 🔄 addition toy (CPU) · 🔄 chess beyond the teachers (GPU) ·
-⬜ memorization
+✅ label-split (4 benchmarks) · 🔄 GRPO (Mac) · 🔄 pure-RL toys: addition, math100 ·
+🔄 chess beyond the teachers (GPU) · ⬜ memorization
 
 ## Quick start
 
@@ -59,6 +59,8 @@ resume if interrupted.
 | Run GRPO / Dr. GRPO                    | `python -m memorize.grpo --model models/sft-fused`           | Mac     |
 | Run the label-split experiment         | `python run_split.py -- --bench mmlu_redux`                 | CUDA    |
 | Download the shared instruct model     | `python -m memorize.hub pull instruct`                       | any     |
+| Train pure RL on 100 math tasks        | `python addition/math100.py --out addition/results/<name>`   | GPU     |
+| See which math100 tasks saturated      | `python addition/math100.py --report addition/results/<name>` | any     |
 
 <details>
 <summary>SFT → fuse → RL → format check, end to end (Mac)</summary>
@@ -97,6 +99,28 @@ python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
 python run_split.py --dry-run
 ```
 
+### What it shows so far
+
+One run and one seed per benchmark, from the instruct model. *Fit* is how often
+the model's answer matches the random label it was trained on. Each cell is
+start of training → end.
+
+| benchmark  | epochs | C: held-out accuracy | A: fit to random labels | B: accuracy on real labels |
+| ---------- | -----: | -------------------- | ----------------------- | -------------------------- |
+| mmlu_pro   |    3.1 | 33.8% → 30.6%        | 11.2% → 83.2%           | 34.2% → 97.4%              |
+| mmlu_redux |      3 | 66.6% → 53.8%        | 25.4% → 93.6%           | 61.2% → 99.2%              |
+| ceval      |      4 | 60.2% → 57.8%        | 28.3% → 100%            | 60.3% → 99.8%              |
+| supergpqa  |      2 | 20.8% → 35.1%        | 9.4% → 46.6%            | 23.0% → 81.0%              |
+
+- The model memorises both the random labels and the real ones, and neither
+  helps on C. Held-out accuracy fell on three of the four benchmarks, most on
+  MMLU-Redux (about 13 points).
+- SuperGPQA is the exception: it started near chance, went up, and had
+  memorised the least (47% fit after 2 epochs).
+- With general-chat replay on (MMLU-Redux), held-out loss on everyday chats
+  moved from 1.22 to 1.30 over 3 epochs, a small drift.
+- Curves and per-run configs are in `results/label-split/`.
+
 ## Chess: beyond the teachers (PyTorch, CUDA)
 
 Can a model trained on human games find the moves those humans miss? The main
@@ -108,15 +132,38 @@ easy puzzles adds ~300 puzzle Elo, barely moves the 2400 rate, and costs ~400 El
 in real games. Everything is in [chess_beyond/](chess_beyond/), with
 results in [chess_beyond/results/transcend/](chess_beyond/results/transcend/summary.md).
 
-## Addition toy (PyTorch, CPU)
+## Pure RL from scratch (PyTorch)
 
-A tiny transformer, randomly initialised, learns n-digit addition from reward
-alone: no pretraining, no supervised loss. It compares a sparse reward (whole
-answer right) with a dense one (per digit) and scores held-out pairs it never
-trained on. See [addition/](addition/) for details.
+What can reward alone teach a **randomly initialised** transformer: no
+pretraining, no supervised loss? Three steps, all in [addition/](addition/).
+
+**1. Addition.** A tiny model learns n-digit addition, comparing a sparse reward
+(whole answer right) with a dense one (per digit), and scoring pairs it never
+trained on (`rl_addition.py`).
+
+**2. A free workspace.** Before answering, the model may write K free characters
+that no reward looks at (`rl_tasks.py`). On modular addition (mod 97) with K=8,
+held-out accuracy reaches 99.8%, but scrambling the workspace into random
+characters leaves it at 99.8%, so the answer does not use it. With no workspace
+(K=0) the same task reaches 98% by step 2000, versus about step 6000 with K=8.
+One seed each, so this is suggestive, not conclusive.
+
+**3. math100.** One model, 100 tasks in ten tiers (one-digit arithmetic up to
+eigenvectors), a task token to tell them apart, and a workspace of up to 64
+characters it can end on its own. The question is the order the tasks saturate
+(90% held-out accuracy). In the overnight run (d=512, batch 256), by step 57,000,
+6 tasks had reached 90%, all tier-1 arithmetic and in this order: `even`,
+`compare`, `double`, `half`, `succ`, `pred`. Nothing above tier 1 has. That run
+set a 2-character workspace minimum (`--min-think 2`) and the model kept it at
+about 2-3 characters, so it has not learned to think longer yet. An earlier
+Mac run (d=256, batch 32, no floor) had only `even` after 18,500 steps. The task
+ranges were widened between the two runs, so don't compare them directly.
 
 ```bash
 python addition/rl_addition.py --n 2 --reward dense --out addition/results/n2-dense.json
+python addition/math100.py --list                                # every task, with an example
+python addition/math100.py --out addition/results/math100        # resumes if a checkpoint exists
+python addition/math100.py --report addition/results/math100     # saturation order
 ```
 
 ## Results so far
@@ -167,7 +214,7 @@ Memorize/
 │   ├── plot_split.py     curves for a label_split run
 │   ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
 │   └── hub.py            push / pull adapters on Hugging Face
-├── addition/             toy: pure RL from random init on n-digit addition (and math100)
+├── addition/             pure RL from random init: addition, workspace tasks, math100
 ├── chess_beyond/         can models trained on humans find the moves humans miss?
 ├── adapters/             LoRA configs + models.json (weights live on HF)
 ├── results/              baselines, plus label-split/<date>_<benchmark>/ per run

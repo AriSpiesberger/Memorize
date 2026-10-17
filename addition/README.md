@@ -1,5 +1,13 @@
 # addition
 
+Pure RL from a **randomly initialised** transformer, in three steps: `rl_addition.py`
+(this page's first half), `rl_tasks.py` (a free workspace, several tasks) and
+`math100.py` (100 tasks, ten tiers). Results are summarised in the
+[main README](../README.md#pure-rl-from-scratch-pytorch); per-run logs live in
+`results/`.
+
+## rl_addition.py
+
 A toy for asking what pure RL can learn with nothing to start from: a tiny
 transformer, **randomly initialised**, taught n-digit addition with no
 pretraining and no supervised loss.
@@ -45,3 +53,33 @@ steps. `--out` saves the args and that log as JSON.
 | `--lr`      |    1e-3 | Adam learning rate               |
 | `--holdout` |     0.2 | fraction of pairs never trained on |
 | `--seed`    |       0 | seed                             |
+
+## rl_tasks.py: a free workspace
+
+Same recipe, several algorithmic tasks, plus `--scratch K`: before answering, the
+model writes K free characters (digits, letters, space) that no reward looks at.
+`--scratch 0` is the no-workspace baseline. Each eval also scores the held-out
+problems with the workspace replaced by random characters (`held_scratch_randomised`):
+if accuracy does not drop, the answer is not using it. Each run saves a few
+held-out examples with their decoded workspace in `samples`.
+
+```bash
+python addition/rl_tasks.py --tasks modadd --scratch 8 --steps 12000 --lr 3e-4 --ent 0.01 --ent-answer 0.3 \
+    --out addition/results/modadd-K8-long.json
+```
+
+## math100.py: a hundred tasks, one model
+
+One model learns 100 tasks in ten tiers at once (task token + plain-text problem),
+with a free-length workspace it can end by emitting `[end-think]` (capped by
+`--max-think`, floored by `--min-think`). A task counts as saturated the first
+time it reaches `--saturate` (default 90%) held-out accuracy; the order is the
+result. Output goes to `--out`: `log.jsonl`, `samples.jsonl`, `args.json` and a
+checkpoint (`ckpt.pt`, gitignored: model files are not pushed). The run resumes
+from the checkpoint if the directory has one.
+
+```bash
+python addition/math100.py --list                            # every task with an example
+python addition/math100.py --out addition/results/math100    # train; GPU recommended
+python addition/math100.py --report addition/results/math100 # saturation order
+```
