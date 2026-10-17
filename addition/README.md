@@ -2,9 +2,7 @@
 
 Pure RL from a **randomly initialised** transformer, in three steps: `rl_addition.py`
 (this page's first half), `rl_tasks.py` (a free workspace, several tasks) and
-`math100.py` (100 tasks, ten tiers). Results are summarised in the
-[main README](../README.md#pure-rl-from-scratch-pytorch); per-run logs live in
-`results/`.
+`math100.py` (100 tasks, ten tiers). Per-run logs live in `results/`.
 
 ## rl_addition.py
 
@@ -30,7 +28,7 @@ Two reward shapes are compared:
 Held-out accuracy is the point: it separates learning the algorithm from
 memorising the training pairs.
 
-## run it
+### run rl_addition.py
 
 CPU only, no GPU needed. From the repo root:
 
@@ -82,4 +80,37 @@ from the checkpoint if the directory has one.
 python addition/math100.py --list                            # every task with an example
 python addition/math100.py --out addition/results/math100    # train; GPU recommended
 python addition/math100.py --report addition/results/math100 # saturation order
+```
+
+## Results so far
+
+What can reward alone teach a **randomly initialised** transformer: no
+pretraining, no supervised loss? 
+**1. Addition.** A tiny model learns n-digit addition, comparing a sparse reward
+(whole answer right) with a dense one (per digit), and scoring pairs it never
+trained on (`rl_addition.py`).
+
+**2. A free workspace.** Before answering, the model may write K free characters
+that no reward looks at (`rl_tasks.py`). On modular addition (mod 97) with K=8,
+held-out accuracy reaches 99.8%, but scrambling the workspace into random
+characters leaves it at 99.8%, so the answer does not use it. With no workspace
+(K=0) the same task reaches 98% by step 2000, versus about step 6000 with K=8.
+One seed each, so this is suggestive, not conclusive.
+
+**3. math100.** One model, 100 tasks in ten tiers (one-digit arithmetic up to
+eigenvectors), a task token to tell them apart, and a workspace of up to 64
+characters it can end on its own. The question is the order the tasks saturate
+(90% held-out accuracy). In the overnight run (d=512, batch 256), by step 57,000,
+6 tasks had reached 90%, all tier-1 arithmetic and in this order: `even`,
+`compare`, `double`, `half`, `succ`, `pred`. Nothing above tier 1 has. That run
+set a 2-character workspace minimum (`--min-think 2`) and the model kept it at
+about 2-3 characters, so it has not learned to think longer yet. An earlier
+Mac run (d=256, batch 32, no floor) had only `even` after 18,500 steps. The task
+ranges were widened between the two runs, so don't compare them directly.
+
+```bash
+python addition/rl_addition.py --n 2 --reward dense --out addition/results/n2-dense.json
+python addition/math100.py --list                                # every task, with an example
+python addition/math100.py --out addition/results/math100        # resumes if a checkpoint exists
+python addition/math100.py --report addition/results/math100     # saturation order
 ```
