@@ -31,6 +31,18 @@ them.
 
 Each folder has its own README with the commands, results and details.
 
+## Layout
+
+```
+Memorize/
+├── memorize/        code for the memorize experiment (MLX on Mac, PyTorch on CUDA)
+├── run_split.py     ├─ its label-split launcher
+├── adapters/        ├─ its LoRA configs and RL logs (weights live on Hugging Face)
+├── results/         └─ its evaluation summaries and label-split runs
+├── addition/        pure RL from random init: rl_addition, rl_tasks, math100
+└── chess_beyond/    chess: imitation, puzzle RL, rating bands, activation probes
+```
+
 ## Getting started
 
 ```bash
