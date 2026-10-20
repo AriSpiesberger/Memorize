@@ -27,6 +27,7 @@ import paths
 from common import ChessNet, save_model
 import json
 from puzzles import fit_elo, ladder, solve
+from probe import DEFAULT as PROBE_DEFAULT, snapshot
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--data", default=str(paths.DATA / "transcend" / "imitation"))
@@ -49,6 +50,8 @@ ap.add_argument("--log-every", type=int, default=200, help="print a progress lin
 ap.add_argument("--ladder-n", type=int, default=300, help="puzzles per stratum in the rating ladder")
 ap.add_argument("--compile", action="store_true", help="torch.compile the model (faster steps, ~1-2 min to compile)")
 ap.add_argument("--data-on-cpu", action="store_true", help="keep training data in RAM instead of GPU memory")
+ap.add_argument("--probe", default=str(PROBE_DEFAULT),
+                help="probe positions for activation snapshots at every eval (probe.py build); '' turns them off")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 
@@ -116,6 +119,9 @@ def validate():
 
 
 os.makedirs(os.path.dirname(args.out), exist_ok=True)
+probe_dir = os.path.splitext(args.out)[0] + "_probe"        # activations, SVD figure and numbers per eval
+if args.probe:
+    snapshot(model, 0, probe_dir, args.probe)                 # the untrained network, for reference
 best, since, t0 = float("inf"), 0, time.time()
 model.train()
 for step in range(1, args.max_steps + 1):
@@ -134,6 +140,8 @@ for step in range(1, args.max_steps + 1):
               f"next eval in {(args.eval_every - step % args.eval_every) / rate / 60:.1f} min", flush=True)
     if step % args.eval_every == 0:
         vl, vt, (elo, (elo_lo, elo_hi)), c, t = validate()
+        if args.probe:
+            snapshot(model, step, probe_dir, args.probe); torch.cuda.empty_cache()
         epoch = step * args.batch / N
         mark = ""
         if vl < best:

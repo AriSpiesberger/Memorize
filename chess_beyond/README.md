@@ -30,6 +30,7 @@ chess_beyond/
 ├── paths.py              where data, runs, models and Stockfish live
 ├── common.py             board encoding, move vocabulary, the policy/value network
 ├── search.py             PUCT tree search using only the network (no engine)
+├── probe.py              activation snapshots: where the network puts fixed positions before it decides
 ├── transcend/            experiment: imitate 1100s, RL on easy puzzles, test on hard ones
 ├── rating_bands/         experiment: which moves each rating finds; builds the puzzle strata
 ├── filter_experiment/    experiment: remove excellent moves from training, try to recover them
@@ -95,6 +96,24 @@ python transcend/plot_results.py
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,
 and 7,156 at 2800, each with a multi-move solution and a rating measured from hundreds of
 attempts. None of their source games is in the training games.
+
+## Activation probe
+
+At every eval, `train.py` and `rl_puzzles.py` save the vector the network decides from (CLS after
+the final LayerNorm) for a fixed set of positions, plot the positions on SVD components 1 and 2,
+coloured by complexity (legal moves), sharpness (Stockfish win% of the best move minus the second
+best) and source (puzzle stratum or game), and log a cross-validated linear-probe R^2 for each.
+Build the probe set once; until it exists the runs skip this.
+
+```bash
+python probe.py build --pgn data/lichess/bands/2025-06-train/1000-1300.pgn      # -> data/probe.jsonl (~2,600 positions)
+python transcend/train.py ...                                # -> runs/transcend/imitation_probe/step<N>.png/.npz, log.jsonl
+python probe.py snapshot --ckpt runs/transcend/rl_step4000.pt                     # any saved checkpoint, after the fact
+python probe.py series --dir runs/transcend/imitation_probe --color sharpness --basis last
+```
+
+`--basis own` gives each step its own SVD; `first`/`last` project every step onto one step's
+axes, so movement between checkpoints shows as drift.
 
 ## Experiment: rating_bands
 
