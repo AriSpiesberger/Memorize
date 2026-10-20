@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
 import paths
 from common import load_model, masked_logits, save_model
 from puzzles import fit_elo, ladder, load, report, solve
+from probe import DEFAULT as PROBE_DEFAULT, snapshot
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--init", required=True)
@@ -53,6 +54,8 @@ ap.add_argument("--eval-every", type=int, default=250)
 ap.add_argument("--keep-every", type=int, default=1000, help="also keep <out>_step<N>.pt every N steps (0 = off)")
 ap.add_argument("--eval-n", type=int, default=2000, help="puzzles per stratum at each eval")
 ap.add_argument("--eval-strata", default="all", help="strata to evaluate (comma list or all); 1100 and 2400 always included")
+ap.add_argument("--probe", default=str(PROBE_DEFAULT),
+                help="probe positions for activation snapshots at every eval (probe.py build); '' turns them off")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 
@@ -102,6 +105,8 @@ def evaluate(step):
     res = {s: solve(policy, pz, dev) for s, pz in evalsets.items()}
     c, t = res["1100"], res["2400"]
     elo, (lo, hi) = fit_elo([p["rating"] for p in lad], solve(policy, lad, dev)["solved"])
+    if args.probe:                                            # step 0 is the starting (imitation) network
+        snapshot(policy, step, os.path.splitext(args.out)[0] + "_probe", args.probe)
     policy.train()
     torch.cuda.empty_cache()
     print(f"[eval step {step}]  PUZZLE ELO {elo:.0f} ({lo:.0f}-{hi:.0f})", flush=True)
