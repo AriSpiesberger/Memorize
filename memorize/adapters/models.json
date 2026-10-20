@@ -7,7 +7,7 @@
     "recipe": {
       "code_commit": "aad35a9",
       "data": "python -m memorize.sft_data",
-      "train": "python -m memorize.sft_torch --out adapters/instruct",
+      "train": "python -m memorize.sft_torch --out memorize/adapters/instruct",
       "data_sha256": {"train.jsonl": "92234522d2e41621", "valid.jsonl": "fdcbf7bca4450523"},
       "environment": "Python 3.12.7, torch 2.11.0+cu128, transformers 5.18.0, peft 0.21.2, datasets 5.1.0, one RTX 4090 (Windows 11)"
     },

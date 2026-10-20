@@ -1,7 +1,7 @@
 """Instruction-tune a base model with a LoRA, watching it learn as it goes.
 
     python -m memorize.sft_data                                  # build data/sft/
-    python -m memorize.sft --out adapters/sft-run2
+    python -m memorize.sft --out memorize/adapters/sft-run2
 
 Prints training loss as it runs, validation loss at regular intervals, and
 after every epoch (and once before training) answers a fixed set of probes:

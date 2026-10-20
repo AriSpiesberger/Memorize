@@ -35,11 +35,8 @@ Each folder has its own README with the commands, results and details.
 
 ```
 Memorize/
-├── memorize/        code for the memorize experiment (MLX on Mac, PyTorch on CUDA)
-├── run_split.py     ├─ its label-split launcher
-├── adapters/        ├─ its LoRA configs and RL logs (weights live on Hugging Face)
-├── results/         └─ its evaluation summaries and label-split runs
-├── addition/        pure RL from random init: rl_addition, rl_tasks, math100
+├── memorize/        reasoning budgets, SFT, RL and label noise on a 2B model (MLX / CUDA)
+├── addition/        pure RL from random init: addition, a free workspace, 100 math tasks
 └── chess_beyond/    chess: imitation, puzzle RL, rating bands, activation probes
 ```
 

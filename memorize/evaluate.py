@@ -4,7 +4,7 @@
 
 Each benchmark is scored on a fixed, seeded sample of questions, so runs with
 the same --n and --split-seed are comparable. Results go to
-results/<name>/<benchmark>.jsonl and can be resumed.
+memorize/results/<name>/<benchmark>.jsonl and can be resumed.
 """
 
 import argparse
@@ -19,7 +19,7 @@ from mlx_lm import load
 from memorize import benchmarks
 from memorize import engine
 
-RESULTS_DIR = Path(__file__).parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent / "results"
 
 
 def evaluate(model, tokenizer, items, out_path, args):
@@ -97,7 +97,7 @@ def summarize(records):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--name", required=True, help="results/<name>/")
+    parser.add_argument("--name", required=True, help="memorize/results/<name>/")
     parser.add_argument("--bench", nargs="+", default=list(benchmarks.BENCHMARKS))
     parser.add_argument("--n", type=int, default=300, help="questions per benchmark")
     parser.add_argument("--split-seed", type=int, default=0)
