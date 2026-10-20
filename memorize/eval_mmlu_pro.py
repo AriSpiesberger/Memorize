@@ -1,7 +1,7 @@
 """MMLU-Pro on the seeded held-out questions, for base or instruction-tuned models.
 
-    python -m memorize.eval_mmlu_pro --mode chat_cot --adapter-path adapters/sft-run1 \
-        --out results/sft-run1-chat-cot/mmlu_pro.jsonl
+    python -m memorize.eval_mmlu_pro --mode chat_cot --adapter-path memorize/adapters/sft-run1 \
+        --out memorize/results/sft-run1-chat-cot/mmlu_pro.jsonl
 
 Few-shot modes port the official MMLU-Pro script for a base (completion) model:
 

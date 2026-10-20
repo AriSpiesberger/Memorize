@@ -48,20 +48,18 @@ resume if interrupted.
 | Train the instruction SFT              | `python -m memorize.sft_data`, then `python -m memorize.sft` | Mac     |
 | Train the same SFT on a GPU            | `python -m memorize.sft_torch`                               | CUDA    |
 | Run GRPO / Dr. GRPO                    | `python -m memorize.grpo --model models/sft-fused`           | Mac     |
-| Run the label-split experiment         | `python run_split.py -- --bench mmlu_redux`                 | CUDA    |
+| Run the label-split experiment         | `python memorize/run_split.py -- --bench mmlu_redux`        | CUDA    |
 | Download the shared instruct model     | `python -m memorize.hub pull instruct`                       | any     |
-| Train pure RL on 100 math tasks        | `python addition/math100.py --out addition/results/<name>`   | GPU     |
-| See which math100 tasks saturated      | `python addition/math100.py --report addition/results/<name>` | any     |
 
 <details>
 <summary>SFT → fuse → RL → format check, end to end (Mac)</summary>
 
 ```bash
 python -m memorize.sft_data
-python -m memorize.sft --out adapters/sft-run2
+python -m memorize.sft --out memorize/adapters/sft-run2
 python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base \
-    --adapter-path adapters/sft-run2 --save-path models/sft-fused
-python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
+    --adapter-path memorize/adapters/sft-run2 --save-path models/sft-fused
+python -m memorize.grpo --model models/sft-fused --out memorize/adapters/grpo-run1
 python -m memorize.eval_format --model models/sft-fused --name sft
 python -m memorize.compare sft drgrpo-run1      # paired test, before vs after
 ```
@@ -78,16 +76,16 @@ training (`--replay-frac`, default 25% of A+B; 0 turns it off), and their
 held-out loss is logged every eval as a fourth panel, so you can see whether
 general ability drifts.
 
-`run_split.py` does everything: venv, requirements, CUDA check, downloads, then
+`memorize/run_split.py` does everything: venv, requirements, CUDA check, downloads, then
 the run. It starts from the instruct model (downloaded from Hugging Face, or
 trained locally if that fails) and needs only Python 3.10+. Output lands in
-`results/label-split/<date>_<benchmark>[_<name>]/` (`train.log`, `metrics.jsonl`, `curves.png`, `adapter/`).
+`memorize/results/label-split/<date>_<benchmark>[_<name>]/` (`train.log`, `metrics.jsonl`, `curves.png`, `adapter/`).
 
 ```bash
-python run_split.py                       # -> results/label-split/2026-10-05_mmlu_pro/
-python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # start from the Mac's MLX SFT
-python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
-python run_split.py --dry-run
+python memorize/run_split.py              # -> memorize/results/label-split/2026-10-05_mmlu_pro/
+python memorize/run_split.py --name mac-sft --mlx-adapter memorize/adapters/sft-run2   # start from the Mac's MLX SFT
+python memorize/run_split.py --name nogold --detach -- --exclude-gold --epochs 6
+python memorize/run_split.py --dry-run
 ```
 
 ### What it shows so far
@@ -110,7 +108,7 @@ start of training → end.
   memorised the least (47% fit after 2 epochs).
 - With general-chat replay on (MMLU-Redux), held-out loss on everyday chats
   moved from 1.22 to 1.30 over 3 epochs, a small drift.
-- Curves and per-run configs are in `results/label-split/`.
+- Curves and per-run configs are in [results/label-split/](results/label-split/).
 
 ## Results so far
 
@@ -157,13 +155,13 @@ memorize/
 ├── label_split.py    A random / B correct / C held-out SFT run
 ├── plot_split.py     curves for a label_split run
 ├── mlx_to_peft.py    convert an MLX LoRA to PEFT
-└── hub.py            push / pull adapters on Hugging Face
+├── hub.py            push / pull adapters on Hugging Face
+├── run_split.py      one-command launcher for the label-split experiment
+├── adapters/         LoRA configs, RL logs and models.json (weights live on Hugging Face)
+└── results/          baselines and label-split/<date>_<benchmark>/ runs
 ```
 
-Alongside it, at the repo root: `run_split.py` (launcher for the label-split
-experiment), `adapters/` (LoRA configs and `models.json`; weights live on Hugging
-Face), `results/` (baselines and `label-split/<date>_<benchmark>/`), and the
-gitignored `data/` (benchmark cache) and `models/` (fused models for RL).
+At the repo root, gitignored: `data/` (benchmark cache) and `models/` (fused models for RL).
 
 Benchmarks: `mmlu_pro` (hard, 10-option) · `mmlu_redux` (MMLU, broken labels
 removed) · `ceval` (Chinese exams) · `supergpqa` (graduate level) · `gpqa`
@@ -174,7 +172,7 @@ removed) · `ceval` (Chinese exams) · `supergpqa` (graduate level) · `gpqa`
 [Arisp/memorize-instruct](https://huggingface.co/Arisp/memorize-instruct) is a
 rank-8 LoRA on `Qwen/Qwen3.5-2B-Base`, trained with `memorize.sft_torch`. Its
 model card holds the exact recipe. Weights are shared through Hugging Face, not
-git; [adapters/models.json](../adapters/models.json) is the registry.
+git; [adapters/models.json](adapters/models.json) is the registry.
 
 ```python
 from peft import PeftModel

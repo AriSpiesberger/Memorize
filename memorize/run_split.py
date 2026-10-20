@@ -1,25 +1,25 @@
 """Set up the environment and launch a label_split run, on Windows or Linux with an NVIDIA GPU.
 
-    python run_split.py                                        # instruction SFT, built if missing
-    python run_split.py --name mac-sft --mlx-adapter adapters/sft-run2   # the Mac's MLX SFT
-    python run_split.py --name nogold --detach -- --exclude-gold --epochs 6
-    python run_split.py --dry-run
+    python memorize/run_split.py                                        # instruction SFT, built if missing
+    python memorize/run_split.py --name mac-sft --mlx-adapter memorize/adapters/sft-run2   # the Mac's MLX SFT
+    python memorize/run_split.py --name nogold --detach -- --exclude-gold --epochs 6
+    python memorize/run_split.py --dry-run
 
 Steps:
   1. create .venv if missing; reinstall requirements.txt whenever it changes
   2. check that torch sees a CUDA GPU
   3. get the starting point, an instruction-SFT LoRA on Qwen3.5-2B-Base:
-       default        adapters/instruct; if it isn't there, pull it from
-                      Hugging Face (Arisp/memorize-instruct, see adapters/models.json), and failing
+       default        memorize/adapters/instruct; if it isn't there, pull it from
+                      Hugging Face (Arisp/memorize-instruct, see memorize/adapters/models.json), and failing
                       that build the instruction data (memorize.sft_data) and
                       train it with memorize.sft_torch (the sft-run2 recipe)
        --mlx-adapter  an MLX LoRA (pulled from the hub if missing), converted
                       to PEFT once
   4. download the model and MMLU-Pro, retrying (HF downloads drop often)
-  5. run `python -m memorize.label_split --out results/label-split/<date>_<benchmark>[_<name>]` inside .venv;
+  5. run `python -m memorize.label_split --out memorize/results/label-split/<date>_<benchmark>[_<name>]` inside .venv;
      anything after `--` is passed on to it
 
-Output lands in results/label-split/<date>_<benchmark>[_<name>]/: train.log, metrics.jsonl, curves.png (redrawn
+Output lands in memorize/results/label-split/<date>_<benchmark>[_<name>]/: train.log, metrics.jsonl, curves.png (redrawn
 after every eval), splits.json, config.json, adapter/. Only the standard library
 is used here, so any Python 3.10+ can start it; the work happens in .venv.
 """
@@ -35,7 +35,7 @@ import venv
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]      # the repo: .venv, requirements.txt, data/ live here
 VENV = ROOT / ".venv"
 PY = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
@@ -76,8 +76,8 @@ def check_cuda():
 
 
 def pull_from_hub(adapter_dir):
-    """Fetch adapters/<name> from the project's HF repo if it is registered there."""
-    reg = json.loads((ROOT / "adapters/models.json").read_text(encoding="utf-8"))
+    """Fetch memorize/adapters/<name> from the project's HF repo if it is registered there."""
+    reg = json.loads((ROOT / "memorize/adapters/models.json").read_text(encoding="utf-8"))
     name = Path(adapter_dir).name
     if name not in reg:
         return
@@ -166,15 +166,15 @@ def main():
     extra = argv[argv.index("--") + 1 :] if "--" in argv else []
     argv = argv[: argv.index("--")] if "--" in argv else argv
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--name", default="", help="optional tag, appended to the folder: results/label-split/<date>_<benchmark>[_<tag>]")
+    p.add_argument("--name", default="", help="optional tag, appended to the folder: memorize/results/label-split/<date>_<benchmark>[_<tag>]")
     p.add_argument("--model", help="base model under the adapter (default Qwen/Qwen3.5-2B-Base, "
                    "or the --mlx-adapter's own base)")
     p.add_argument(
         "--sft",
-        default="adapters/instruct",
+        default="memorize/adapters/instruct",
         help="PEFT instruction-SFT LoRA to start from; trained first if missing (default %(default)s)",
     )
-    p.add_argument("--mlx-adapter", help="start from this MLX LoRA instead (e.g. adapters/sft-run2 from the Mac)")
+    p.add_argument("--mlx-adapter", help="start from this MLX LoRA instead (e.g. memorize/adapters/sft-run2 from the Mac)")
     p.add_argument("--no-adapter", action="store_true", help="start from --model alone, with no LoRA")
     p.add_argument("--detach", action="store_true", help="run in the background")
     p.add_argument("--dry-run", action="store_true", help="set up and print the command, don't start")
@@ -202,7 +202,7 @@ def main():
             print(retry("general data download", ["-m", "memorize.general_data"]).strip())
 
     tag = f"_{args.name}" if args.name else ""
-    out = Path("results/label-split") / f"{datetime.now():%Y-%m-%d}_{bench}{tag}"
+    out = Path("memorize/results/label-split") / f"{datetime.now():%Y-%m-%d}_{bench}{tag}"
     cmd = [str(PY), "-m", "memorize.label_split", "--model", model, "--out", str(out), *adapter, *extra]
     # Everything is cached by now, so skip the flaky HF API calls.
     env = dict(os.environ, HF_HUB_OFFLINE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")

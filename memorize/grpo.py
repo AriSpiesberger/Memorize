@@ -1,8 +1,8 @@
 """GRPO or Dr. GRPO on multiple-choice questions, as a LoRA on mlx-lm.
 
-    python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base --adapter-path adapters/sft-run2 \\
+    python -m mlx_lm fuse --model Qwen/Qwen3.5-2B-Base --adapter-path memorize/adapters/sft-run2 \\
         --save-path models/sft-fused
-    python -m memorize.grpo --model models/sft-fused --out adapters/grpo-run1
+    python -m memorize.grpo --model models/sft-fused --out memorize/adapters/grpo-run1
 
 Each step samples `--questions` training questions and `--group` replies per
 question (temperature 1). A reply earns 1 if its last line is the benchmark's

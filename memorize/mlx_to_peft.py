@@ -1,6 +1,6 @@
 """Convert an mlx-lm LoRA adapter into a PEFT adapter that PyTorch can load.
 
-    python -m memorize.mlx_to_peft --mlx adapters/sft-run2 --out adapters/sft-run2-peft
+    python -m memorize.mlx_to_peft --mlx memorize/adapters/sft-run2 --out memorize/adapters/sft-run2-peft
 
 mlx-lm computes  y = W x + scale * (x @ lora_a) @ lora_b  with lora_a of shape
 (in, r) and lora_b of shape (r, out). PEFT computes

@@ -220,27 +220,27 @@ __marimo__/
 # ---- Memorize ----------------------------------------------------------
 # Benchmark caches and raw rollouts (re-downloadable / large)
 data/
-results/**/*.jsonl
+memorize/results/**/*.jsonl
 # ...except label_split's per-eval metrics, which are the result
-!results/**/metrics.jsonl
+!memorize/results/**/metrics.jsonl
 
 # Adapter weights are shared through Hugging Face (python -m memorize.hub),
-# not git; configs, training records and adapters/models.json stay tracked.
+# not git; configs, training records and memorize/adapters/models.json stay tracked.
 *.safetensors
-adapters/*/epoch*/
-adapters/*/README.md
+memorize/adapters/*/epoch*/
+memorize/adapters/*/README.md
 # PEFT conversions are rebuilt with `python -m memorize.mlx_to_peft`
-adapters/*-peft/
+memorize/adapters/*-peft/
 # Throwaway smoke-test runs
-adapters/*-smoke/
-results/*-smoke/
+memorize/adapters/*-smoke/
+memorize/results/*-smoke/
 
 # Fused full models (several GB), rebuilt with `mlx_lm fuse`
 models/
 
 # Trained adapters inside label_split runs, and stray logs
-results/**/adapter*/
-results/*.log
+memorize/results/**/adapter*/
+memorize/results/*.log
 
 # chess_beyond: downloads, datasets, checkpoints, third-party weights and binaries
 # (everything its scripts rebuild; see chess_beyond/README.md)

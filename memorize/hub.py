@@ -1,13 +1,13 @@
 """Share trained adapters on the Hugging Face Hub, one repo per model.
 
-Adapter weights are not in git. adapters/models.json lists each shared model,
+Adapter weights are not in git. memorize/adapters/models.json lists each shared model,
 its hub repo, how it was made (code commit, commands, data checksums,
 environment) and what it scored; the model card on the hub is generated from
 that entry. Pulling a public repo needs no login; pushing needs `hf auth login`.
 
     python -m memorize.hub list                   # registry, local and hub status
-    python -m memorize.hub pull instruct          # download into adapters/instruct
-    python -m memorize.hub push instruct          # upload adapters/instruct + model card
+    python -m memorize.hub pull instruct          # download into memorize/adapters/instruct
+    python -m memorize.hub push instruct          # upload memorize/adapters/instruct + model card
 
 Loading straight from the hub:
     from peft import PeftModel
@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTERS = ROOT / "adapters"
+ADAPTERS = ROOT / "memorize" / "adapters"
 REGISTRY = ADAPTERS / "models.json"
 GITHUB = "https://github.com/AriSpiesberger/Memorize"
 
@@ -175,7 +175,7 @@ def pull(name, info):
         ),
         f"pull {name}",
     )
-    print(f"pull {name}: {'ok' if is_local(name, info) else 'failed'} -> adapters/{name}", flush=True)
+    print(f"pull {name}: {'ok' if is_local(name, info) else 'failed'} -> memorize/adapters/{name}", flush=True)
 
 
 def show(reg):
@@ -194,7 +194,7 @@ def show(reg):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("action", choices=["list", "push", "pull"])
-    p.add_argument("names", nargs="*", help="models from adapters/models.json (default: all)")
+    p.add_argument("names", nargs="*", help="models from memorize/adapters/models.json (default: all)")
     p.add_argument("--private", action="store_true", help="create the hub repo as private")
     args = p.parse_args()
 
@@ -202,7 +202,7 @@ def main():
     names = args.names or list(reg)
     unknown = [n for n in names if n not in reg]
     if unknown:
-        sys.exit(f"not in adapters/models.json: {', '.join(unknown)}")
+        sys.exit(f"not in memorize/adapters/models.json: {', '.join(unknown)}")
     if args.action == "list":
         show({n: reg[n] for n in names})
     for name in names if args.action != "list" else []:

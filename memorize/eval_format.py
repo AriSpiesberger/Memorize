@@ -1,7 +1,7 @@
 """Measure a chat model on every benchmark, plus general instruction following.
 
     python -m memorize.eval_format --model models/sft-fused --name sft
-    python -m memorize.eval_format --model models/sft-fused --adapter-path adapters/grpo-run1 --name grpo-run1
+    python -m memorize.eval_format --model models/sft-fused --adapter-path memorize/adapters/grpo-run1 --name grpo-run1
 
 For each benchmark, the model answers the first `--n` seeded held-out
 questions zero-shot with that benchmark's EvalScope prompt (see
@@ -15,7 +15,7 @@ Then the 19 instruction probes from `memorize.sft` (format constraints that
 have nothing to do with the benchmarks) show whether RL cost general
 instruction following.
 
-Results go to results/<name>/format_<bench>.jsonl and format_summary.json,
+Results go to memorize/results/<name>/format_<bench>.jsonl and format_summary.json,
 and an interrupted run resumes.
 """
 
@@ -31,7 +31,7 @@ from mlx_lm.sample_utils import make_sampler
 
 from memorize import benchmarks, prompts, sft
 
-RESULTS_DIR = Path(__file__).parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent / "results"
 DEFAULT_BENCH = ["mmlu_pro", "mmlu_redux", "ceval", "supergpqa"]
 
 
@@ -82,7 +82,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default="Qwen/Qwen3.5-2B-Base")
     p.add_argument("--adapter-path")
-    p.add_argument("--name", required=True, help="results/<name>/")
+    p.add_argument("--name", required=True, help="memorize/results/<name>/")
     p.add_argument("--bench", nargs="+", default=DEFAULT_BENCH)
     p.add_argument("--n", type=int, default=100, help="questions per benchmark")
     p.add_argument("--max-new", type=int, default=2048)

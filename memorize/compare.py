@@ -1,7 +1,7 @@
 """Compare two `eval_format` runs question by question.
 
     python -m memorize.eval_format --model models/sft-fused --name sft --n 300
-    python -m memorize.eval_format --model models/sft-fused --adapter-path adapters/drgrpo-run1 \\
+    python -m memorize.eval_format --model models/sft-fused --adapter-path memorize/adapters/drgrpo-run1 \\
         --name drgrpo-run1 --n 300
     python -m memorize.compare sft drgrpo-run1
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from memorize.stats import describe, mcnemar
 
-RESULTS_DIR = Path(__file__).parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent / "results"
 
 
 def load(name, bench):
@@ -26,8 +26,8 @@ def load(name, bench):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("before", help="results/<before>/")
-    p.add_argument("after", help="results/<after>/")
+    p.add_argument("before", help="memorize/results/<before>/")
+    p.add_argument("after", help="memorize/results/<after>/")
     p.add_argument("--bench", nargs="+", default=["mmlu_pro", "mmlu_redux", "ceval", "supergpqa"])
     args = p.parse_args()
 
