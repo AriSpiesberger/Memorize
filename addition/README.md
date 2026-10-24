@@ -64,7 +64,7 @@ held-out examples with their decoded workspace in `samples`.
 
 ```bash
 python addition/rl_tasks.py --tasks modadd --scratch 8 --steps 12000 --lr 3e-4 --ent 0.01 --ent-answer 0.3 \
-    --out addition/results/modadd-K8-long.json
+    --out addition/results/modadd/modadd-K8-long.json
 ```
 
 ## math100.py: a hundred tasks, one model

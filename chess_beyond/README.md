@@ -31,6 +31,7 @@ chess_beyond/
 ├── common.py             board encoding, move vocabulary, the policy/value network
 ├── search.py             PUCT tree search using only the network (no engine)
 ├── probe.py              activation snapshots: where the network puts fixed positions before it decides
+├── modal_app.py          builds the upsampled games database on Modal
 ├── transcend/            experiment: imitate 1100s, RL on easy puzzles, test on hard ones
 ├── rating_bands/         experiment: which moves each rating finds; builds the puzzle strata
 ├── filter_experiment/    experiment: remove excellent moves from training, try to recover them
@@ -42,6 +43,24 @@ chess_beyond/
 ```
 
 Run every command from this folder (`chess_beyond/`) with the repo's venv.
+
+## Running on Modal
+
+`modal_app.py` builds the upsampled games database in the cloud with the same scripts and
+filters: 10 million games per band (both players in the band, base time at least 3 minutes)
+for 1000-1300 and 2400+. Each month streams through its own small container (half a core,
+about $0.03 an hour; at most 6 at once, to go easy on Lichess's servers). Only the band files
+are kept, on the `chess-data` Volume, which is mounted where `paths.py` looks (`data/`).
+
+```bash
+export MODAL_PROFILE=arispiesberger
+modal run modal_app.py::smoke                   # one month, 20,000 games per band
+modal run --detach modal_app.py::build_games    # 40 months, newest first, then merge (keeps running when you close the terminal)
+modal volume ls chess-data lichess/bands/upsampled
+```
+
+The merged bands land in `data/lichess/bands/upsampled/1000-1300.pgn` and `2400+.pgn`, the
+`--pgn` inputs for the rest of the pipeline.
 
 ## Setup
 

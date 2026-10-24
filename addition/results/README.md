@@ -1,15 +1,15 @@
 # addition/results
 
-Logs from the runs described in [../README.md](../README.md). The `.json` files come from
-`rl_tasks.py` (args, eval log and a few held-out samples with their decoded workspace); the
-folders come from `math100.py` (`args.json`, `log.jsonl`, `samples.jsonl`; checkpoints are
-not in git).
+Logs from the runs described in [../README.md](../README.md). The `.json` files in
+[parity/](parity/) and [modadd/](modadd/) come from `rl_tasks.py`: args, eval log and a few
+held-out samples with their decoded workspace. The `math100*` folders come from `math100.py`:
+`args.json`, `log.jsonl` and `samples.jsonl` (checkpoints are not in git).
 
 Several early runs are kept because they show *why* the final settings are what they are:
 without an entropy bonus on the answer (`--ent-answer`), the policy collapses to one constant
 answer within a few hundred steps and never recovers.
 
-## Parity (is the number of 1s odd?)
+## [parity/](parity/): is the number of 1s odd?
 
 | file | bits | workspace | answer entropy bonus | held-out | what it shows |
 | --- | --: | --: | --: | --: | --- |
@@ -22,7 +22,7 @@ answer within a few hundred steps and never recovers.
 
 With 3 bits there are only 8 inputs, so the held-out column is one problem and means nothing.
 
-## Modular addition, (a + b) mod 97
+## [modadd/](modadd/): (a + b) mod 97
 
 | file | workspace | steps | held-out | workspace scrambled | what it shows |
 | --- | --: | --: | --: | --: | --- |
