@@ -18,7 +18,7 @@ huggingface_hub
 numpy
 safetensors
 matplotlib
-modal                                          # chess_beyond/modal_app.py (cloud runs)
+modal                                          # chess_beyond/modal/ (cloud runs)
 
 # macOS: MLX (sft.py, grpo.py, evaluate.py, eval_*.py, chat.py)
 mlx-lm>=0.32; sys_platform == "darwin"

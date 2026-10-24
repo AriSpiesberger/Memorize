@@ -29,7 +29,9 @@ them.
 | [chess_beyond/](chess_beyond/) | Can a model trained on human games find the moves those humans miss? | 🔄 |
 | memory itself | Does adding memory change the answer? | ⬜ |
 
-Each folder has its own README with the commands, results and details.
+Each folder has its own README with the commands, results and details, including
+what runs on a Mac, a home GPU, or Modal. Cloud-only code is kept in its own
+folder (`chess_beyond/modal/`), apart from the code it shares with the home GPU.
 
 ## Layout
 
@@ -37,7 +39,7 @@ Each folder has its own README with the commands, results and details.
 Memorize/
 ├── memorize/        reasoning budgets, SFT, RL and label noise on a 2B model (MLX / CUDA)
 ├── addition/        pure RL from random init: addition, a free workspace, 100 math tasks
-└── chess_beyond/    chess: imitation, puzzle RL, rating bands, activation probes
+└── chess_beyond/    chess: imitation, puzzle RL, rating bands, activation probes (home GPU + Modal)
 ```
 
 ## Getting started

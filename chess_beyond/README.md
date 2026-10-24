@@ -31,7 +31,7 @@ chess_beyond/
 ├── common.py             board encoding, move vocabulary, the policy/value network
 ├── search.py             PUCT tree search using only the network (no engine)
 ├── probe.py              activation snapshots: where the network puts fixed positions before it decides
-├── modal_app.py          builds the upsampled games database on Modal
+├── modal/                the cloud side: Modal apps that build data and train (see modal/README.md)
 ├── transcend/            experiment: imitate 1100s, RL on easy puzzles, test on hard ones
 ├── rating_bands/         experiment: which moves each rating finds; builds the puzzle strata
 ├── filter_experiment/    experiment: remove excellent moves from training, try to recover them
@@ -44,23 +44,34 @@ chess_beyond/
 
 Run every command from this folder (`chess_beyond/`) with the repo's venv.
 
+## Where code runs
+
+Three kinds of code share this folder. Keeping them apart keeps the labs separate:
+
+| kind | where it lives | runs on |
+| --- | --- | --- |
+| **Modal only** | [modal/](modal/) | Modal containers (cloud); needs the `modal` CLI |
+| **Shared** | `paths.py`, `common.py`, `probe.py`, `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_model.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py` | a home GPU or Modal, unchanged. Modal calls these scripts, so editing one changes both |
+| **Home GPU** | everything else: `search.py`, `transcend/` (`train.py`, `rl_puzzles.py`, `eval_puzzles.py`, `play_elo.py`, `pass_at_k.py`, `maia*.py`, ...), `rating_bands/` (`discover.py`, `hard_puzzles.py`, ...), `filter_experiment/` | your own machine (CUDA); not wired to Modal |
+
+Rule of thumb: put logic in the shared or experiment folders, and keep `modal/` to
+container setup, Volumes and calls. Details and commands: [modal/README.md](modal/README.md).
+
 ## Running on Modal
 
-`modal_app.py` builds the upsampled games database in the cloud with the same scripts and
-filters: 10 million games per band (both players in the band, base time at least 3 minutes)
-for 1000-1300 and 2400+. Each month streams through its own small container (half a core,
-about $0.03 an hour; at most 6 at once, to go easy on Lichess's servers). Only the band files
-are kept, on the `chess-data` Volume, which is mounted where `paths.py` looks (`data/`).
+Modal builds the upsampled games database and trains the PGN model in the cloud, with the
+same scripts you would run at home. Run these from this folder; full details are in
+[modal/README.md](modal/README.md).
 
 ```bash
 export MODAL_PROFILE=arispiesberger
-modal run modal_app.py::smoke                   # one month, 20,000 games per band
-modal run --detach modal_app.py::build_games    # 40 months, newest first, then merge (keeps running when you close the terminal)
-modal volume ls chess-data lichess/bands/upsampled
+modal run modal/modal_app.py::smoke                   # one month, 20,000 games per band
+modal run --detach modal/modal_app.py::build_games    # 40 months, newest first, then merge
+modal run --detach modal/modal_train.py::prepare      # SFT data, puzzle strata, probe set
 ```
 
-The merged bands land in `data/lichess/bands/upsampled/1000-1300.pgn` and `2400+.pgn`, the
-`--pgn` inputs for the rest of the pipeline.
+The merged bands land in `data/lichess/bands/upsampled/1000-1300.pgn` and `2400+.pgn` on the
+`chess-data` Volume, which is mounted where `paths.py` looks (`data/`).
 
 ## Setup
 

@@ -5,9 +5,9 @@ both players are in the band and the base time is at least 3 minutes, for the
 1000-1300 band (the imitation data) and 2400+.
 
     export MODAL_PROFILE=arispiesberger
-    modal run modal_app.py::smoke                 # one month, 20,000 games per band
-    modal run --detach modal_app.py::build_games  # every month needed, newest first, then merge
-    modal run modal_app.py::merge                 # re-run the merge alone
+    modal run modal/modal_app.py::smoke                 # one month, 20,000 games per band
+    modal run --detach modal/modal_app.py::build_games  # every month needed, newest first, then merge
+    modal run modal/modal_app.py::merge                 # re-run the merge alone
 
 Each month runs in its own small container (half a core, 1 GiB): collect_games.py
 streams the dump over HTTP and filters as it reads, so the ~30 GB file is never
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent      # chess_beyond/ (this file lives in chess_beyond/modal/)
 REMOTE = "/root/chess_beyond"
 DATA = f"{REMOTE}/data"
 BANDS = f"{DATA}/lichess/bands"
@@ -48,7 +48,7 @@ BANDS_SPEC = {"1000-1300": ("1000,1300", "train"), "2400+": ("2400,4000", "top")
 LATEST = "2025-06"
 N_MONTHS = {"1000-1300": 2, "2400+": 40}
 # How many months stream at once, and the CPU each gets; set at launch, e.g.
-# CHESS_PARALLEL=15 CHESS_CPU=1 modal run modal_app.py::build_games
+# CHESS_PARALLEL=15 CHESS_CPU=1 modal run modal/modal_app.py::build_games
 MAX_PARALLEL = int(os.environ.get("CHESS_PARALLEL", "6"))
 COUNTS_URL = "https://database.lichess.org/standard/counts.txt"
 CPU = float(os.environ.get("CHESS_CPU", "0.5"))
@@ -70,7 +70,7 @@ image = (
     .add_local_dir(
         ROOT,
         REMOTE,
-        ignore=["data", "runs", "models", "tools", "results", "**/__pycache__", "*.pyc"],
+        ignore=["data", "runs", "models", "tools", "results", "modal", "**/__pycache__", "*.pyc"],
     )
 )
 
