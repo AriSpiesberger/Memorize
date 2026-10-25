@@ -18,6 +18,7 @@ replayed; a game with a character outside the vocabulary is skipped.
 """
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -37,18 +38,23 @@ ap.add_argument("--pgn", nargs="+", required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--val-games", type=int, default=5000)
 ap.add_argument("--max-games", type=int, default=0, help="keep a random sample of this many games (0 = all)")
+ap.add_argument("--games", type=int, default=0,
+                help="exactly this many TRAINING games (plus --val-games held out), taken in file order; "
+                     "the files must hold enough usable games (0 = all)")
+ap.add_argument("--exclude-puzzles", nargs="*", default=[],
+                help="folders of puzzles (*.jsonl): games that are the source of any of these puzzles are dropped")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
 
 
 def games(path):
-    """(result, movetext) per game."""
+    """(site, result, movetext) per game."""
     head, moves, in_moves = {}, [], False
     with open(path, encoding="utf-8") as f:
         for line in f:
             if line.startswith("["):
                 if in_moves:
-                    yield head.get("Result"), " ".join(moves)
+                    yield head.get("Site", ""), head.get("Result"), " ".join(moves)
                     head, moves, in_moves = {}, [], False
                 key, _, val = line[1:].partition(" ")
                 head[key] = val.strip().rstrip("]").strip('"')
@@ -56,7 +62,7 @@ def games(path):
                 in_moves = True
                 moves.append(line.strip())
     if in_moves:
-        yield head.get("Result"), " ".join(moves)
+        yield head.get("Site", ""), head.get("Result"), " ".join(moves)
 
 
 def to_text(result, text):
@@ -71,9 +77,25 @@ def to_text(result, text):
     return movetext(sans, result)
 
 
+def game_id(url):
+    """Lichess game id from a Site header or a puzzle's GameUrl (https://lichess.org/<id>[/black][#ply])."""
+    return url.split("lichess.org/", 1)[-1].split("/")[0].split("#")[0][:8]
+
+
+puzzle_games = set()
+if args.exclude_puzzles:
+    import glob
+    for p in [f for d in args.exclude_puzzles for f in glob.glob(os.path.join(d, "*.jsonl"))]:
+        for line in open(p, encoding="utf-8"):
+            puzzle_games.add(game_id(json.loads(line)["game"]))
+    print(f"{len(puzzle_games)} puzzle source games to keep out", flush=True)
+
+
 def usable():
     for path in args.pgn:
-        for result, text in games(path):
+        for site, result, text in games(path):
+            if game_id(site) in puzzle_games:
+                continue
             g = to_text(result, text)
             if g is not None and all(ord(ch) < 256 and lut[ord(ch)] != 255 for ch in g):
                 yield g
@@ -95,10 +117,16 @@ if args.max_games:
 out = Path(args.out)
 out.mkdir(parents=True, exist_ok=True)
 t0 = time.time()
-buf, starts, pos, kept, skipped = bytearray(), [], 0, 0, 0
+buf, starts, pos, kept, skipped, puzzle_dropped = bytearray(), [], 0, 0, 0, 0
 n_seen = 0
+target = args.games + args.val_games if args.games else 0
 for path in args.pgn:
-    for result, text in games(path):
+    if target and kept >= target:
+        break
+    for site, result, text in games(path):
+        if game_id(site) in puzzle_games:
+            puzzle_dropped += 1
+            continue
         g = to_text(result, text)
         if g is None or any(ord(ch) > 255 or lut[ord(ch)] == 255 for ch in g):
             skipped += 1
@@ -113,10 +141,15 @@ for path in args.pgn:
         kept += 1
         if kept % 100000 == 0:
             print(f"\r{kept} games, {pos / 1e6:.0f}M characters, {time.time() - t0:.0f}s", end="", flush=True)
+        if target and kept >= target:
+            break
+if target and kept < target:
+    sys.exit(f"only {kept} usable games in {args.pgn}, fewer than --games {args.games} + --val-games {args.val_games}")
 (out / "tokens.bin").write_bytes(bytes(buf))
 np.save(out / "starts.npy", np.array(starts, dtype=np.int64))
-meta = dict(games=kept, skipped=skipped, max_games=args.max_games, seed=args.seed, characters=pos, val_games=args.val_games, sources=args.pgn,
+meta = dict(games=kept, train_games=kept - args.val_games, skipped=skipped, puzzle_source_games_dropped=puzzle_dropped,
+            exclude_puzzles=args.exclude_puzzles, max_games=args.max_games, seed=args.seed, characters=pos, val_games=args.val_games, sources=args.pgn,
             mean_chars=pos / max(kept, 1))
 (out / "meta.json").write_text(json.dumps(meta, indent=1))
-print(f"\n{kept} games ({skipped} skipped), {pos / 1e6:.1f}M characters "
+print(f"\n{kept} games ({skipped} skipped, {puzzle_dropped} dropped as puzzle source games), {pos / 1e6:.1f}M characters "
       f"(mean {pos / max(kept, 1):.0f} per game) -> {out}")

@@ -32,9 +32,29 @@ ap.add_argument("--width", type=int, default=50, help="each stratum is centre +/
 ap.add_argument("--max-deviation", type=int, default=75, help="only puzzles whose rating is this certain")
 ap.add_argument("--min-plays", type=int, default=300)
 ap.add_argument("--min-moves", type=int, default=2, help="solver moves in the solution (an idea, not one move)")
-ap.add_argument("--per-stratum", type=int, default=5000)
+ap.add_argument("--per-stratum", type=int, default=5000, help="puzzles kept per stratum (0 = every one that qualifies)")
+ap.add_argument("--cap", nargs="*", default=[], help="per-stratum overrides, e.g. 1100:20000")
+ap.add_argument("--out", default=str(paths.LICHESS / "puzzles" / "strata"))
+ap.add_argument("--exclude-games", nargs="*", default=[],
+                help="PGN files of training games: puzzles taken from any of these games are not chosen")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
+
+
+def game_id(url):
+    """Lichess game id from a Site header or a puzzle's GameUrl (https://lichess.org/<id>[/black][#ply])."""
+    return url.split("lichess.org/", 1)[-1].split("/")[0].split("#")[0][:8]
+
+
+excluded = set()
+for path in args.exclude_games:
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith('[Site "'):
+                excluded.add(game_id(line[7:].split('"')[0]))
+if args.exclude_games:
+    print(f"{len(excluded)} training games: puzzles from them are skipped")
+skipped = {}
 
 centers = [int(c) for c in args.centers.split(",")]
 found = {c: [] for c in centers}
@@ -48,25 +68,31 @@ with open(args.csv, "rb") as fh:
             continue
         for c in centers:
             if abs(rating - c) <= args.width:
+                if excluded and game_id(row["GameUrl"]) in excluded:
+                    skipped[c] = skipped.get(c, 0) + 1
+                    continue
                 h = int.from_bytes(hashlib.md5(f"{args.seed}:{row['PuzzleId']}".encode()).digest()[:4], "big")
                 found[c].append((h, row))
 
-out = paths.LICHESS / "puzzles" / "strata"
+out = Path(args.out)
 out.mkdir(parents=True, exist_ok=True)
 expected = lambda solver, puzzle: 1 / (1 + 10 ** ((puzzle - solver) / 400))
 summary = dict(args=vars(args), strata={})
 print(f"strata: centre +/- {args.width}, rating deviation <= {args.max_deviation}, plays >= {args.min_plays}, "
       f">= {args.min_moves} solver moves\n")
+caps = {int(k): int(v) for k, v in (x.split(":") for x in args.cap)}
 for c in centers:
-    rows = [r for _, r in sorted(found[c], key=lambda t: t[0])[:args.per_stratum]]
+    n = caps.get(c, args.per_stratum)
+    rows = [r for _, r in sorted(found[c], key=lambda t: t[0])][: n or None]
     with open(out / f"{c}.jsonl", "w") as f:
         for r in rows:
             f.write(json.dumps(dict(id=r["PuzzleId"], rating=int(r["Rating"]), deviation=int(r["RatingDeviation"]),
                                     plays=int(r["NbPlays"]), fen=r["FEN"], moves=r["Moves"].split(),
                                     themes=r["Themes"].split(), link=f"https://lichess.org/training/{r['PuzzleId']}",
                                     game=r["GameUrl"])) + "\n")
-    summary["strata"][c] = dict(available=len(found[c]), kept=len(rows))
-    print(f"  stratum {c}: {len(found[c]):7d} qualify, kept {len(rows)}")
+    summary["strata"][c] = dict(available=len(found[c]), kept=len(rows), skipped_training_games=skipped.get(c, 0))
+    print(f"  stratum {c}: {len(found[c]):7d} qualify, kept {len(rows)}"
+          + (f" ({skipped.get(c, 0)} skipped: source game in the training games)" if args.exclude_games else ""))
 
 print("\nExpected solve rate (rows: solver rating, columns: stratum)")
 print(f"{'':>8}" + "".join(f"{c:>8}" for c in centers))

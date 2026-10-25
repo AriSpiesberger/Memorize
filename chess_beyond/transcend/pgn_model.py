@@ -5,7 +5,9 @@ e.g. ";1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 ... 1-0", and is never shown the board or the
 rules. Settings follow the paper's ChessFormer: a decoder-only transformer, 16
 layers, d=512, 8 heads, ReLU MLPs, no dropout (~50M parameters).
 
-Vocabulary: the 32 characters below, with ';' starting every game.
+Vocabulary: the 33 characters below, with ';' starting every game. '/' was added
+last (for draws, "1/2-1/2"; without it make_pgn_data.py dropped every drawn game),
+so the first 32 keep their ids and earlier 32-character checkpoints still load.
 
 Playing: the prompt is the game so far in the same format, ending in "<n>." for a
 White move or "<white move> " for a Black one; the model writes characters until
@@ -13,13 +15,14 @@ a space, and the result is parsed as SAN. An illegal or unparseable move is
 resampled; after 5 failures the model loses the game (the paper's rule).
 """
 import math
+import os
 
 import chess
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-VOCAB = " #+-.0123456789;=BKNOQRabcdefghx"     # 32 characters; ';' starts a game
+VOCAB = " #+-.0123456789;=BKNOQRabcdefghx/"    # 33 characters; ';' starts a game, '/' only in "1/2-1/2"
 STOI = {c: i for i, c in enumerate(VOCAB)}
 BOS = STOI[";"]
 SPACE = STOI[" "]
@@ -72,15 +75,15 @@ class Block(nn.Module):
 
 
 class PGNTransformer(nn.Module):
-    def __init__(self, d=512, layers=16, heads=8, ctx=1024):
+    def __init__(self, d=512, layers=16, heads=8, ctx=1024, vocab=len(VOCAB)):
         super().__init__()
-        self.tok = nn.Embedding(len(VOCAB), d)
+        self.tok = nn.Embedding(vocab, d)
         self.pos = nn.Embedding(ctx, d)
         self.blocks = nn.ModuleList(Block(d, heads) for _ in range(layers))
         self.ln = nn.LayerNorm(d)
-        self.head = nn.Linear(d, len(VOCAB), bias=False)
+        self.head = nn.Linear(d, vocab, bias=False)
         self.ctx = ctx
-        self.config = dict(kind="pgn", d=d, layers=layers, heads=heads, ctx=ctx)
+        self.config = dict(kind="pgn", d=d, layers=layers, heads=heads, ctx=ctx, vocab=vocab)
         self.apply(self._init)
         for name, p in self.named_parameters():        # GPT-2 scaled init for residual projections
             if name.endswith("proj.weight") or name.endswith("mlp.2.weight"):
@@ -95,21 +98,28 @@ class PGNTransformer(nn.Module):
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, 0.0, 0.02)
 
-    def forward(self, idx):
+    def features(self, idx):
+        """Last-layer states after the final LayerNorm, (batch, time, d): what the head reads."""
         t = idx.shape[1]
         x = self.tok(idx) + self.pos(torch.arange(t, device=idx.device))
         for blk in self.blocks:
             x = blk(x)
-        return self.head(self.ln(x))
+        return self.ln(x)
+
+    def forward(self, idx):
+        return self.head(self.features(idx))
 
 
 def save_pgn_model(model, path, extra=None):
-    torch.save({"config": model.config, "state": model.state_dict(), "extra": extra or {}}, path)
+    tmp = f"{path}.tmp"                     # write then rename, so a crash never leaves a half-written checkpoint
+    torch.save({"config": model.config, "state": model.state_dict(), "extra": extra or {}}, tmp)
+    os.replace(tmp, path)
 
 
 def load_pgn_model(path, device="cpu"):
     ck = torch.load(path, map_location=device)
     cfg = {k: v for k, v in ck["config"].items() if k != "kind"}
+    cfg.setdefault("vocab", ck["state"]["tok.weight"].shape[0])     # 32 for checkpoints from before '/'
     m = PGNTransformer(**cfg).to(device)
     m.load_state_dict(ck["state"])
     return m

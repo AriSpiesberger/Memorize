@@ -15,11 +15,26 @@ position. The first --val-games games (make_pgn_data.py) are held out.
 Every --eval-every steps: held-out loss, and the checkpoint if it is the best so
 far; <out>_log.jsonl gets a line per eval. Playing strength comes from
 play_elo.py, which plays this model against Maia-2 at any --temperature.
+
+Also at every eval (and before training), when the probe set exists
+(pgn_probe.py build), an activation snapshot into <out>_pgn_probe/: the last
+layer's state just before the model moves, for ~10,000 held-out game positions,
+as density heatmaps on singular vectors 1-3 with 10 labelled positions marked.
+
+Early stopping: training ends when the held-out loss hasn't improved for --patience
+evals in a row, counted only after --min-epochs passes over the data (1 by default);
+the checkpoint is always the best one. When the run ends (early stop or --steps),
+the resume state is deleted, leaving the checkpoint, the logs and the probe folder.
+
+Resuming: every eval also writes <out>_state.pt (model, optimizer, step, best
+loss, random state). --resume continues from it, so a run longer than one
+cloud container's time limit can go on in the next one.
 """
 import argparse
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -29,7 +44,9 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+import paths
 from pgn_model import PGNTransformer, save_pgn_model
+from pgn_probe import DEFAULT as PROBE_DEFAULT, snapshot
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--data", required=True, help="make_pgn_data.py output folder")
@@ -47,16 +64,47 @@ ap.add_argument("--warmup", type=int, default=2000)
 ap.add_argument("--steps", type=int, default=100_000, help="length of the cosine schedule (paper: 100K)")
 ap.add_argument("--stop-step", type=int, default=0, help="end here without changing the schedule (0 = --steps)")
 ap.add_argument("--eval-every", type=int, default=1000)
+ap.add_argument("--probe-every", type=int, default=0, help="activation snapshot every N steps (0 = every eval)")
 ap.add_argument("--log-every", type=int, default=50)
 ap.add_argument("--compile", action="store_true", help="torch.compile the model")
+ap.add_argument("--compile-mode", default="default",
+                choices=["default", "max-autotune-no-cudagraphs", "max-autotune"],
+                help="torch.compile mode: max-autotune tries more GPU kernels (slower to compile) and, "
+                     "without -no-cudagraphs, also uses CUDA graphs. Same maths in every mode.")
 ap.add_argument("--gpu-mem-frac", type=float, default=0.92)
+ap.add_argument("--probe", default=str(PROBE_DEFAULT),
+                help="pgn_probe.py build folder for activation snapshots at every eval; '' turns them off")
+ap.add_argument("--resume", action="store_true", help="continue from <out>_state.pt if it exists")
+ap.add_argument("--overwrite", action="store_true", help="start over even if <out> holds a finished run")
+ap.add_argument("--init", default="", help="start from this checkpoint's weights (fresh optimizer and schedule)")
+ap.add_argument("--patience", type=int, default=8,
+                help="stop after this many evals without a better held-out loss (counted after --min-epochs; 0 = never)")
+ap.add_argument("--min-epochs", type=float, default=1.0,
+                help="early stopping can only count once this many passes over the training data are done")
+ap.add_argument("--min-delta", type=float, default=0.0, help="improvement that counts as better")
+ap.add_argument("--device", default="cuda", help="cuda for real runs; cpu for a quick local smell test")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
+if args.probe and not os.path.exists(os.path.join(args.probe, "population.jsonl")):
+    sys.exit(f"no probe set at {args.probe}, so this run would make no plots: build it first "
+             f"(pgn_probe.py build, or modal_train.py::prepare), or pass --probe '' to train without them")
 
 torch.manual_seed(args.seed)
-dev = "cuda"
-torch.cuda.set_per_process_memory_fraction(args.gpu_mem_frac)
-torch.backends.cuda.matmul.allow_tf32 = True
+dev = args.device
+cuda = dev == "cuda"
+if cuda:
+    torch.cuda.set_per_process_memory_fraction(args.gpu_mem_frac)
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+
+def autocast():
+    """bf16 on the GPU; plain float32 elsewhere."""
+    return torch.autocast("cuda", dtype=torch.bfloat16) if cuda else torch.autocast("cpu", enabled=False)
+
+
+def empty_cache():
+    if cuda:
+        torch.cuda.empty_cache()
 
 data = Path(args.data)
 meta = json.loads((data / "meta.json").read_text())
@@ -77,11 +125,11 @@ print(f"{meta['games']} games, {len(tokens) / 1e6:.0f}M characters; {len(train_s
 
 model = PGNTransformer(args.d, args.layers, args.heads, args.ctx).to(dev)
 print(f"model: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M params", flush=True)
-fwd = torch.compile(model) if args.compile else model
+fwd = torch.compile(model, mode=args.compile_mode) if args.compile else model
 decay = [p for n, p in model.named_parameters() if p.dim() >= 2]
 no_decay = [p for n, p in model.named_parameters() if p.dim() < 2]
 opt = torch.optim.AdamW([dict(params=decay, weight_decay=args.weight_decay), dict(params=no_decay, weight_decay=0.0)],
-                        lr=args.lr, betas=(0.9, 0.95), fused=True)
+                        lr=args.lr, betas=(0.9, 0.95), fused=cuda)
 
 
 def lr_at(step):
@@ -104,29 +152,70 @@ def validate(rows=512):
     total = 0.0
     for _ in range(rows // args.micro):
         x, y = batch(val_starts, args.micro, g)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with autocast():
             logits = model(x)
         total += F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), y.reshape(-1)).item()
     model.train()
-    torch.cuda.empty_cache()
+    empty_cache()
     return total / (rows // args.micro)
 
 
 os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-log_path = os.path.splitext(args.out)[0] + "_log.jsonl"
-best, t0, last = float("inf"), time.time(), time.time()
+stem = os.path.splitext(args.out)[0]
+log_path, state_path, probe_dir = stem + "_log.jsonl", stem + "_state.pt", stem + "_pgn_probe"
+best, since, first = float("inf"), 0, 1
+if os.path.exists(args.out) and not os.path.exists(state_path) and not args.overwrite:
+    # a finished run leaves its checkpoint but no resume state: starting again would overwrite it
+    sys.exit(f"{args.out} is a finished run's checkpoint and there is no resume state; "
+             f"use another --out, or --overwrite to start over")
+if args.resume and os.path.exists(state_path):
+    st = torch.load(state_path, map_location=dev, weights_only=False)
+    model.load_state_dict(st["model"])
+    opt.load_state_dict(st["opt"])
+    torch.set_rng_state(st["rng_cpu"].cpu())
+    if cuda:
+        torch.cuda.set_rng_state(st["rng_cuda"].cpu())
+    best, since, first = st["best"], st.get("since", 0), st["step"] + 1
+    print(f"resumed from {state_path} at step {st['step']} (best held-out loss {best:.4f}, "
+          f"{since} evals without improvement)", flush=True)
+else:
+    if args.init:                    # weights only: the optimizer, warmup and schedule start fresh
+        src = torch.load(args.init, map_location=dev, weights_only=False)
+        model.load_state_dict(src["state"])
+        print(f"started from the weights in {args.init} (its step {src['extra'].get('step')}, "
+              f"held-out loss {src['extra'].get('val_loss', float('nan')):.4f})", flush=True)
+    if args.probe:
+        snapshot(model, 0, probe_dir, args.probe, title=Path(args.out).stem)    # the starting network
+        empty_cache()
+
+
+def save_state(step):
+    tmp = state_path + ".tmp"
+    torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=step, best=best, since=since,
+                    rng_cpu=torch.get_rng_state(), rng_cuda=torch.cuda.get_rng_state() if cuda else None, args=vars(args)), tmp)
+    os.replace(tmp, state_path)                  # never leave a half-written state behind
+
+
+tokens_per_step = accum * args.micro * args.ctx
+min_steps = max(args.warmup, math.ceil(args.min_epochs * len(tokens) / tokens_per_step))
+print(f"one epoch = {len(tokens) / tokens_per_step:,.0f} steps; early stopping counts from step {min_steps:,}"
+      f" (patience {args.patience} evals)", flush=True)
+finished = False
+t0, last = time.time(), time.time()
 model.train()
-for step in range(1, args.steps + 1):
+for step in range(first, args.steps + 1):
     for g in opt.param_groups:
         g["lr"] = lr_at(step)
-    total = 0.0
+    total = torch.zeros((), device=dev)          # stays on the GPU: no sync until it is printed
     for _ in range(accum):
         x, y = batch(train_starts, args.micro)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        if args.compile and args.compile_mode == "max-autotune":
+            torch.compiler.cudagraph_mark_step_begin()    # each pass gets its own graph outputs
+        with autocast():
             logits = fwd(x)
         loss = F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), y.reshape(-1)) / accum
         loss.backward()
-        total += loss.item()
+        total += loss.detach()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     opt.step()
     opt.zero_grad(set_to_none=True)
@@ -134,20 +223,40 @@ for step in range(1, args.steps + 1):
         now = time.time()
         rate = args.log_every / (now - last)
         last = now
-        print(f"  step {step}  train loss {total:.4f}  lr {lr_at(step):.2e}  {rate:.2f} steps/s  "
+        print(f"  step {step}  train loss {total.item():.4f}  lr {lr_at(step):.2e}  {rate:.2f} steps/s  "
               f"~{(args.steps - step) / max(rate, 1e-9) / 3600:.1f} h left", flush=True)
     if step % args.eval_every == 0 or step == args.stop_step:
         vl = validate()
         mark = ""
-        if vl < best:
-            best, mark = vl, "  * saved"
+        if vl < best - args.min_delta:
+            best, since, mark = vl, 0, "  * saved"
             save_pgn_model(model, args.out, extra=dict(step=step, val_loss=vl, args=vars(args)))
-        print(f"step {step}  held-out loss {vl:.4f} ({vl / math.log(2):.3f} bits/char)  "
+        elif step >= min_steps:
+            since += 1
+            mark = f"  ({since}/{args.patience} without improvement)" if args.patience else ""
+        print(f"step {step}  held-out loss {vl:.4f} ({vl / math.log(2):.3f} bits/char)  lr {lr_at(step):.2e}  "
               f"{(time.time() - t0) / 3600:.1f} h{mark}", flush=True)
         with open(log_path, "a", encoding="utf-8") as lf:
-            lf.write(json.dumps(dict(step=step, val_loss=vl, train_loss=total)) + "\n")
+            lf.write(json.dumps(dict(step=step, val_loss=vl, train_loss=total.item(), lr=lr_at(step), best=best,
+                                     since=since)) + "\n")
+        if args.probe and (not args.probe_every or step % args.probe_every == 0):
+            snapshot(model, step, probe_dir, args.probe, title=Path(args.out).stem)
+            empty_cache()
+        save_state(step)
         last = time.time()
+        if args.patience and since >= args.patience:
+            print(f"held-out loss hasn't improved for {since} evals; stopping (best {best:.4f})", flush=True)
+            finished = True
+            break
     if args.stop_step and step >= args.stop_step:
         print(f"reached --stop-step {args.stop_step}; stopping")
         break
+else:
+    finished = not args.stop_step or args.stop_step >= args.steps
+if finished and os.path.exists(args.out):
+    shutil.copyfile(args.out, stem + "-final.pt")    # a second copy no relaunch writes to
+    print(f"run finished; best checkpoint also copied to {stem}-final.pt", flush=True)
+if finished and os.path.exists(state_path):
+    os.remove(state_path)            # the run is over: the resume state (~600 MB) is no longer needed
+    print(f"run finished; removed {state_path}", flush=True)
 print(f"best held-out loss {best:.4f}; checkpoint {args.out}")
