@@ -31,12 +31,9 @@ comparable across training, and the same probe set serves every model.
 train_pgn.py calls snapshot() at every eval when data/pgn_probe/ exists (--probe).
 """
 import argparse
-import io
 import json
-import math
 import os
 import random
-import zlib
 import sys
 from pathlib import Path
 
@@ -49,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/: 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/: paths, probe
 import paths
 from pgn_model import SPACE, VOCAB, encode, prompt
-from probe import corr
+from probe import corr, probe_r2
 
 DEFAULT = paths.DATA / "pgn_probe"
 VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
@@ -130,27 +127,6 @@ def population(data_dirs, names, per_band, min_ply, rng, per_game=1):
         rows += band
         print(f"{name}: {len(band)} positions from {len(per_game_rows)} held-out games in {d}")
     return rows
-
-
-def grouped_r2(H, y, groups, folds=5, lam=1.0):
-    """probe.probe_r2, but folds split by game, so positions from one game never sit on both
-    sides of a fold."""
-    ok = ~np.isnan(y)
-    if ok.sum() < 50 or np.nanstd(y) == 0:
-        return None
-    X, y, groups = H[ok], y[ok], groups[ok]
-    fold = np.array([zlib.crc32(g.encode()) % folds for g in groups])          # stable across runs
-    pred = np.empty_like(y)
-    for f in range(folds):
-        te, tr = fold == f, fold != f
-        if te.sum() == 0 or tr.sum() == 0:
-            return None
-        mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-6
-        Xt = (X[tr] - mu) / sd
-        ym = y[tr].mean()
-        w = np.linalg.solve(Xt.T @ Xt + lam * tr.sum() * np.eye(X.shape[1]), Xt.T @ (y[tr] - ym))
-        pred[te] = (X[te] - mu) / sd @ w + ym
-    return float(1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum())
 
 
 # ----------------------------------------------------------------- the 10 labelled positions
@@ -428,7 +404,7 @@ def snapshot(model, step, out_dir, probe=DEFAULT, title="PGN model", every_n=200
     groups = np.array([f"{r['band']}:{r.get('game', i)}" for i, r in enumerate(pop)])
     for m, y in labels.items():
         if not np.isnan(y).all():
-            stats[m] = dict(r2=grouped_r2(Hp, y, groups), corr=[corr(zp[:, j], y) for j in range(3)])
+            stats[m] = dict(r2=probe_r2(Hp, y, groups=groups), corr=[corr(zp[:, j], y) for j in range(3)])
     stats["labelled"] = [dict(label=r["label"], z=[round(float(v), 3) for v in z], greedy=bool(g),
                               surprise=round(float(s), 3)) for r, z, g, s in zip(lab, zl, gl, sl)]
     with open(log_path, "w" if step == 0 else "a", encoding="utf-8") as f:

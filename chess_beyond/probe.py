@@ -30,6 +30,7 @@ import os
 import random
 import re
 import sys
+import zlib
 from pathlib import Path
 
 import chess
@@ -178,17 +179,28 @@ def metric(rows, name):
     return np.array([np.nan if r.get(name) is None else float(r[name]) for r in rows])
 
 
-def probe_r2(H, y, folds=5, lam=1.0, seed=0):
-    """Cross-validated R^2 of a ridge regression from the full activation vector to y."""
+def probe_r2(H, y, folds=5, lam=1.0, seed=0, groups=None):
+    """Cross-validated R^2 of a ridge regression from the full activation vector to y.
+    Folds are random (seeded), or, given `groups` (e.g. a game id per position), split by group,
+    so rows from one group never sit on both sides of a fold (stable across runs)."""
     ok = ~np.isnan(y)
     if ok.sum() < 50 or np.nanstd(y) == 0:
         return None
     X, y = H[ok], y[ok]
-    idx = np.random.default_rng(seed).permutation(len(y)); pred = np.empty_like(y)
+    if groups is None:
+        fold = np.empty(len(y), dtype=int)
+        fold[np.random.default_rng(seed).permutation(len(y))] = np.arange(len(y)) % folds
+    else:
+        fold = np.array([zlib.crc32(g.encode()) % folds for g in groups[ok]])
+    pred = np.empty_like(y)
     for f in range(folds):
-        te = idx[f::folds]; tr = np.setdiff1d(idx, te)
-        mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-6; Xt = (X[tr] - mu) / sd; ym = y[tr].mean()
-        w = np.linalg.solve(Xt.T @ Xt + lam * len(tr) * np.eye(X.shape[1]), Xt.T @ (y[tr] - ym))
+        te, tr = fold == f, fold != f
+        if te.sum() == 0 or tr.sum() == 0:
+            return None
+        mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-6
+        Xt = (X[tr] - mu) / sd
+        ym = y[tr].mean()
+        w = np.linalg.solve(Xt.T @ Xt + lam * tr.sum() * np.eye(X.shape[1]), Xt.T @ (y[tr] - ym))
         pred[te] = (X[te] - mu) / sd @ w + ym
     return float(1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum())
 
