@@ -31,6 +31,7 @@ chess_beyond/
 ├── common.py             board encoding, move vocabulary, the policy/value network
 ├── search.py             PUCT tree search using only the network (no engine)
 ├── intervals.py          Wilson confidence intervals for the rates reported (home GPU)
+├── lichess_ids.py        Lichess game ids from Site headers and puzzle URLs (shared with Modal)
 ├── probe.py              activation snapshots: where the network puts fixed positions before it decides
 ├── modal/                the cloud side: Modal apps that build data and train (see modal/README.md)
 ├── transcend/            experiment: imitate 1100s, RL on easy puzzles, test on hard ones
@@ -52,7 +53,7 @@ Three kinds of code share this folder. Keeping them apart keeps the labs separat
 | kind | where it lives | runs on |
 | --- | --- | --- |
 | **Modal only** | [modal/](modal/) | Modal containers (cloud); needs the `modal` CLI |
-| **Shared** | `paths.py`, `common.py`, `probe.py`, `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_model.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py` | a home GPU or Modal, unchanged. Modal calls these scripts, so editing one changes both |
+| **Shared** | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_model.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py` | a home GPU or Modal, unchanged. Modal calls these scripts, so editing one changes both |
 | **Home GPU** | everything else: `search.py`, `intervals.py`, `transcend/` (`train.py`, `rl_puzzles.py`, `eval_puzzles.py`, `play_elo.py`, `pass_at_k.py`, `maia*.py`, ...), `rating_bands/` (`discover.py`, `hard_puzzles.py`, ...), `filter_experiment/` | your own machine (CUDA); not wired to Modal |
 
 Rule of thumb: put logic in the shared or experiment folders, and keep `modal/` to

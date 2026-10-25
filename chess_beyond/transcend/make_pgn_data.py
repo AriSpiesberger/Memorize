@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+from lichess_ids import game_id
 from pgn_model import STOI, movetext
 
 COMMENT = re.compile(r"\{[^}]*\}")
@@ -75,11 +76,6 @@ def to_text(result, text):
     if not sans or result not in RESULTS:
         return None
     return movetext(sans, result)
-
-
-def game_id(url):
-    """Lichess game id from a Site header or a puzzle's GameUrl (https://lichess.org/<id>[/black][#ply])."""
-    return url.split("lichess.org/", 1)[-1].split("/")[0].split("#")[0][:8]
 
 
 puzzle_games = set()

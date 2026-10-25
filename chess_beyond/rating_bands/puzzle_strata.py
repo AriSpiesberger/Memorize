@@ -24,6 +24,7 @@ import zstandard
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: paths.py
 import paths
+from lichess_ids import game_id
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--csv", default=str(paths.LICHESS / "lichess_db_puzzle.csv.zst"))
@@ -39,11 +40,6 @@ ap.add_argument("--exclude-games", nargs="*", default=[],
                 help="PGN files of training games: puzzles taken from any of these games are not chosen")
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
-
-
-def game_id(url):
-    """Lichess game id from a Site header or a puzzle's GameUrl (https://lichess.org/<id>[/black][#ply])."""
-    return url.split("lichess.org/", 1)[-1].split("/")[0].split("#")[0][:8]
 
 
 excluded = set()
