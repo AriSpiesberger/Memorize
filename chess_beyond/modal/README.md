@@ -19,6 +19,10 @@ export MODAL_PROFILE=arispiesberger
 | `chess-beyond-data` | [modal_app.py](modal_app.py) | CPU, half a core per month | builds the upsampled games database: 10M games per band (both players in the band, base time >= 3 min) for 1000-1300 and 2400+ |
 | `chess-beyond-train` | [modal_train.py](modal_train.py) | CPU for `prepare`, GPU for training (default A100-80GB, `CHESS_GPU=H100` to change) | builds the SFT data, puzzle strata and probe set, then trains the PGN model per band |
 
+Both apps build on [modal_shared.py](modal_shared.py): the mount point, the `chess-data` Volume,
+the rating bands, `months_back`, and `lab_image()`, the container image that carries the lab's
+code. Change the image or the bands there, once.
+
 ```bash
 # database
 modal run modal/modal_app.py::smoke                    # one month, 20,000 games per band

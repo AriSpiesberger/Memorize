@@ -31,17 +31,13 @@ from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parent.parent      # chess_beyond/ (this file lives in chess_beyond/modal/)
-REMOTE = "/root/chess_beyond"
-DATA = f"{REMOTE}/data"
+from modal_shared import BANDS_SPEC, DATA, DATA_VOLUME, REMOTE, ROOT, lab_image, months_back
+
 BANDS = f"{DATA}/lichess/bands"
 
 # The transcend recipe (README: collect_games.py --bands 1000,1300 --min-base 180).
 MIN_BASE = 180
 PER_BAND = 10_000_000
-# collect_games.py turns consecutive edges into bands, so the two ranges run as
-# separate passes; one pass over "1000,1300,2400,4000" would also keep 1300-2400.
-BANDS_SPEC = {"1000-1300": ("1000,1300", "train"), "2400+": ("2400,4000", "top")}
 # Months to read, newest first. From a sample of 2025-06 and 2023-06: ~7.2M
 # 1000-1300 games and ~0.3M 2400+ games per month at >= 3 minutes, so
 # 1000-1300 fills in 2 months and 2400+ in ~33; 40 months leaves a margin.
@@ -63,25 +59,9 @@ def git_commit():
 
 
 app = modal.App("chess-beyond-data")
-volume = modal.Volume.from_name("chess-data", create_if_missing=True)
-image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install("zstandard", "chess")
-    .add_local_dir(
-        ROOT,
-        REMOTE,
-        ignore=["data", "runs", "models", "tools", "results", "modal", "**/__pycache__", "*.pyc"],
-    )
-)
+volume = modal.Volume.from_name(DATA_VOLUME, create_if_missing=True)
+image = lab_image("zstandard", "chess")
 
-
-def months_back(latest, n):
-    y, m = map(int, latest.split("-"))
-    out = []
-    for _ in range(n):
-        out.append(f"{y:04d}-{m:02d}")
-        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
-    return out
 
 
 def official_count(month):

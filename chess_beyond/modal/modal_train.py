@@ -45,16 +45,15 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parent.parent      # chess_beyond/ (this file lives in chess_beyond/modal/)
-REMOTE = "/root/chess_beyond"
-DATA, RUNS = f"{REMOTE}/data", f"{REMOTE}/runs"
-BANDS = ["1000-1300", "2400+"]
-TAG = {"1000-1300": "train", "2400+": "top"}         # modal_app.py's per-month folders: <month>-<tag>/
+from modal_shared import BANDS_SPEC, DATA, DATA_VOLUME, REMOTE, lab_image, months_back
+
+RUNS = f"{REMOTE}/runs"
+BANDS = list(BANDS_SPEC)
+TAG = {band: tag for band, (_, tag) in BANDS_SPEC.items()}   # per-month folders: <month>-<tag>/
 SFT_GAMES, EXTRA = 10_000_000, 100_000
 # Sequences per forward pass; the step stays 131,072 characters (accumulation fills the rest), so this
 # changes speed, not training: 64 -> 2 passes per step, 128 -> 1. CHESS_MICRO=128 for big-memory GPUs.
@@ -76,13 +75,9 @@ GPU = os.environ.get("CHESS_GPU", "B200")           # measured fastest and cheap
 HANDOVER = 23 * 60 * 60                      # seconds before a fresh container takes over
 
 app = modal.App("chess-beyond-train")
-data = modal.Volume.from_name("chess-data", create_if_missing=True)
+data = modal.Volume.from_name(DATA_VOLUME, create_if_missing=True)
 runs = modal.Volume.from_name("chess-runs", create_if_missing=True)
-image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install("torch==2.11.*", "numpy", "chess", "zstandard", "matplotlib")
-    .add_local_dir(ROOT, REMOTE, ignore=["data", "runs", "models", "tools", "results", "modal", "**/__pycache__", "*.pyc"])
-)
+image = lab_image("torch==2.11.*", "numpy", "chess", "zstandard", "matplotlib")
 
 
 def sh(cmd):
@@ -109,13 +104,6 @@ def puzzle_strata():
         sh([sys.executable, "rating_bands/puzzle_strata.py", *flags, *QUALITY, "--out", str(out),
             "--exclude-games", *[f"data/lichess/bands/upsampled/{b}.pgn" for b in BANDS]])
         data.commit()
-
-
-def months_back(month, n):
-    y, m = map(int, month.split("-"))
-    for _ in range(n):
-        yield f"{y:04d}-{m:02d}"
-        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
 
 
 def sft_extra(band, n=EXTRA):
