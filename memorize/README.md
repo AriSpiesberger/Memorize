@@ -149,8 +149,9 @@ memorize/
 ├── stats.py          McNemar's exact test and intervals
 ├── sft_data.py       build the instruction-tuning set
 ├── sft.py            LoRA SFT on MLX          (sft_torch.py: same on CUDA)
+├── sft_common.py     chat tokenising and batching shared by both SFT scripts
 ├── general_data.py   build the math/science-free replay chats
-├── probes.py         instruction-following probes
+├── probes.py         instruction-following probes and their printout
 ├── grpo.py           GRPO / Dr. GRPO with a KL penalty
 ├── label_split.py    A random / B correct / C held-out SFT run
 ├── plot_split.py     curves for a label_split run

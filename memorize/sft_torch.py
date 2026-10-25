@@ -29,7 +29,8 @@ import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from memorize.probes import INSTRUCTION_PROBES
+from memorize.probes import INSTRUCTION_PROBES, show
+from memorize.sft_common import load_split, pack
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "sft"
 # Every linear layer in a Qwen3.5 block, as mlx-lm's linear_to_lora_layers picks them.
@@ -38,37 +39,6 @@ TARGETS = [
     "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj",
     "gate_proj", "up_proj", "down_proj",
 ]
-
-
-def load_split(path, tokenizer, max_seq):
-    """Token ids and prompt length per chat; the loss covers what follows the prompt."""
-    rows, skipped = [], 0
-    for line in open(path, encoding="utf-8"):
-        messages = json.loads(line)["messages"]
-        full = tokenizer.apply_chat_template(messages, tokenize=False)
-        prompt = tokenizer.apply_chat_template(
-            messages[:-1], tokenize=False, add_generation_prompt=True, enable_thinking=False
-        )
-        ids = tokenizer.encode(full, add_special_tokens=False)[:max_seq]
-        n_prompt = len(tokenizer.encode(prompt, add_special_tokens=False))
-        if not full.startswith(prompt) or n_prompt >= len(ids):
-            skipped += 1
-            continue
-        rows.append((ids, n_prompt))
-    return rows, skipped
-
-
-def pack(rows, max_tokens):
-    """Length-sorted groups whose padded size (rows x longest) fits `max_tokens`."""
-    batches, current = [], []
-    for row in sorted(rows, key=lambda r: len(r[0])):
-        if current and (len(current) + 1) * len(row[0]) > max_tokens:
-            batches.append(current)
-            current = []
-        current.append(row)
-    if current:
-        batches.append(current)
-    return batches
 
 
 def loss_sum(model, rows, pad_id):
@@ -103,10 +73,6 @@ def evaluate(model, rows, max_tokens, pad_id):
 def run_probes(model, tokenizer, label):
     model.eval()
     stops = [tokenizer.convert_tokens_to_ids("<|im_end|>"), tokenizer.eos_token_id]
-
-    def show(text, width=220):
-        text = " ".join(text.split())
-        return text if len(text) <= width else text[: width - 3] + "..."
 
     print(f"\n----- probes: {label} -----", flush=True)
     passed = 0

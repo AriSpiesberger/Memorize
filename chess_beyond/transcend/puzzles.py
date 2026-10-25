@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from common import MOVE_TO_ID, MOVES, encode_board, masked_logits, model_move_to_real, move_to_model_frame
+from intervals import wilson
 
 
 def legal_mask_np(board):
@@ -59,16 +60,6 @@ def fit_elo(ratings, solved):
     info = sum(k * k * q * (1 - q) for q in (1 / (1 + 10 ** ((r - R) / 400)) for r in ratings))
     se = 1 / math.sqrt(info)
     return R, (R - 1.96 * se, R + 1.96 * se)
-
-
-def wilson(k, n, z=1.96):
-    if n == 0:
-        return (0.0, 0.0)
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return (max(0.0, c - h), min(1.0, c + h))
 
 
 @torch.no_grad()

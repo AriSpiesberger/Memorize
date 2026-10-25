@@ -13,7 +13,6 @@ to results/transcend/, which git tracks (runs/ is ignored):
   logs/           copies of the run logs the figures were made from
 """
 import json
-import math
 import shutil
 import sys
 from pathlib import Path
@@ -25,6 +24,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
 import paths
+from intervals import wilson
 
 OUT = paths.ROOT / "results" / "transcend"
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e0", "#fcfcfb"
@@ -46,16 +46,6 @@ RUNS = {
     "rl-2200-hard": ("RL (hard puzzles) from 2200+ games", "#1baf7a", "-."),
 }
 HARD_MARKER = "s"
-
-
-def wilson(k, n, z=1.96):
-    if n == 0:
-        return 0.0, 0.0
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return c - h, c + h
 
 
 def load(name):

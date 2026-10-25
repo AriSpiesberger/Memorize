@@ -34,7 +34,7 @@ from mlx_lm import load
 from mlx_lm.generate import BatchGenerator
 from mlx_lm.sample_utils import make_sampler
 
-from memorize import benchmarks
+from memorize import benchmarks, prompts
 
 CHOICES = "ABCDEFGHIJKLMNOP"
 INITIAL_PROMPT = (
@@ -90,12 +90,7 @@ CHAT_DIRECT = (
     " should be of the following format: 'ANSWER: [LETTER]' (without quotes) where"
     " [LETTER] is one of {letters}.\n\nQuestion:\n{question}\nOptions:\n{choices}\n"
 )
-CHAT_COT = (
-    "Answer the following multiple choice question. The last line of your response"
-    " should be of the following format: 'ANSWER: [LETTER]' (without quotes) where"
-    " [LETTER] is one of {letters}. Think step by step before answering.\n\n"
-    "Question:\n{question}\nOptions:\n{choices}\n"
-)
+CHAT_COT = prompts.MMLU_PRO          # the same zero-shot prompt the RL and SFT scripts use
 CHAT_ANSWER_RE = re.compile(r"(?i)ANSWER\s*:\s*\**\s*\(?([A-J])\b")
 
 

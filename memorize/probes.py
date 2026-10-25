@@ -102,3 +102,9 @@ def _lines(text):
 def _sentences(text):
     """Sentence count by terminal punctuation (., !, ? and their CJK forms)."""
     return len(re.findall(r"[.!?。！？]+(?=\s|$)", text.strip()))
+
+
+def show(text, width=220):
+    """One-line, truncated view of a reply for the probe printouts."""
+    text = " ".join(text.split())
+    return text if len(text) <= width else text[: width - 3] + "..."
