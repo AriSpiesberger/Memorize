@@ -75,7 +75,18 @@ def load(spec, dev):
         return load_pgn_model(spec, dev).eval(), Path(spec).stem
     from huggingface_hub import snapshot_download
     from safetensors.torch import load_file
-    path = Path(snapshot_download(spec))
+    try:                                    # already downloaded: no network (HF connections drop often)
+        path = Path(snapshot_download(spec, local_files_only=True))
+    except Exception:
+        for attempt in range(1, 7):
+            try:
+                path = Path(snapshot_download(spec))
+                break
+            except Exception as e:
+                if attempt == 6:
+                    raise
+                print(f"  download of {spec}: attempt {attempt} failed ({type(e).__name__}), retrying", flush=True)
+                time.sleep(10)
     model = PGNTransformer(**json.loads((path / "config.json").read_text())["architecture"])
     model.load_state_dict(load_file(path / "model.safetensors"))
     return model.to(dev).eval(), spec.split("/")[-1]
@@ -133,6 +144,16 @@ def choose(logp, T, rng):
     p /= p.sum()
     illegal = 1.0 - math.exp(min(0.0, float(np.logaddexp.reduce(logp))))
     return int(rng.choice(len(p), p=p)), illegal
+
+
+def level_ratings(path):
+    """{level: (rating, RD)} from calibrate_levels.py's file, or Transcendence's numbers if no path.
+    RD is the 95% interval's half-width / 1.96; levels only bounded from below are left out."""
+    if not path:
+        return dict(RATED)
+    rec = json.loads(Path(path).read_text())
+    return {int(lv): (v["rating"], (v["ci95"][1] - v["ci95"][0]) / 3.92)
+            for lv, v in rec["levels"].items() if not v.get("lower_bound_only")}
 
 
 def device(name):
@@ -256,9 +277,11 @@ def games(a):
     while not engines.empty():
         engines.get().quit()
 
+    rated_by = level_ratings(a.level_ratings)
     record = dict(model=a.model, kind="games", levels=a.levels, openings=a.openings, opening_plies=a.opening_plies,
-                  max_plies=a.max_plies, rated=RATED, by_temperature={})
-    print(f"\n\n{name}: score per level, Glicko-2 rating (95%: R +/- 2 RD) over levels {sorted(RATED)}")
+                  max_plies=a.max_plies, rated=rated_by, level_ratings=a.level_ratings, by_temperature={})
+    used = sorted(lv for lv in a.levels if lv in rated_by)
+    print(f"\n\n{name}: score per level, Glicko-2 rating (95%: R +/- 2 RD) over levels {used}")
     print(f"{'T':>6} " + "".join(f"{'L' + str(lv):>8}" for lv in a.levels) + f"{'rating':>16}{'illegal mass':>14}")
     for T in a.temps:
         row = dict(levels={})
@@ -266,7 +289,7 @@ def games(a):
             r = [g["result"] for g in G if g["T"] == T and g["level"] == lv]
             row["levels"][lv] = dict(games=len(r), wins=r.count(1.0), draws=r.count(0.5), losses=r.count(0.0),
                                      score=sum(r) / len(r))
-        rated = [(*RATED[g["level"]], g["result"]) for g in G if g["T"] == T and g["level"] in RATED]
+        rated = [(*rated_by[g["level"]], g["result"]) for g in G if g["T"] == T and g["level"] in rated_by]
         R, RD = glicko2(rated) if rated else (float("nan"), float("nan"))
         ill = [x for g in G if g["T"] == T for x in g["illegal"]]
         row.update(rating=R, rd=RD, illegal_mass=float(np.mean(ill)))
@@ -425,14 +448,15 @@ def histories(puzzles, token=None):
 def puzzles(a):
     dev = device(a.device)
     model, name = load(a.model, dev)
+    files = {k: f.replace("strata/", a.strata_dir.rstrip("/") + "/") for k, f in PUZZLE_SETS.items()}
     sets = {k: [json.loads(l) for _, l in zip(range(a.n), open(paths.LICHESS / "puzzles" / f, encoding="utf-8"))]
-            for k, f in PUZZLE_SETS.items()}
+            for k, f in files.items()}
     flat = [(k, p) for k, ps in sets.items() for p in ps]
     starts = histories([p for _, p in flat], a.lichess_token)
     missing = sum(b is None for b in starts)
     flat = [(k, p, b) for (k, p), b in zip(flat, starts) if b is not None]
     print(f"{len(flat)} puzzles with their game history ({missing} source games unavailable or not matching)")
-    record = dict(model=a.model, kind="puzzles", n_per_set=a.n, missing=missing,
+    record = dict(model=a.model, kind="puzzles", n_per_set=a.n, missing=missing, strata_dir=a.strata_dir,
                   pool_ids_used=[p["id"] for k, p, _ in flat if k == "1050"], by_temperature={})
     rng = np.random.default_rng(a.seed)
     print(f"\n{name}: puzzles solved (95% interval) and puzzle rating")
@@ -470,17 +494,46 @@ def puzzles(a):
     save(name, "puzzles", record)
 
 
+def rerate(a):
+    """Re-rate a finished `games` run with other level ratings, from its saved win/draw/loss counts."""
+    name = Path(a.model).stem if Path(a.model).suffix == ".pt" else a.model.split("/")[-1]
+    src = OUT / f"{name}-games.json"
+    rec = json.loads(src.read_text())
+    rated_by = level_ratings(a.level_ratings)
+    levels = [int(lv) for lv in rec["levels"]]
+    used = sorted(lv for lv in levels if lv in rated_by)
+    print(f"{name}: {src.name} re-rated over levels {used} with "
+          + ", ".join(f"L{lv}={rated_by[lv][0]:.0f}" for lv in used))
+    print(f"{'T':>6} " + "".join(f"{'L' + str(lv):>8}" for lv in levels) + f"{'rating':>16}")
+    out = dict(source=src.name, level_ratings=a.level_ratings, rated=rated_by, by_temperature={})
+    for T, row in rec["by_temperature"].items():
+        counts = {int(lv): c for lv, c in row["levels"].items()}
+        res = []
+        for lv in used:
+            c = counts[lv]
+            res += [(*rated_by[lv], 1.0)] * c["wins"] + [(*rated_by[lv], 0.5)] * c["draws"] \
+                + [(*rated_by[lv], 0.0)] * c["losses"]
+        R, RD = glicko2(res)
+        out["by_temperature"][T] = dict(rating=R, rd=RD, levels=row["levels"])
+        print(f"{float(T):>6} " + "".join(f"{counts[lv]['score']:>8.2f}" for lv in levels)
+              + f"{R:>9.0f} +/- {2 * RD:<4.0f}")
+    save(name, "games-rerated", out)
+
+
 # ---------------------------------------------------------------- command line
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = ap.add_subparsers(dest="kind", required=True)
-for kind, fn in (("games", games), ("positions", positions), ("puzzles", puzzles)):
+for kind, fn in (("games", games), ("positions", positions), ("puzzles", puzzles), ("rerate", rerate)):
     p = sub.add_parser(kind)
     p.set_defaults(fn=fn)
     p.add_argument("--model", required=True, help="Hugging Face repo id or a local .pt checkpoint")
     p.add_argument("--temps", type=float, nargs="+", default=TEMPS)
     p.add_argument("--device", default="auto", help="auto, cuda, mps or cpu")
     p.add_argument("--seed", type=int, default=0)
+    if kind in ("games", "rerate"):
+        p.add_argument("--level-ratings", default=None,
+                       help="calibrate_levels.py output (level ratings vs Maia-2); default: Transcendence's 1552/1842/2142")
     if kind == "games":
         p.add_argument("--levels", type=int, nargs="+", default=[1, 3, 5, 7, 8], choices=sorted(LEVELS))
         p.add_argument("--openings", type=int, default=50, help="openings, each played with both colours, per level")
@@ -495,6 +548,9 @@ for kind, fn in (("games", games), ("positions", positions), ("puzzles", puzzles
     if kind == "puzzles":
         p.add_argument("--n", type=int, default=2000, help="puzzles per set")
         p.add_argument("--lichess-token", default=None, help="optional; raises the API rate limit")
+        p.add_argument("--strata-dir", default="strata",
+                       help="folder under data/lichess/puzzles/ with 2400/2600/2800.jsonl; use the strata built "
+                            "with the model's training games excluded (on a home PC: strata-pgn, copied from Modal)")
 
 if __name__ == "__main__":
     args = ap.parse_args()
