@@ -6,8 +6,8 @@ models' states on the same positions, so each latent is either shared or belongs
     python transcend/crosscoder.py top   --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --cc L12
     python transcend/crosscoder.py all                           # collect, then train + top for each layer (a sweep)
 
-collect  Samples games from make_pgn_data.py folders (default pgn-everything, pgn-2200 and pgn-clean,
-         i.e. all ratings, 2200+ and clean 1000-1300) and, per game, --per-game random plies from
+collect  Samples random games from make_pgn_data.py folders (default pgn-everything: Lichess games
+         of every rating) and, per game, --per-game random plies from
          --min-ply on. One forward pass per game gives every ply's state, so a million positions
          take ~60k games. At each ply the state is the one at the prompt's last character, just
          before the model writes its move (as in sae.py), from both models, at every --layers entry
@@ -66,7 +66,7 @@ from sae import last_moves, lichess
 RUNS = paths.RUNS / "transcend" / "crosscoder"
 RESULTS = paths.ROOT / "results" / "transcend" / "crosscoder"
 MODELS = ["Arisp/chess-pgn-1000-1300", "Arisp/chess-pgn-2400plus"]
-FOLDERS = ["data/transcend/pgn-everything", "data/transcend/pgn-2200", "data/transcend/pgn-clean"]
+FOLDERS = ["data/transcend/pgn-everything"]
 CHARS = np.array(list(VOCAB))
 
 
