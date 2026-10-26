@@ -1,0 +1,114 @@
+{
+ "model": "Arisp/chess-pgn-1000-1300",
+ "kind": "games",
+ "levels": [
+  1,
+  3,
+  5,
+  7,
+  8
+ ],
+ "openings": 50,
+ "opening_plies": 8,
+ "max_plies": 300,
+ "rated": {
+  "1": [
+   1552,
+   45.2
+  ],
+  "3": [
+   1842,
+   45.2
+  ],
+  "5": [
+   2142,
+   59.0
+  ]
+ },
+ "by_temperature": {
+  "0.001": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 91,
+     "draws": 9,
+     "losses": 0,
+     "score": 0.955
+    },
+    "3": {
+     "games": 100,
+     "wins": 60,
+     "draws": 24,
+     "losses": 16,
+     "score": 0.72
+    },
+    "5": {
+     "games": 100,
+     "wins": 3,
+     "draws": 16,
+     "losses": 81,
+     "score": 0.11
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   },
+   "rating": 2056.1967603293256,
+   "rd": 28.431914186639027,
+   "illegal_mass": 0.014873572092008142
+  },
+  "1.0": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 85,
+     "draws": 15,
+     "losses": 0,
+     "score": 0.925
+    },
+    "3": {
+     "games": 100,
+     "wins": 24,
+     "draws": 24,
+     "losses": 52,
+     "score": 0.36
+    },
+    "5": {
+     "games": 100,
+     "wins": 1,
+     "draws": 8,
+     "losses": 91,
+     "score": 0.05
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   },
+   "rating": 1849.1108903495028,
+   "rd": 28.43191417257035,
+   "illegal_mass": 0.037723481820890595
+  }
+ }
+}

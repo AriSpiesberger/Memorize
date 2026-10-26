@@ -1,0 +1,360 @@
+{
+ "engine": "Fairy-Stockfish 14 LB",
+ "maia_type": "rapid",
+ "anchors": [
+  1100,
+  1300,
+  1500,
+  1700,
+  1900,
+  2100
+ ],
+ "openings": 50,
+ "opening_plies": 8,
+ "max_plies": 300,
+ "seed": 0,
+ "levels": {
+  "1": {
+   "rating": 614.0,
+   "ci95": [
+    481.0,
+    721.0
+   ],
+   "lower_bound_only": false,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 0,
+     "draws": 2,
+     "losses": 98,
+     "score": 0.01
+    },
+    "1300": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    },
+    "1500": {
+     "games": 100,
+     "wins": 0,
+     "draws": 3,
+     "losses": 97,
+     "score": 0.015
+    },
+    "1700": {
+     "games": 100,
+     "wins": 0,
+     "draws": 2,
+     "losses": 98,
+     "score": 0.01
+    },
+    "1900": {
+     "games": 100,
+     "wins": 0,
+     "draws": 5,
+     "losses": 95,
+     "score": 0.025
+    },
+    "2100": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    }
+   },
+   "skill_depth_secs": [
+    -9,
+    5,
+    0.05
+   ]
+  },
+  "2": {
+   "rating": 634.0,
+   "ci95": [
+    509.0,
+    737.0
+   ],
+   "lower_bound_only": false,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 1,
+     "draws": 2,
+     "losses": 97,
+     "score": 0.02
+    },
+    "1300": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    },
+    "1500": {
+     "games": 100,
+     "wins": 0,
+     "draws": 8,
+     "losses": 92,
+     "score": 0.04
+    },
+    "1700": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    },
+    "1900": {
+     "games": 100,
+     "wins": 0,
+     "draws": 3,
+     "losses": 97,
+     "score": 0.015
+    },
+    "2100": {
+     "games": 100,
+     "wins": 0,
+     "draws": 2,
+     "losses": 98,
+     "score": 0.01
+    }
+   },
+   "skill_depth_secs": [
+    -5,
+    5,
+    0.1
+   ]
+  },
+  "3": {
+   "rating": 1279.0,
+   "ci95": [
+    1240.0,
+    1319.0
+   ],
+   "lower_bound_only": false,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 40,
+     "draws": 12,
+     "losses": 48,
+     "score": 0.46
+    },
+    "1300": {
+     "games": 100,
+     "wins": 29,
+     "draws": 9,
+     "losses": 62,
+     "score": 0.335
+    },
+    "1500": {
+     "games": 100,
+     "wins": 22,
+     "draws": 11,
+     "losses": 67,
+     "score": 0.275
+    },
+    "1700": {
+     "games": 100,
+     "wins": 15,
+     "draws": 7,
+     "losses": 78,
+     "score": 0.185
+    },
+    "1900": {
+     "games": 100,
+     "wins": 8,
+     "draws": 12,
+     "losses": 80,
+     "score": 0.14
+    },
+    "2100": {
+     "games": 100,
+     "wins": 6,
+     "draws": 18,
+     "losses": 76,
+     "score": 0.15
+    }
+   },
+   "skill_depth_secs": [
+    -1,
+    5,
+    0.15
+   ]
+  },
+  "4": {
+   "rating": 1808.0,
+   "ci95": [
+    1770.0,
+    1846.0
+   ],
+   "lower_bound_only": false,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 79,
+     "draws": 6,
+     "losses": 15,
+     "score": 0.82
+    },
+    "1300": {
+     "games": 100,
+     "wins": 64,
+     "draws": 7,
+     "losses": 29,
+     "score": 0.675
+    },
+    "1500": {
+     "games": 100,
+     "wins": 62,
+     "draws": 8,
+     "losses": 30,
+     "score": 0.66
+    },
+    "1700": {
+     "games": 100,
+     "wins": 56,
+     "draws": 17,
+     "losses": 27,
+     "score": 0.645
+    },
+    "1900": {
+     "games": 100,
+     "wins": 53,
+     "draws": 12,
+     "losses": 35,
+     "score": 0.59
+    },
+    "2100": {
+     "games": 100,
+     "wins": 50,
+     "draws": 15,
+     "losses": 35,
+     "score": 0.575
+    }
+   },
+   "skill_depth_secs": [
+    3,
+    5,
+    0.2
+   ]
+  },
+  "5": {
+   "rating": 2050.0,
+   "ci95": [
+    2007.0,
+    2093.0
+   ],
+   "lower_bound_only": false,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 90,
+     "draws": 7,
+     "losses": 3,
+     "score": 0.935
+    },
+    "1300": {
+     "games": 100,
+     "wins": 89,
+     "draws": 4,
+     "losses": 7,
+     "score": 0.91
+    },
+    "1500": {
+     "games": 100,
+     "wins": 81,
+     "draws": 6,
+     "losses": 13,
+     "score": 0.84
+    },
+    "1700": {
+     "games": 100,
+     "wins": 76,
+     "draws": 7,
+     "losses": 17,
+     "score": 0.795
+    },
+    "1900": {
+     "games": 100,
+     "wins": 69,
+     "draws": 7,
+     "losses": 24,
+     "score": 0.725
+    },
+    "2100": {
+     "games": 100,
+     "wins": 65,
+     "draws": 20,
+     "losses": 15,
+     "score": 0.75
+    }
+   },
+   "skill_depth_secs": [
+    7,
+    5,
+    0.3
+   ]
+  },
+  "6": {
+   "rating": 2523.0,
+   "ci95": [
+    2430.0,
+    2634.0
+   ],
+   "lower_bound_only": true,
+   "anchors": {
+    "1100": {
+     "games": 100,
+     "wins": 98,
+     "draws": 2,
+     "losses": 0,
+     "score": 0.99
+    },
+    "1300": {
+     "games": 100,
+     "wins": 96,
+     "draws": 2,
+     "losses": 2,
+     "score": 0.97
+    },
+    "1500": {
+     "games": 100,
+     "wins": 98,
+     "draws": 1,
+     "losses": 1,
+     "score": 0.985
+    },
+    "1700": {
+     "games": 100,
+     "wins": 97,
+     "draws": 3,
+     "losses": 0,
+     "score": 0.985
+    },
+    "1900": {
+     "games": 100,
+     "wins": 98,
+     "draws": 0,
+     "losses": 2,
+     "score": 0.98
+    },
+    "2100": {
+     "games": 100,
+     "wins": 95,
+     "draws": 4,
+     "losses": 1,
+     "score": 0.97
+    }
+   },
+   "skill_depth_secs": [
+    11,
+    8,
+    0.4
+   ]
+  }
+ }
+}

@@ -1,0 +1,397 @@
+{
+ "source": "chess-pgn-2400plus-games.json",
+ "level_ratings": "results/transcend/eval/level_ratings.json",
+ "rated": {
+  "1": [
+   614.0,
+   61.224489795918366
+  ],
+  "2": [
+   634.0,
+   58.16326530612245
+  ],
+  "3": [
+   1279.0,
+   20.153061224489797
+  ],
+  "4": [
+   1808.0,
+   19.387755102040817
+  ],
+  "5": [
+   2050.0,
+   21.93877551020408
+  ]
+ },
+ "by_temperature": {
+  "0.001": {
+   "rating": 1849.7682032791065,
+   "rd": 37.18383860603449,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 95,
+     "draws": 5,
+     "losses": 0,
+     "score": 0.975
+    },
+    "3": {
+     "games": 100,
+     "wins": 73,
+     "draws": 16,
+     "losses": 11,
+     "score": 0.81
+    },
+    "5": {
+     "games": 100,
+     "wins": 32,
+     "draws": 30,
+     "losses": 38,
+     "score": 0.47
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 10,
+     "losses": 90,
+     "score": 0.05
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    }
+   }
+  },
+  "0.005": {
+   "rating": 1695.1099453493518,
+   "rd": 37.18383859189375,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 92,
+     "draws": 8,
+     "losses": 0,
+     "score": 0.96
+    },
+    "3": {
+     "games": 100,
+     "wins": 60,
+     "draws": 28,
+     "losses": 12,
+     "score": 0.74
+    },
+    "5": {
+     "games": 100,
+     "wins": 22,
+     "draws": 28,
+     "losses": 50,
+     "score": 0.36
+    },
+    "7": {
+     "games": 100,
+     "wins": 1,
+     "draws": 6,
+     "losses": 93,
+     "score": 0.04
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 3,
+     "losses": 97,
+     "score": 0.015
+    }
+   }
+  },
+  "0.01": {
+   "rating": 1766.2001283936704,
+   "rd": 37.18383859739646,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 98,
+     "draws": 2,
+     "losses": 0,
+     "score": 0.99
+    },
+    "3": {
+     "games": 100,
+     "wins": 70,
+     "draws": 16,
+     "losses": 14,
+     "score": 0.78
+    },
+    "5": {
+     "games": 100,
+     "wins": 27,
+     "draws": 22,
+     "losses": 51,
+     "score": 0.38
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 5,
+     "losses": 95,
+     "score": 0.025
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   }
+  },
+  "0.05": {
+   "rating": 1841.8253303377387,
+   "rd": 37.18383860511262,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 95,
+     "draws": 5,
+     "losses": 0,
+     "score": 0.975
+    },
+    "3": {
+     "games": 100,
+     "wins": 69,
+     "draws": 22,
+     "losses": 9,
+     "score": 0.8
+    },
+    "5": {
+     "games": 100,
+     "wins": 32,
+     "draws": 30,
+     "losses": 38,
+     "score": 0.47
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 8,
+     "losses": 92,
+     "score": 0.04
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    }
+   }
+  },
+  "0.1": {
+   "rating": 1857.7790169448397,
+   "rd": 37.183838606985695,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 94,
+     "draws": 6,
+     "losses": 0,
+     "score": 0.97
+    },
+    "3": {
+     "games": 100,
+     "wins": 74,
+     "draws": 19,
+     "losses": 7,
+     "score": 0.835
+    },
+    "5": {
+     "games": 100,
+     "wins": 32,
+     "draws": 28,
+     "losses": 40,
+     "score": 0.46
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 6,
+     "losses": 94,
+     "score": 0.03
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    }
+   }
+  },
+  "0.25": {
+   "rating": 1845.9341446343233,
+   "rd": 37.18383860558685,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 93,
+     "draws": 7,
+     "losses": 0,
+     "score": 0.965
+    },
+    "3": {
+     "games": 100,
+     "wins": 76,
+     "draws": 16,
+     "losses": 8,
+     "score": 0.84
+    },
+    "5": {
+     "games": 100,
+     "wins": 36,
+     "draws": 17,
+     "losses": 47,
+     "score": 0.445
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 6,
+     "losses": 94,
+     "score": 0.03
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 2,
+     "losses": 98,
+     "score": 0.01
+    }
+   }
+  },
+  "0.5": {
+   "rating": 1770.2350164430852,
+   "rd": 37.18383859775966,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 97,
+     "draws": 3,
+     "losses": 0,
+     "score": 0.985
+    },
+    "3": {
+     "games": 100,
+     "wins": 71,
+     "draws": 15,
+     "losses": 14,
+     "score": 0.785
+    },
+    "5": {
+     "games": 100,
+     "wins": 27,
+     "draws": 23,
+     "losses": 50,
+     "score": 0.385
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 9,
+     "losses": 91,
+     "score": 0.045
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   }
+  },
+  "1.0": {
+   "rating": 1250.1360600359544,
+   "rd": 37.18383859598185,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 96,
+     "draws": 4,
+     "losses": 0,
+     "score": 0.98
+    },
+    "3": {
+     "games": 100,
+     "wins": 34,
+     "draws": 22,
+     "losses": 44,
+     "score": 0.45
+    },
+    "5": {
+     "games": 100,
+     "wins": 3,
+     "draws": 8,
+     "losses": 89,
+     "score": 0.07
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 3,
+     "losses": 97,
+     "score": 0.015
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   }
+  },
+  "1.5": {
+   "rating": 901.8306843362049,
+   "rd": 37.18383864556327,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 80,
+     "draws": 18,
+     "losses": 2,
+     "score": 0.89
+    },
+    "3": {
+     "games": 100,
+     "wins": 12,
+     "draws": 4,
+     "losses": 84,
+     "score": 0.14
+    },
+    "5": {
+     "games": 100,
+     "wins": 1,
+     "draws": 4,
+     "losses": 95,
+     "score": 0.03
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    }
+   }
+  }
+ }
+}

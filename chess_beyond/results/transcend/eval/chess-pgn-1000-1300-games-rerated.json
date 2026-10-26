@@ -1,0 +1,110 @@
+{
+ "source": "chess-pgn-1000-1300-games.json",
+ "level_ratings": "results\\transcend\\eval\\level_ratings.json",
+ "rated": {
+  "1": [
+   614.0,
+   61.224489795918366
+  ],
+  "2": [
+   634.0,
+   58.16326530612245
+  ],
+  "3": [
+   1279.0,
+   20.153061224489797
+  ],
+  "4": [
+   1808.0,
+   19.387755102040817
+  ],
+  "5": [
+   2050.0,
+   21.93877551020408
+  ]
+ },
+ "by_temperature": {
+  "0.001": {
+   "rating": 1476.8207070520623,
+   "rd": 37.1838385855969,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 91,
+     "draws": 9,
+     "losses": 0,
+     "score": 0.955
+    },
+    "3": {
+     "games": 100,
+     "wins": 60,
+     "draws": 24,
+     "losses": 16,
+     "score": 0.72
+    },
+    "5": {
+     "games": 100,
+     "wins": 3,
+     "draws": 16,
+     "losses": 81,
+     "score": 0.11
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   }
+  },
+  "1.0": {
+   "rating": 1119.799069689557,
+   "rd": 37.183838609762695,
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 85,
+     "draws": 15,
+     "losses": 0,
+     "score": 0.925
+    },
+    "3": {
+     "games": 100,
+     "wins": 24,
+     "draws": 24,
+     "losses": 52,
+     "score": 0.36
+    },
+    "5": {
+     "games": 100,
+     "wins": 1,
+     "draws": 8,
+     "losses": 91,
+     "score": 0.05
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 0,
+     "losses": 100,
+     "score": 0.0
+    }
+   }
+  }
+ }
+}

@@ -23,6 +23,24 @@ An 1100-rated human is expected to solve ~0.07% of the 2400 stratum, and random 
 makes the model a much weaker player in real games (about 400 Elo down against Maia-2).
 Details, intervals and figures: [results/transcend/summary.md](results/transcend/summary.md).
 
+### The Transcendence paper's model (character-level PGN, 51M parameters)
+
+Trained on Modal on 10M games per band, never shown the board:
+[Arisp/chess-pgn-1000-1300](https://huggingface.co/Arisp/chess-pgn-1000-1300) and
+[Arisp/chess-pgn-2400plus](https://huggingface.co/Arisp/chess-pgn-2400plus). Game ratings come from
+games against Lichess's Stockfish AI levels, each level rated against Maia-2 (so on the same human
+scale as the board models above); puzzle ratings are on Lichess's puzzle scale.
+
+| model | game rating, T = 0.001 | game rating, T = 1 | puzzles solved T = 0.001: ~1050 / 2400 / 2800 | puzzle rating, T = 0.001 |
+| --- | --: | --: | --: | --: |
+| chess-pgn-1000-1300 | **1477 +/- 74** | 1120 +/- 74 | 52.8% / 7.7% / 2.8% | 1210 (1194-1227) |
+| chess-pgn-2400plus | **1850 +/- 74** | 1250 +/- 74 | 43.4% / 10.5% / 3.9% | 1192 (1176-1209) |
+
+The 1000-1300 model plays at its data's level when sampled at T = 1 and about 350 points above it
+near-greedy, the paper's transcendence result (~1500 there). The 2400+ model gains as much from low
+temperature but stays far below its data's level. Every temperature, level and puzzle set, with
+intervals and caveats: [results/transcend/eval/](results/transcend/eval/README.md).
+
 ## Layout
 
 ```
@@ -124,6 +142,8 @@ python transcend/plot_results.py
 | `pass_at_k.py` | pass@k by stratum per checkpoint: does RL teach new solutions, or only sharpen ones the starting model already had? |
 | `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` | the Transcendence paper's setup: a character-level transformer (16 layers, d=512) trained on raw PGN movetext, never shown the board |
 | `plot_results.py` | figures and `results/transcend/summary.md` from every run's log |
+| `eval.py` | PGN models (a local `.pt` or a Hugging Face repo) at several temperatures: `games` vs Lichess's Stockfish AI levels, `positions` (top-k and win % lost on held-out positions), `puzzles` (with each puzzle's game history), `rerate` (a finished games run with other level ratings) |
+| `calibrate_levels.py` | rates each Lichess AI level against Maia-2 at known ratings, for `eval.py --level-ratings` (needs Fairy-Stockfish for levels 1-3) |
 
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,
 and 7,156 at 2800, each with a multi-move solution and a rating measured from hundreds of
