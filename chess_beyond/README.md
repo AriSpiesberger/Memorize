@@ -143,6 +143,7 @@ python transcend/plot_results.py
 | `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` | the Transcendence paper's setup: a character-level transformer (16 layers, d=512) trained on raw PGN movetext, never shown the board |
 | `plot_results.py` | figures and `results/transcend/summary.md` from every run's log |
 | `eval.py` | PGN models (a local `.pt` or a Hugging Face repo) at several temperatures: `games` vs Lichess's Stockfish AI levels, `positions` (top-k and win % lost on held-out positions), `puzzles` (with each puzzle's game history), `rerate` (a finished games run with other level ratings) |
+| `sae.py` | a TopK sparse autoencoder on a PGN model's states just before it moves (any layer), and each latent's top-activating positions from held-out games or a game corpus (`results/transcend/sae/`, plus an HTML page with boards) |
 | `calibrate_levels.py` | rates each Lichess AI level against Maia-2 at known ratings, for `eval.py --level-ratings` (needs Fairy-Stockfish for levels 1-3) |
 
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,

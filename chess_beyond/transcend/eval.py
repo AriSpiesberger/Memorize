@@ -457,16 +457,18 @@ def puzzles(a):
     flat = [(k, p, b) for (k, p), b in zip(flat, starts) if b is not None]
     print(f"{len(flat)} puzzles with their game history ({missing} source games unavailable or not matching)")
     record = dict(model=a.model, kind="puzzles", n_per_set=a.n, missing=missing, strata_dir=a.strata_dir,
-                  pool_ids_used=[p["id"] for k, p, _ in flat if k == "1050"], by_temperature={})
+                  samples=a.samples, pool_ids_used=[p["id"] for k, p, _ in flat if k == "1050"], by_temperature={})
+    ks = [k for k in (1, 2, 4, 8, 16, 32, 64) if k <= a.samples]
     rng = np.random.default_rng(a.seed)
     print(f"\n{name}: puzzles solved (95% interval) and puzzle rating")
     print(f"{'T':>6} " + "".join(f"{k:>18}" for k in sets) + f"{'rating':>18}")
     for T in a.temps:
         state = []
-        for k, p, b in flat:
-            b = b.copy()
-            b.push_uci(p["moves"][0])
-            state.append(dict(set=k, p=p, b=b, i=1, ok=None))
+        for q, (k, p, b) in enumerate(flat):
+            for _ in range(a.samples):               # independent attempts, all in the same batches
+                bb = b.copy()
+                bb.push_uci(p["moves"][0])
+                state.append(dict(set=k, p=p, q=q, b=bb, i=1, ok=None))
         live = list(state)
         while live:
             moves, lp = score(model, [s["b"] for s in live], [T], dev)
@@ -483,15 +485,31 @@ def puzzles(a):
                     s["i"] += 2
             live = [s for s in live if s["ok"] is None]
         row = {}
+        hits = np.zeros(len(flat), dtype=int)                  # successes per puzzle, out of a.samples
+        for s in state:
+            hits[s["q"]] += bool(s["ok"])
         for k in sets:
             r = [s["ok"] for s in state if s["set"] == k]
             row[k] = dict(n=len(r), solved=sum(r), rate=sum(r) / max(1, len(r)), ci95=wilson(sum(r), len(r)))
+            if a.samples > 1:
+                c = [int(hits[q]) for q, (kk, _, _) in enumerate(flat) if kk == k]
+                row[k]["pass_at"] = {kk: float(np.mean([pass_at_k(a.samples, ci, kk) for ci in c])) for kk in ks}
+                row[k]["puzzles"] = len(c)
         R, ci = fit_elo([s["p"]["rating"] for s in state], [s["ok"] for s in state])
         row["rating"], row["rating_ci95"] = R, ci
         record["by_temperature"][T] = row
         print(f"{T:>6} " + "".join(f"{100 * row[k]['rate']:>8.1f}% ({100 * row[k]['ci95'][0]:.0f}-{100 * row[k]['ci95'][1]:.0f})"
                                    for k in sets) + f"{R:>9.0f} ({ci[0]:.0f}-{ci[1]:.0f})")
-    save(name, "puzzles", record)
+        if a.samples > 1:
+            for k in sets:
+                print(f"{'':>6}   {k:>5} pass@" + "  ".join(f"{kk}: {100 * row[k]['pass_at'][kk]:5.1f}%" for kk in ks),
+                      flush=True)
+    save(name, "puzzles-pass" if a.samples > 1 else "puzzles", record)
+
+
+def pass_at_k(n, c, k):
+    """Unbiased pass@k from n attempts with c successes: 1 - C(n - c, k) / C(n, k)."""
+    return 1.0 if n - c < k else 1.0 - math.comb(n - c, k) / math.comb(n, k)
 
 
 def rerate(a):
@@ -547,6 +565,8 @@ for kind, fn in (("games", games), ("positions", positions), ("puzzles", puzzles
         p.add_argument("--batch", type=int, default=64)
     if kind == "puzzles":
         p.add_argument("--n", type=int, default=2000, help="puzzles per set")
+        p.add_argument("--samples", type=int, default=1,
+                       help="attempts per puzzle; > 1 also reports pass@1, 2, 4, 8, 16 ... (written to <model>-puzzles-pass.json)")
         p.add_argument("--lichess-token", default=None, help="optional; raises the API rate limit")
         p.add_argument("--strata-dir", default="strata",
                        help="folder under data/lichess/puzzles/ with 2400/2600/2800.jsonl; use the strata built "
