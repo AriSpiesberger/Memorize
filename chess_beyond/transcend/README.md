@@ -16,6 +16,7 @@ are in [results/transcend/summary.md](../results/transcend/summary.md).
 | evaluate | `eval_puzzles.py` (puzzles), `play_elo.py` (games vs Maia-2), `pass_at_k.py` |
 | the Transcendence paper's character-level PGN model | `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` |
 | sparse autoencoder on the PGN model, with max-activating positions | `sae.py` (`collect`, `train`, `top`, or `all`) |
+| crosscoder between the two PGN models (shared vs model-only latents), layer sweep | `crosscoder.py` (`collect`, `train`, `top`, or `all`) |
 | evaluate the PGN models (games, positions, puzzles, by temperature) | `eval.py`, with level ratings from `calibrate_levels.py`; results in [../results/transcend/eval/](../results/transcend/eval/README.md) |
 | figures and summary | `plot_results.py` |
 

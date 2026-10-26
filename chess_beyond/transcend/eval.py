@@ -77,6 +77,8 @@ def load(spec, dev):
     from safetensors.torch import load_file
     try:                                    # already downloaded: no network (HF connections drop often)
         path = Path(snapshot_download(spec, local_files_only=True))
+        if not all((path / f).exists() for f in ("config.json", "model.safetensors")):
+            raise FileNotFoundError(path)   # e.g. a new commit (a README edit) whose files aren't cached
     except Exception:
         for attempt in range(1, 7):
             try:
@@ -462,28 +464,43 @@ def puzzles(a):
     rng = np.random.default_rng(a.seed)
     print(f"\n{name}: puzzles solved (95% interval) and puzzle rating")
     print(f"{'T':>6} " + "".join(f"{k:>18}" for k in sets) + f"{'rating':>18}")
+    # An attempt still alive has played exactly the solution line, so every live attempt on a puzzle, at every
+    # temperature, is on the same board: one forward pass per puzzle per move, all attempts sampled from it.
+    cur = []
+    for k, p, b in flat:
+        bb = b.copy()
+        bb.push_uci(p["moves"][0])
+        cur.append(dict(b=bb, i=1))
+    oks = {T: [[None] * a.samples for _ in flat] for T in a.temps}
+    live = list(range(len(flat)))
+    while live:
+        moves, lp = score(model, [cur[q]["b"] for q in live], a.temps, dev)
+        for n, q in enumerate(live):
+            c, sol = cur[q], flat[q][1]["moves"]
+            want = chess.Move.from_uci(sol[c["i"]])
+            c["b"].push(want)
+            done = c["i"] + 1 >= len(sol) or c["b"].is_checkmate()
+            for t, T in enumerate(a.temps):
+                for r, ok in enumerate(oks[T][q]):
+                    if ok is not None:
+                        continue
+                    mv = moves[n][choose(lp[t][n], T, rng)[0]]
+                    if mv == want:
+                        oks[T][q][r] = True if done else None
+                    else:                                   # another mate also solves it
+                        c["b"].pop()
+                        c["b"].push(mv)
+                        oks[T][q][r] = c["b"].is_checkmate()
+                        c["b"].pop()
+                        c["b"].push(want)
+            if not done:
+                c["b"].push_uci(sol[c["i"] + 1])
+                c["i"] += 2
+        live = [q for q in live if any(ok is None for T in a.temps for ok in oks[T][q])]
+        print(f"\r  {len(live)} puzzles still being solved   ", end="", flush=True)
+    print()
     for T in a.temps:
-        state = []
-        for q, (k, p, b) in enumerate(flat):
-            for _ in range(a.samples):               # independent attempts, all in the same batches
-                bb = b.copy()
-                bb.push_uci(p["moves"][0])
-                state.append(dict(set=k, p=p, q=q, b=bb, i=1, ok=None))
-        live = list(state)
-        while live:
-            moves, lp = score(model, [s["b"] for s in live], [T], dev)
-            for i, s in enumerate(live):
-                j, _ = choose(lp[0][i], T, rng)
-                mv, want = moves[i][j], chess.Move.from_uci(s["p"]["moves"][s["i"]])
-                s["b"].push(mv)
-                if mv != want and not s["b"].is_checkmate():
-                    s["ok"] = False
-                elif s["i"] + 1 >= len(s["p"]["moves"]) or s["b"].is_checkmate():
-                    s["ok"] = True
-                else:
-                    s["b"].push_uci(s["p"]["moves"][s["i"] + 1])
-                    s["i"] += 2
-            live = [s for s in live if s["ok"] is None]
+        state = [dict(set=k, p=p, q=q, ok=ok) for q, (k, p, _) in enumerate(flat) for ok in oks[T][q]]
         row = {}
         hits = np.zeros(len(flat), dtype=int)                  # successes per puzzle, out of a.samples
         for s in state:

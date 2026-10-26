@@ -144,6 +144,7 @@ python transcend/plot_results.py
 | `plot_results.py` | figures and `results/transcend/summary.md` from every run's log |
 | `eval.py` | PGN models (a local `.pt` or a Hugging Face repo) at several temperatures: `games` vs Lichess's Stockfish AI levels, `positions` (top-k and win % lost on held-out positions), `puzzles` (with each puzzle's game history), `rerate` (a finished games run with other level ratings) |
 | `sae.py` | a TopK sparse autoencoder on a PGN model's states just before it moves (any layer), and each latent's top-activating positions from held-out games or a game corpus (`results/transcend/sae/`, plus an HTML page with boards) |
+| `crosscoder.py` | a BatchTopK crosscoder between the two PGN models (1000-1300 and 2400+) on the same positions, many per game from the game corpora: which latents are shared and which belong to one model (relative decoder norms), each latent's top positions with both models' moves, and a layer sweep (`results/transcend/crosscoder/`) |
 | `calibrate_levels.py` | rates each Lichess AI level against Maia-2 at known ratings, for `eval.py --level-ratings` (needs Fairy-Stockfish for levels 1-3) |
 
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,
