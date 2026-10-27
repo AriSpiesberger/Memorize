@@ -1037,26 +1037,12 @@ def graph(a):
                 views={v: [[e["i"], e["j"], round(e["z"], 2), round(e["rate_A"], 4), round(e["rate_B"], 4)]
                            for e in es[:a.html_edges]] for v, es in views.items()},
                 found=found, A=A, B=B)
-    page = f"""<!doctype html><meta charset="utf-8"><title>Concept paths</title>
-<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
-<style>body{{margin:0;font:13px system-ui,sans-serif}}#bar{{padding:8px;border-bottom:1px solid #ccc}}
-#g{{height:calc(100vh - 60px)}}
-.pair{{display:flex;gap:10px}}.cap{{font-size:12px;text-align:center}}.mi{{background:#cfe0ff;padding:0 2px}}.mj{{background:#ffd5cf;padding:0 2px}}
+    # Cards (boards, explanations, rollouts, engine scores) shared by graph.html and graph3d.html
+    cards_css = f""".pair{{display:flex;gap:10px}}.cap{{font-size:12px;text-align:center}}.mi{{background:#cfe0ff;padding:0 2px}}.mj{{background:#ffd5cf;padding:0 2px}}
 #tip{{position:fixed;display:none;max-width:560px;max-height:90vh;overflow-y:auto;background:#fff;border:1px solid #999;
 border-radius:6px;padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.25);z-index:10}}#tip.pinned{{border:2px solid #258}}
-{BOARD_CSS}</style>
-{BOARD_DEFS}{MOVE_HEAD}
-<div id="bar">paths <select id="v"></select> <span id="n"></span> &nbsp; size <select id="sz"><option value="deg">paths in this view</option>
-<option value="rate">firing rate</option><option value="one">equal</option></select> &nbsp; <button id="mv">unfreeze layout</button><br>
-arrow i &rarr; j: concept j turns on within {cfg['window']} plies of concept i, more than in sibling rollouts. <b>only X</b>: this path is taken when X
-plays and not when the other model does (both concepts come up with both models). Node colour: decoder share, blue = {html.escape(A)},
-red = {html.escape(B)}, grey = both. Hover a node to see the concept, or an arrow to see a rollout where the path happens; click to pin.</div>
-<div id="g"></div><div id="tip"></div>
-<script>
-const D = {json.dumps(data)};
-const sel = document.getElementById("v"), sz = document.getElementById("sz"), tip = document.getElementById("tip");
-for (const v of Object.keys(D.views)) sel.add(new Option(v, v));
-function colour(r) {{ if (!(r >= 0)) return "#999"; const b = Math.round(255 * (1 - r)), rr = Math.round(255 * r);
+{BOARD_CSS}"""
+    cards_js = f"""function colour(r) {{ if (!(r >= 0)) return "#999"; const b = Math.round(255 * (1 - r)), rr = Math.round(255 * r);
   return Math.abs(r - 0.5) < 0.1 ? "#aaa" : `rgb(${{rr}},80,${{b}})`; }}
 {BOARD_JS}
 let net, frozen = true, pinned = false;
@@ -1109,7 +1095,24 @@ function showTip(j, ev, edge) {{
   tip.style.left = Math.min(x, innerWidth - tip.offsetWidth - 8) + "px";
   tip.style.top = Math.max(8, Math.min(y, innerHeight - tip.offsetHeight - 8)) + "px";
 }}
-function draw() {{
+"""
+    page = f"""<!doctype html><meta charset="utf-8"><title>Concept paths</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>body{{margin:0;font:13px system-ui,sans-serif}}#bar{{padding:8px;border-bottom:1px solid #ccc}}
+#g{{height:calc(100vh - 60px)}}
+{cards_css}</style>
+{BOARD_DEFS}{MOVE_HEAD}
+<div id="bar"><a href="graph3d.html">3D view</a> &nbsp; paths <select id="v"></select> <span id="n"></span> &nbsp; size <select id="sz"><option value="deg">paths in this view</option>
+<option value="rate">firing rate</option><option value="one">equal</option></select> &nbsp; <button id="mv">unfreeze layout</button><br>
+arrow i &rarr; j: concept j turns on within {cfg['window']} plies of concept i, more than in sibling rollouts. <b>only X</b>: this path is taken when X
+plays and not when the other model does (both concepts come up with both models). Node colour: decoder share, blue = {html.escape(A)},
+red = {html.escape(B)}, grey = both. Hover a node to see the concept, or an arrow to see a rollout where the path happens; click to pin.</div>
+<div id="g"></div><div id="tip"></div>
+<script>
+const D = {json.dumps(data)};
+const sel = document.getElementById("v"), sz = document.getElementById("sz"), tip = document.getElementById("tip");
+for (const v of Object.keys(D.views)) sel.add(new Option(v, v));
+{cards_js}function draw() {{
   const es = D.views[sel.value], used = new Set(), deg = {{}};
   document.getElementById("n").textContent = `${{es.length}} shown of ${{D.found[sel.value]}} passing`;
   es.forEach(e => {{ used.add(e[0]); used.add(e[1]); deg[e[0]] = (deg[e[0]] || 0) + 1; deg[e[1]] = (deg[e[1]] || 0) + 1; }});
@@ -1139,7 +1142,94 @@ document.getElementById("mv").onclick = e => {{
 sel.onchange = draw; sz.onchange = draw; draw();
 </script>"""
     (run / "graph.html").write_text(page, encoding="utf-8")
-    print(f"wrote {out / 'summary.md'}, {out}/edges-*.csv, {run / 'graph.graphml'} and {run / 'graph.html'}")
+
+    # The same views in 3D (3d-force-graph on three.js): glowing nodes, particles flowing along each path
+    page3d = f"""<!doctype html><meta charset="utf-8"><title>Concept paths 3D</title>
+<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+<style>body{{margin:0;background:#04060c;color:#dbe4f3;font:13px system-ui,sans-serif;overflow:hidden}}
+#bar{{position:fixed;top:0;left:0;right:0;padding:12px 16px 26px;z-index:5;pointer-events:none;
+background:linear-gradient(#04060cf0,#04060c00)}}#bar *{{pointer-events:auto}}
+#bar select,#bar button{{background:#0f1626;color:#dbe4f3;border:1px solid #2b3858;border-radius:5px;padding:3px 8px;font:inherit}}
+#bar a{{color:#8fb8ff}}.title{{font-size:15px;letter-spacing:.04em;font-weight:600;margin-right:14px}}
+.key{{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px 0 10px;vertical-align:-1px}}
+#hint{{color:#7f8aa3;margin-top:6px}}
+{cards_css}
+#tip{{position:fixed;display:none;max-width:560px;max-height:88vh;overflow-y:auto;background:#fbfaf6;color:#1d2230;
+border-radius:8px;padding:10px;box-shadow:0 6px 30px rgba(0,0,0,.6);z-index:10}}#tip.pinned{{outline:2px solid #6aa8ff}}</style>
+{BOARD_DEFS}{MOVE_HEAD}
+<div id="bar"><span class="title">Concept paths</span> paths <select id="v"></select> <span id="n"></span>
+&nbsp; <button id="rot">pause rotation</button> <button id="fit">re-centre</button> &nbsp; <a href="graph.html">2D view</a>
+<span class="key" style="background:#4da3ff"></span>{html.escape(A)} <span class="key" style="background:#ff4d7a"></span>{html.escape(B)}
+<span class="key" style="background:#c9d4e6"></span>both
+<div id="hint">node colour: which model uses the concept &middot; particles flow i &rarr; j (green: the path gains for the side taking it, red: it loses, when scored) &middot;
+hover a node or path for its card, click to pin and fly to it, drag to orbit, scroll to zoom</div></div>
+<div id="g"></div><div id="tip"></div>
+<script>
+const D = {json.dumps(data)};
+const sel = document.getElementById("v"), tip = document.getElementById("tip");
+for (const v of Object.keys(D.views)) sel.add(new Option(v, v));
+let last = {{clientX: innerWidth / 2, clientY: innerHeight / 2}};
+addEventListener("mousemove", e => {{ last = e; }});
+{cards_js}
+// node colour: blue (first model) - pale (both) - pink-red (second model), by relative decoder norm
+function glow(r) {{
+  if (!(r >= 0)) return "#8892a6";
+  const t = Math.max(0, Math.min(1, (r - 0.3) / 0.4)), mix = (a, b) => Math.round(a + (b - a) * t);
+  const mid = Math.abs(r - 0.5) < 0.08;
+  return mid ? "#c9d4e6" : `rgb(${{mix(77, 255)}},${{mix(163, 77)}},${{mix(255, 122)}})`;
+}}
+const tint = {{"only {A}": "#4da3ff", "only {B}": "#ff4d7a", both: "#b9c6dc"}};
+const G = ForceGraph3D({{controlType: "orbit"}})(document.getElementById("g"))
+  .backgroundColor("#04060c").showNavInfo(false)
+  .nodeLabel(() => "").nodeOpacity(0.95).nodeResolution(20).nodeRelSize(3.2)
+  .nodeColor(n => hl.size && !hl.has(n.id) ? "#1c2335" : glow(D.nodes[n.id].r))
+  .linkColor(l => hl.size && !hlLinks.has(l) ? "#141a28" : l.color).linkOpacity(0.32).linkWidth(l => hlLinks.has(l) ? 1.6 : 0.4)
+  .linkDirectionalParticles(l => l.p).linkDirectionalParticleWidth(l => hlLinks.has(l) ? 2.6 : 1.5)
+  .linkDirectionalParticleSpeed(l => 0.003 + 0.0015 * l.w).linkDirectionalParticleColor(l => l.color)
+  .linkDirectionalArrowLength(2.5).linkDirectionalArrowRelPos(1).linkDirectionalArrowColor(l => l.color)
+  .onNodeHover(n => {{ hover(n, null); if (n && !pinned) showTip(n.id, last); else if (!pinned) tip.style.display = "none"; }})
+  .onLinkHover(l => {{ hover(null, l); if (l && !pinned) showTip(l.id, last, true); else if (!pinned) tip.style.display = "none"; }})
+  .onNodeClick(n => {{ pinned = true; tip.classList.add("pinned"); showTip(n.id, last); fly(n); }})
+  .onLinkClick(l => {{ pinned = true; tip.classList.add("pinned"); showTip(l.id, last, true); }})
+  .onBackgroundClick(() => {{ pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; hover(null, null); }});
+const hl = new Set(), hlLinks = new Set();
+function hover(n, l) {{                                      // light up a node's neighbourhood, or one path
+  if (pinned) return;
+  hl.clear(); hlLinks.clear();
+  if (n) {{ hl.add(n.id); for (const k of G.graphData().links) if (k.source.id === n.id || k.target.id === n.id) {{
+    hlLinks.add(k); hl.add(k.source.id); hl.add(k.target.id); }} }}
+  if (l) {{ hlLinks.add(l); hl.add(l.source.id); hl.add(l.target.id); }}
+  G.nodeColor(G.nodeColor()).linkColor(G.linkColor()).linkWidth(G.linkWidth()).linkDirectionalParticleWidth(G.linkDirectionalParticleWidth());
+}}
+function fly(n) {{
+  const d = 70, k = 1 + d / Math.max(1, Math.hypot(n.x, n.y, n.z));
+  G.cameraPosition({{x: n.x * k, y: n.y * k, z: n.z * k}}, n, 1400);
+}}
+function draw() {{
+  const v = sel.value, es = D.views[v], deg = {{}};
+  document.getElementById("n").textContent = `${{es.length}} shown of ${{D.found[v]}} passing`;
+  es.forEach(e => {{ deg[e[0]] = (deg[e[0]] || 0) + 1; deg[e[1]] = (deg[e[1]] || 0) + 1; }});
+  const nodes = Object.keys(deg).map(j => ({{id: +j, val: 1 + 2 * Math.sqrt(deg[j])}}));
+  const zmax = Math.max(...es.map(e => Math.abs(e[2])), 1);
+  const links = es.map(e => {{
+    const st = (D.path_stats[v] || {{}})[`${{e[0]}}-${{e[1]}}`], w = Math.abs(e[2]) / zmax;
+    const color = st ? (st.gain >= 2 ? "#3ddc97" : st.gain <= -2 ? "#ff5c5c" : tint[v]) : tint[v];
+    return {{id: `${{e[0]}}-${{e[1]}}`, source: e[0], target: e[1], w, p: 1 + Math.round(3 * w), color}};
+  }});
+  pinned = false; tip.style.display = "none"; tip.classList.remove("pinned"); hl.clear(); hlLinks.clear();
+  G.graphData({{nodes, links}});
+  setTimeout(() => G.zoomToFit(900, 40), 2500);
+}}
+let spin = true;
+G.controls().autoRotate = true; G.controls().autoRotateSpeed = 0.5;
+document.getElementById("rot").onclick = e => {{ spin = !spin; G.controls().autoRotate = spin;
+  e.target.textContent = spin ? "pause rotation" : "rotate"; }};
+document.getElementById("fit").onclick = () => G.zoomToFit(900, 40);
+addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
+sel.onchange = draw; draw();
+</script>"""
+    (run / "graph3d.html").write_text(page3d, encoding="utf-8")
+    print(f"wrote {out / 'summary.md'}, {out}/edges-*.csv, {run / 'graph.graphml'}, {run / 'graph.html'} and {run / 'graph3d.html'}")
 
 
 # ---------------------------------------------------------------- modes: SVD of the flow matrices

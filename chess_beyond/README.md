@@ -184,11 +184,11 @@ python transcend/concepts.py modes    --run runs/transcend/concepts/everything-3
 | crosscoder | which latents each model uses (relative decoder norm: 0 = only the 1000-1300 model, 1 = only 2400+) | `results/transcend/crosscoder/everything-3m/cc-Lfinal/report.md` |
 | explain | each latent's explanation, one or two facts, with its held-out precision, recall and F1 next to what an unrelated fact scores (*explained* = F1 >= 0.5). Board facts (`predicates.py`): hanging pieces, pins, forks, checks, passed pawns, what the move does. Skill facts (`skill.py`, Stockfish and Maia-2): only one good move, a best move found only at depth, a sound sacrifice, meeting a threat, a blunder, a move 1100s rarely play but 2000+ players do | `.../cc-Lfinal/explain.md` (including how many explanations need a skill fact, by which model uses the latent), `explanations.jsonl` |
 | rollout | per model, how often latent j turns on within 4 plies of latent i, against sibling rollouts from the same start (so the start position itself explains nothing) | `runs/.../concepts/everything-3m-Lfinal/<model>/` (counts) |
-| graph | three graphs: paths taken only by the 1000-1300 model (significant with it, absent with the other), only by 2400+, and by both; every latent on them comes up with both models | `runs/.../graph.html`, `results/transcend/concepts/everything-3m-Lfinal/summary.md` |
+| graph | three graphs: paths taken only by the 1000-1300 model (significant with it, absent with the other), only by 2400+, and by both; every latent on them comes up with both models | `runs/.../graph.html` (2D) and `graph3d.html` (3D), `results/transcend/concepts/everything-3m-Lfinal/summary.md` |
 | examples | for each path, rollouts where it happens: the position where i turns on, the one where j does, the moves between, and which facts changed | hover an arrow in `graph.html` |
 | score | Stockfish on every move of those rollouts: does the path gain or lose win chances for the side that takes it, how much each side's moves lose, and what kind of move starts and ends it (only move, deep, sacrifice, rare for 1100s, ...) | edge cards in `graph.html`; the per-graph table in `summary.md` |
 
-In `graph.html`, hover a node for its explanation and top positions (boards), hover an arrow for
+In `graph.html` (or the 3D `graph3d.html`: drag to orbit, scroll to zoom), hover a node for its explanation and top positions (boards), hover an arrow for
 the path's example rollouts; click to pin a card. `summary.md` lists the strongest paths and how
 many of their latents have explanations.
 
