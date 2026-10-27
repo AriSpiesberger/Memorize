@@ -1143,89 +1143,112 @@ sel.onchange = draw; sz.onchange = draw; draw();
 </script>"""
     (run / "graph.html").write_text(page, encoding="utf-8")
 
-    # The same views in 3D (3d-force-graph on three.js): glowing nodes, particles flowing along each path
+    # The same views in 3D (3d-force-graph on three.js). Kept light so it stays smooth with hundreds of
+    # paths: links are plain lines (no tube meshes or arrowheads; particles show the direction), hover only
+    # recolours (no geometry is rebuilt), neighbours come from a lookup table, the layout is mostly worked
+    # out before the first frame, and the pixel ratio is capped.
     page3d = f"""<!doctype html><meta charset="utf-8"><title>Concept paths 3D</title>
 <script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
-<style>body{{margin:0;background:#04060c;color:#dbe4f3;font:13px system-ui,sans-serif;overflow:hidden}}
-#bar{{position:fixed;top:0;left:0;right:0;padding:12px 16px 26px;z-index:5;pointer-events:none;
-background:linear-gradient(#04060cf0,#04060c00)}}#bar *{{pointer-events:auto}}
-#bar select,#bar button{{background:#0f1626;color:#dbe4f3;border:1px solid #2b3858;border-radius:5px;padding:3px 8px;font:inherit}}
-#bar a{{color:#8fb8ff}}.title{{font-size:15px;letter-spacing:.04em;font-weight:600;margin-right:14px}}
-.key{{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px 0 10px;vertical-align:-1px}}
-#hint{{color:#7f8aa3;margin-top:6px}}
+<style>html,body{{margin:0;height:100%;overflow:hidden}}
+body{{color:#e2e8f5;font:13px/1.45 system-ui,sans-serif;
+background:radial-gradient(ellipse at 50% 40%,#16203a 0%,#0b1022 45%,#04060d 100%)}}
+#bar{{position:fixed;top:14px;left:14px;z-index:5;padding:12px 16px;max-width:640px;border-radius:12px;
+background:rgba(12,17,32,.62);backdrop-filter:blur(10px);border:1px solid rgba(148,163,209,.18);box-shadow:0 8px 30px rgba(0,0,0,.35)}}
+#bar select,#bar button{{background:rgba(30,40,68,.8);color:#e2e8f5;border:1px solid rgba(148,163,209,.3);border-radius:6px;
+padding:3px 9px;font:inherit;cursor:pointer}}#bar button:hover,#bar select:hover{{border-color:#a5b4fc}}
+#bar a{{color:#a5b4fc;text-decoration:none}}.title{{font-size:16px;font-weight:600;letter-spacing:.03em;margin-right:12px}}
+.key{{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 5px 0 12px;vertical-align:-1px;box-shadow:0 0 8px currentColor}}
+#n{{color:#94a3c7}}#hint{{color:#8b97b8;margin-top:8px;font-size:12px}}
 {cards_css}
 #tip{{position:fixed;display:none;max-width:560px;max-height:88vh;overflow-y:auto;background:#fbfaf6;color:#1d2230;
-border-radius:8px;padding:10px;box-shadow:0 6px 30px rgba(0,0,0,.6);z-index:10}}#tip.pinned{{outline:2px solid #6aa8ff}}</style>
+border-radius:10px;padding:10px 12px;box-shadow:0 10px 40px rgba(0,0,0,.55);z-index:10}}#tip.pinned{{outline:2px solid #a5b4fc}}</style>
 {BOARD_DEFS}{MOVE_HEAD}
-<div id="bar"><span class="title">Concept paths</span> paths <select id="v"></select> <span id="n"></span>
-&nbsp; <button id="rot">pause rotation</button> <button id="fit">re-centre</button> &nbsp; <a href="graph.html">2D view</a>
-<span class="key" style="background:#4da3ff"></span>{html.escape(A)} <span class="key" style="background:#ff4d7a"></span>{html.escape(B)}
-<span class="key" style="background:#c9d4e6"></span>both
-<div id="hint">node colour: which model uses the concept &middot; particles flow i &rarr; j (green: the path gains for the side taking it, red: it loses, when scored) &middot;
-hover a node or path for its card, click to pin and fly to it, drag to orbit, scroll to zoom</div></div>
+<div id="bar"><span class="title">Concept paths</span><select id="v"></select> <span id="n"></span><br>
+<span class="key" style="background:#38bdf8;color:#38bdf8"></span>{html.escape(A)}
+<span class="key" style="background:#c4b5fd;color:#c4b5fd"></span>both
+<span class="key" style="background:#fb7185;color:#fb7185"></span>{html.escape(B)}
+&nbsp; <button id="rot">pause rotation</button> <button id="fit">re-centre</button> <a href="graph.html">&nbsp;2D view</a>
+<div id="hint">node colour: which model uses the concept &middot; particles flow i &rarr; j; once scored, a path glows
+<span style="color:#34d399">green</span> when it gains for the side taking it and <span style="color:#f43f5e">red</span> when it loses
+&middot; hover for the card, click to pin and fly there, drag to orbit, scroll to zoom</div></div>
 <div id="g"></div><div id="tip"></div>
 <script>
 const D = {json.dumps(data)};
 const sel = document.getElementById("v"), tip = document.getElementById("tip");
 for (const v of Object.keys(D.views)) sel.add(new Option(v, v));
 let last = {{clientX: innerWidth / 2, clientY: innerHeight / 2}};
-addEventListener("mousemove", e => {{ last = e; }});
+addEventListener("mousemove", e => {{ last = e; }}, {{passive: true}});
 {cards_js}
-// node colour: blue (first model) - pale (both) - pink-red (second model), by relative decoder norm
+// node colour by relative decoder norm: sky blue (first model) -> lilac (both) -> coral pink (second model)
+const STOPS = [[56, 189, 248], [196, 181, 253], [251, 113, 133]];
 function glow(r) {{
-  if (!(r >= 0)) return "#8892a6";
-  const t = Math.max(0, Math.min(1, (r - 0.3) / 0.4)), mix = (a, b) => Math.round(a + (b - a) * t);
-  const mid = Math.abs(r - 0.5) < 0.08;
-  return mid ? "#c9d4e6" : `rgb(${{mix(77, 255)}},${{mix(163, 77)}},${{mix(255, 122)}})`;
+  if (!(r >= 0)) return "#7c86a2";
+  const t = Math.max(0, Math.min(1, (r - 0.25) / 0.5)) * 2, k = Math.min(1, Math.floor(t)), f = t - k;
+  const c = STOPS[k].map((a, i) => Math.round(a + (STOPS[k + 1][i] - a) * f));
+  return `rgb(${{c[0]}},${{c[1]}},${{c[2]}})`;
 }}
-const tint = {{"only {A}": "#4da3ff", "only {B}": "#ff4d7a", both: "#b9c6dc"}};
+const TINT = {{"only {A}": "#38bdf8", "only {B}": "#fb7185", both: "#a5b4fc"}};
+const GAIN = "#34d399", LOSS = "#f43f5e", DIM_NODE = "#1a2138", DIM_LINK = "rgba(60,72,110,0.12)";
+let hl = new Set(), hlLinks = new Set(), focus = null, adj = new Map();
 const G = ForceGraph3D({{controlType: "orbit"}})(document.getElementById("g"))
-  .backgroundColor("#04060c").showNavInfo(false)
-  .nodeLabel(() => "").nodeOpacity(0.95).nodeResolution(20).nodeRelSize(3.2)
-  .nodeColor(n => hl.size && !hl.has(n.id) ? "#1c2335" : glow(D.nodes[n.id].r))
-  .linkColor(l => hl.size && !hlLinks.has(l) ? "#141a28" : l.color).linkOpacity(0.32).linkWidth(l => hlLinks.has(l) ? 1.6 : 0.4)
-  .linkDirectionalParticles(l => l.p).linkDirectionalParticleWidth(l => hlLinks.has(l) ? 2.6 : 1.5)
-  .linkDirectionalParticleSpeed(l => 0.003 + 0.0015 * l.w).linkDirectionalParticleColor(l => l.color)
-  .linkDirectionalArrowLength(2.5).linkDirectionalArrowRelPos(1).linkDirectionalArrowColor(l => l.color)
-  .onNodeHover(n => {{ hover(n, null); if (n && !pinned) showTip(n.id, last); else if (!pinned) tip.style.display = "none"; }})
-  .onLinkHover(l => {{ hover(null, l); if (l && !pinned) showTip(l.id, last, true); else if (!pinned) tip.style.display = "none"; }})
-  .onNodeClick(n => {{ pinned = true; tip.classList.add("pinned"); showTip(n.id, last); fly(n); }})
-  .onLinkClick(l => {{ pinned = true; tip.classList.add("pinned"); showTip(l.id, last, true); }})
-  .onBackgroundClick(() => {{ pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; hover(null, null); }});
-const hl = new Set(), hlLinks = new Set();
-function hover(n, l) {{                                      // light up a node's neighbourhood, or one path
-  if (pinned) return;
-  hl.clear(); hlLinks.clear();
-  if (n) {{ hl.add(n.id); for (const k of G.graphData().links) if (k.source.id === n.id || k.target.id === n.id) {{
-    hlLinks.add(k); hl.add(k.source.id); hl.add(k.target.id); }} }}
-  if (l) {{ hlLinks.add(l); hl.add(l.source.id); hl.add(l.target.id); }}
-  G.nodeColor(G.nodeColor()).linkColor(G.linkColor()).linkWidth(G.linkWidth()).linkDirectionalParticleWidth(G.linkDirectionalParticleWidth());
+  .backgroundColor("rgba(0,0,0,0)").showNavInfo(false)
+  .nodeLabel(() => "").nodeOpacity(1).nodeResolution(10).nodeRelSize(3)
+  .nodeColor(n => hl.size ? (n.id === focus ? "#ffffff" : hl.has(n.id) ? n.c : DIM_NODE) : n.c)
+  .linkWidth(0).linkOpacity(0.28).linkHoverPrecision(3)
+  .linkColor(l => hl.size && !hlLinks.has(l) ? DIM_LINK : l.color)
+  .linkDirectionalParticles(l => l.p).linkDirectionalParticleWidth(1.8).linkDirectionalParticleResolution(6)
+  .linkDirectionalParticleSpeed(l => 0.0025 + 0.002 * l.w)
+  .linkDirectionalParticleColor(l => hl.size && !hlLinks.has(l) ? DIM_LINK : l.color)
+  .warmupTicks(120).cooldownTicks(160).d3VelocityDecay(0.35)
+  .onNodeHover(n => later(() => {{ setFocus(n ? n.id : null, null); if (pinned) return;
+    if (n) showTip(n.id, last); else tip.style.display = "none"; }}))
+  .onLinkHover(l => later(() => {{ setFocus(null, l); if (pinned) return;
+    if (l) showTip(l.id, last, true); else tip.style.display = "none"; }}))
+  .onNodeClick(n => {{ setFocus(n.id, null); pinned = true; tip.classList.add("pinned"); showTip(n.id, last); fly(n); }})
+  .onLinkClick(l => {{ setFocus(null, l); pinned = true; tip.classList.add("pinned"); showTip(l.id, last, true); }})
+  .onBackgroundClick(() => {{ pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; setFocus(null, null, true); }});
+G.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+let pending = 0;                                             // at most one hover update per frame
+function later(f) {{ cancelAnimationFrame(pending); pending = requestAnimationFrame(f); }}
+function setFocus(id, link, force) {{                         // light up a node's neighbourhood, or one path
+  if (pinned && !force) return;
+  const key = id !== null ? "n" + id : link ? "l" + link.id : null;
+  if (key === setFocus.key) return;
+  setFocus.key = key;
+  hl = new Set(); hlLinks = new Set(); focus = id;
+  if (id !== null) {{ hl.add(id); for (const k of adj.get(id) || []) {{ hlLinks.add(k); hl.add(k.source.id ?? k.source); hl.add(k.target.id ?? k.target); }} }}
+  if (link) {{ hlLinks.add(link); hl.add(link.source.id); hl.add(link.target.id); }}
+  G.nodeColor(G.nodeColor()).linkColor(G.linkColor()).linkDirectionalParticleColor(G.linkDirectionalParticleColor());
 }}
 function fly(n) {{
-  const d = 70, k = 1 + d / Math.max(1, Math.hypot(n.x, n.y, n.z));
+  const d = 80, k = 1 + d / Math.max(1, Math.hypot(n.x, n.y, n.z));
   G.cameraPosition({{x: n.x * k, y: n.y * k, z: n.z * k}}, n, 1400);
 }}
 function draw() {{
   const v = sel.value, es = D.views[v], deg = {{}};
   document.getElementById("n").textContent = `${{es.length}} shown of ${{D.found[v]}} passing`;
   es.forEach(e => {{ deg[e[0]] = (deg[e[0]] || 0) + 1; deg[e[1]] = (deg[e[1]] || 0) + 1; }});
-  const nodes = Object.keys(deg).map(j => ({{id: +j, val: 1 + 2 * Math.sqrt(deg[j])}}));
+  const nodes = Object.keys(deg).map(j => ({{id: +j, val: 1 + 1.6 * Math.sqrt(deg[j]), c: glow(D.nodes[j].r)}}));
   const zmax = Math.max(...es.map(e => Math.abs(e[2])), 1);
   const links = es.map(e => {{
     const st = (D.path_stats[v] || {{}})[`${{e[0]}}-${{e[1]}}`], w = Math.abs(e[2]) / zmax;
-    const color = st ? (st.gain >= 2 ? "#3ddc97" : st.gain <= -2 ? "#ff5c5c" : tint[v]) : tint[v];
-    return {{id: `${{e[0]}}-${{e[1]}}`, source: e[0], target: e[1], w, p: 1 + Math.round(3 * w), color}};
+    const color = st ? (st.gain >= 2 ? GAIN : st.gain <= -2 ? LOSS : TINT[v]) : TINT[v];
+    return {{id: `${{e[0]}}-${{e[1]}}`, source: e[0], target: e[1], w, p: w > 0.5 ? 2 : 1, color}};
   }});
-  pinned = false; tip.style.display = "none"; tip.classList.remove("pinned"); hl.clear(); hlLinks.clear();
+  adj = new Map();
+  for (const l of links) for (const j of [l.source, l.target]) {{ if (!adj.has(j)) adj.set(j, []); adj.get(j).push(l); }}
+  pinned = false; tip.style.display = "none"; tip.classList.remove("pinned");
+  hl = new Set(); hlLinks = new Set(); focus = null; setFocus.key = null;
   G.graphData({{nodes, links}});
-  setTimeout(() => G.zoomToFit(900, 40), 2500);
+  setTimeout(() => G.zoomToFit(900, 60), 600);
 }}
 let spin = true;
-G.controls().autoRotate = true; G.controls().autoRotateSpeed = 0.5;
+G.controls().autoRotate = true; G.controls().autoRotateSpeed = 0.45;
 document.getElementById("rot").onclick = e => {{ spin = !spin; G.controls().autoRotate = spin;
   e.target.textContent = spin ? "pause rotation" : "rotate"; }};
-document.getElementById("fit").onclick = () => G.zoomToFit(900, 40);
+document.getElementById("fit").onclick = () => G.zoomToFit(900, 60);
 addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
+document.addEventListener("visibilitychange", () => document.hidden ? G.pauseAnimation() : G.resumeAnimation());
 sel.onchange = draw; draw();
 </script>"""
     (run / "graph3d.html").write_text(page3d, encoding="utf-8")
