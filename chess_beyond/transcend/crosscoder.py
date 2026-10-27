@@ -20,9 +20,9 @@ train    A BatchTopK crosscoder (Lindsey et al. 2024, "Sparse Crosscoders for Cr
          al. 2025, which found L1 crosscoders invent model-exclusive latents). The sources are
          (model, layer) pairs, each scaled to mean norm sqrt(d):
              f = BatchTopK(ReLU(sum_s W_enc[s] (x_s - b_dec[s]) + b_enc)),   x_hat_s = W_dec[:, s] f + b_dec[s]
-         Latents are ranked by activation x the sum of their decoder norms, k per position on
-         average over the batch; at inference a latent fires above a threshold learned during
-         training. Decoder norms are free, so a latent can write to one model only. With several
+         Each latent's decoder norms sum to 1 over the sources (free split between the models), and
+         latents are ranked by activation x that sum, k per position on average over the batch; at inference a latent fires above a threshold learned during
+         training. A latent can still write to one model only. With several
          --layers it is one crosscoder over all of them (acausal, across layers and models).
          AuxK keeps latents from dying. -> <run>/cc-<layers>/cc.pt and train_log.jsonl.
 
@@ -209,7 +209,7 @@ class CrossCoder(nn.Module):
     def __init__(self, S, d, latents, k):
         super().__init__()
         dec = torch.randn(latents, S, d)
-        dec = dec / dec.norm(dim=-1, keepdim=True) / math.sqrt(S)
+        dec = dec / dec.norm(dim=-1, keepdim=True) / S                    # norms sum to 1 over sources
         self.W_dec = nn.Parameter(dec)                                     # (latents, sources, d)
         self.W_enc = nn.Parameter(dec.reshape(latents, S * d).T.clone())   # (sources * d, latents)
         self.b_enc = nn.Parameter(torch.zeros(latents))
@@ -219,6 +219,13 @@ class CrossCoder(nn.Module):
 
     def norms(self):
         return self.W_dec.norm(dim=-1)                                     # (latents, sources)
+
+    @torch.no_grad()
+    def normalise(self):
+        """Each latent's decoder norms sum to 1 over the sources; how they split between models stays free.
+        Without it, AuxK shrinks dead latents' decoders (the residual they fit is small), which lowers
+        their selection score (activation x norm), so they never come back."""
+        self.W_dec /= self.norms().sum(1).clamp_min(1e-8)[:, None, None]
 
     def encode(self, x, batch_topk=False):
         """x (b, sources, d) -> (f, pre-activations, smallest selected score)."""
@@ -311,6 +318,7 @@ def train(a, layers):
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
+        cc.normalise()
         if step % a.eval_every == 0 or step == a.steps:
             fvu, l0 = evaluate(cc, val)
             row = dict(step=step, train_nmse=float(mse.detach()), aux=float(aux.detach()), val_fvu={source_name(info["names"][m], L): v
