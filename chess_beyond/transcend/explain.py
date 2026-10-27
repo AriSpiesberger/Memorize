@@ -3,12 +3,18 @@
     python transcend/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
 
 The claim being tested: the latents (and the concept paths built from them in concepts.py) are
-tangible chess ideas. An explanation is a predicate from predicates.py ("one of their pieces is
-hanging", "the move gives check", ...) or two joined by "and", and it is only as good as its
-score: how well it predicts, on positions it was not chosen on, when the latent fires.
+tangible chess ideas. An explanation is a fact, or two joined by "and", and it is only as good as
+its score: how well it predicts, on positions it was not chosen on, when the latent fires. Two
+kinds of facts:
+  board facts (predicates.py)  what is on the board: a hanging piece, a pin, a check, a passed pawn
+  skill facts (skill.py)       what it takes: only one good move, a best move found only at depth,
+                               a sound sacrifice, an answer to a threat, a blunder, a move 1100s
+                               rarely play but 2000+ players do (Stockfish and Maia-2)
 
-  1. facts    --n positions sampled from the crosscoder's stored ones (rows.npy), every predicate
-              computed on each (python-chess, all CPU cores). Cached in <cc-run>/<cc>/predicates.npz.
+  1. facts    --n positions sampled from the crosscoder's stored ones (rows.npy); board facts on
+              every CPU core, each worker with its own Stockfish (--depth), then Maia-2 on the GPU.
+              Cached in <cc-run>/<cc>/facts.npz with the raw engine numbers (--no-engine: board
+              facts only).
   2. counts   the positions are encoded with the crosscoder from the stored model states (no chess
               model is loaded); per latent, how often it fires with each predicate and each pair.
   3. score    games are split in two halves. On the "fit" half each latent's explanation is the
@@ -35,48 +41,75 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
+import chess
 import eval as ev                                                 # device
+import predicates
+import skill
 from crosscoder import RESULTS, Corpus, CrossCoder, load_sources, position, stack
-from predicates import NAMES, TEXT, features
 
-_corpus = None
+NAMES = predicates.NAMES + skill.NAMES                             # every fact an explanation can use
+TEXT = {**predicates.TEXT, **skill.TEXT}
+NUMBERS = ["wp", "gap", "found_at", "threat", "loss", "gives"]     # engine numbers kept beside the facts
+
+_corpus = _engine = None
 
 
-def _init(folders):
-    global _corpus
+def _init(folders, depth):
+    global _corpus, _engine
     _corpus = Corpus(folders)
+    _engine = skill.Annotator(depth=depth) if depth else None
 
 
 def _facts(rows):
-    """Predicates for a chunk of (folder, game, ply, char) rows, in a worker process."""
-    out = np.zeros((len(rows), len(NAMES)), dtype=bool)
+    """Board facts, engine numbers and (fen, move, best) for a chunk of (folder, game, ply, char)
+    rows, in a worker process."""
+    P = np.zeros((len(rows), len(predicates.NAMES)), dtype=bool)
+    eng, pos = [], []
     for k, row in enumerate(rows):
         b, nxt, _ = position(_corpus, row)
         try:
             mv = b.parse_san(nxt)
         except ValueError:
             mv = None
-        out[k] = features(b, mv)
-    return out
+        P[k] = predicates.features(b, mv)
+        e = _engine.annotate(b, mv) if _engine else None
+        eng.append(e)
+        pos.append((b.fen(), mv.uci() if mv else None, e["best"] if e else None))
+    return P, eng, pos
 
 
-def facts(rows, idx, folders, cache, workers):
+def facts(rows, idx, folders, cache, workers, depth):
+    """(positions, len(NAMES)) bools and the engine numbers, computed once and cached."""
     if cache.exists():
         z = np.load(cache)
-        if np.array_equal(z["idx"], idx) and list(z["names"]) == NAMES:
-            print(f"predicates: cached in {cache}", flush=True)
-            return z["P"]
-    chunks = np.array_split(rows[idx], max(1, len(idx) // 1000))
-    parts, t0 = [], time.time()
-    with Pool(workers, initializer=_init, initargs=(folders,)) as pool:
-        for k, part in enumerate(pool.imap(_facts, chunks)):
-            parts.append(part)
-            done = sum(len(p) for p in parts)
-            print(f"\r  predicates: {done}/{len(idx)} positions, {done / (time.time() - t0):.0f}/s   ", end="", flush=True)
+        if np.array_equal(z["idx"], idx) and list(z["names"]) == NAMES and int(z["depth"]) == depth:
+            print(f"facts: cached in {cache}", flush=True)
+            return z["P"], z["numbers"], z["maia"]
+    chunks = np.array_split(rows[idx], max(1, len(idx) // 200))
+    Ps, engs, poss, t0 = [], [], [], time.time()
+    with Pool(workers, initializer=_init, initargs=(folders, depth)) as pool:
+        for P, eng, pos in pool.imap(_facts, chunks):
+            Ps.append(P)
+            engs += eng
+            poss += pos
+            done = len(engs)
+            rate = done / (time.time() - t0)
+            print(f"\r  board{' and engine' if depth else ''} facts: {done}/{len(idx)} positions, {rate:.0f}/s, "
+                  f"{(len(idx) - done) / max(rate, 1e-9) / 60:.0f} min left   ", end="", flush=True)
     print()
-    P = np.concatenate(parts)
-    np.savez(cache, idx=idx, names=np.array(NAMES), P=P)
-    return P
+    if depth:
+        print("  Maia-2: how likely 1100 and 2000+ players are to play each move", flush=True)
+        maia = skill.maia_probs([(chess.Board(f), chess.Move.from_uci(m) if m else None,
+                                  chess.Move.from_uci(bm) if bm else None) for f, m, bm in poss])
+        S = np.array([skill.facts(e, m) for e, m in zip(engs, maia)], dtype=bool)
+        numbers = np.array([[e.get(k, np.nan) if e else np.nan for k in NUMBERS] for e in engs], dtype=np.float32)
+    else:
+        maia = np.full((len(idx), 3), np.nan, dtype=np.float32)
+        S = np.zeros((len(idx), len(skill.NAMES)), dtype=bool)
+        numbers = np.full((len(idx), len(NUMBERS)), np.nan, dtype=np.float32)
+    P = np.concatenate([np.concatenate(Ps), S], 1)
+    np.savez(cache, idx=idx, names=np.array(NAMES), depth=depth, P=P, numbers=numbers, maia=maia)
+    return P, numbers, maia
 
 
 @torch.no_grad()
@@ -159,7 +192,8 @@ def report(recs, lat, out_dir, a, n_pos):
     cnt = lambda rs, s: sum(1 for r in rs if r["status"] == s)
     md = ["# Latent explanations", "",
           f"{n_pos} positions, split by game into a fit half (choose each latent's explanation) and a test "
-          f"half (score it). An explanation is a predicate from predicates.py, or two joined by \"and\"; its "
+          f"half (score it). An explanation is a board fact (predicates.py) or skill fact (skill.py), or two "
+          f"joined by \"and\"; its "
           f"score is the F1 of predicting when the latent fires, on the test half. **explained**: F1 >= {a.good}; "
           f"**weak**: >= {a.weak}. Latents firing fewer than {a.min_fires} times in either half are too rare to score.", "",
           f"- {len(recs)} latents, {len(scored)} scored: {cnt(scored, 'explained')} explained "
@@ -167,12 +201,17 @@ def report(recs, lat, out_dir, a, n_pos):
           f"{cnt(scored, 'unexplained')} unexplained; {len(recs) - len(scored)} too rare.", "",
           "## By which model uses the latent", "",
           "relative decoder norm r: ~0 the first model only, ~0.5 both, ~1 the second model only.", "",
-          "| r | scored | explained | weak | median F1 |", "| --- | --- | --- | --- | --- |"]
+          "**uses a skill fact**: of the explained and weak latents, how many explanations include a skill fact "
+          "(only move, deep move, sacrifice, threat, blunder, Maia-2 rarity, ...) rather than board facts alone.", "",
+          "| r | scored | explained | weak | median F1 | uses a skill fact |", "| --- | --- | --- | --- | --- | --- |"]
+    skilled = lambda r: any(x in skill.TEXT for x in r.get("name", "").split("&"))
     for lo, hi, lab in ((0, 0.4, "< 0.4"), (0.4, 0.6, "0.4-0.6"), (0.6, 1.01, ">= 0.6")):
         rs = [r for r in scored if lo <= rel.get(r["latent"], 0.5) < hi]
         if rs:
+            ok = [r for r in rs if r["status"] in ("explained", "weak")]
             md.append(f"| {lab} | {len(rs)} | {100 * cnt(rs, 'explained') / len(rs):.0f}% | "
-                      f"{100 * cnt(rs, 'weak') / len(rs):.0f}% | {np.median([r['f1'] for r in rs]):.2f} |")
+                      f"{100 * cnt(rs, 'weak') / len(rs):.0f}% | {np.median([r['f1'] for r in rs]):.2f} | "
+                      f"{100 * sum(map(skilled, ok)) / max(len(ok), 1):.0f}% |")
     common = {}
     for r in scored:
         if r["status"] == "explained":
@@ -191,8 +230,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run, e.g. Lfinal or L12")
-    ap.add_argument("--n", type=int, default=300_000, help="positions to sample from the stored ones")
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2), help="processes for the predicates")
+    ap.add_argument("--n", type=int, default=100_000, help="positions to sample from the stored ones")
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
+                    help="processes for the facts (each runs one single-threaded Stockfish)")
+    ap.add_argument("--depth", type=int, default=14, help="Stockfish depth for the skill facts")
+    ap.add_argument("--no-engine", action="store_true", help="board facts only: no Stockfish, no Maia-2")
     ap.add_argument("--batch", type=int, default=4096, help="positions encoded at once")
     ap.add_argument("--min-fires", type=int, default=20, help="firings needed in each half to score a latent")
     ap.add_argument("--min-pred", type=int, default=20, help="a predicate (or pair) must hold this often in the fit half")
@@ -208,9 +250,14 @@ def main():
     info = json.loads((cc_run / "collect.json").read_text())
     rows = np.load(cc_run / "rows.npy")
     idx = np.sort(np.random.default_rng(a.seed).choice(len(rows), min(a.n, len(rows)), replace=False))
-    print(f"{len(idx)} of {len(rows)} stored positions; {len(NAMES)} predicates, "
+    print(f"{len(idx)} of {len(rows)} stored positions; {len(NAMES)} facts, "
           f"{len(NAMES) * (len(NAMES) - 1) // 2} pairs", flush=True)
-    P = facts(rows, idx, info["folders"], cc_dir / "predicates.npz", a.workers)
+    depth = 0 if a.no_engine else a.depth
+    P, numbers, maia = facts(rows, idx, info["folders"], cc_dir / "facts.npz", a.workers, depth)
+    if depth:
+        loss, gap = numbers[:, NUMBERS.index("loss")], numbers[:, NUMBERS.index("gap")]
+        print(f"  engine: median loss of the move played {np.nanmedian(loss):.1f} win-% points; "
+              f"{100 * np.nanmean(gap >= skill.SHARP):.0f}% of positions have only one good move", flush=True)
     # games, not positions, are split: a game's positions are alike
     halves = ((rows[idx, 0].astype(np.int64) * 1_000_003 + rows[idx, 1]) * 2654435761 % 2 ** 32 % 2).astype(np.int64)
 

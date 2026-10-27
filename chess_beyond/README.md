@@ -147,7 +147,7 @@ python transcend/plot_results.py
 | `crosscoder.py` | a BatchTopK crosscoder between the two PGN models (1000-1300 and 2400+) on the same random positions from games of every rating, many per game: which latents are shared and which belong to one model (relative decoder norms), each latent's top positions with both models' moves, and a layer sweep (`results/transcend/crosscoder/`) |
 | `explain.py` | a scored, plain-chess explanation for every crosscoder latent: the fact from `predicates.py` (or two joined by "and") that best predicts when it fires, scored on held-out games ([below](#interpretability-concepts-and-the-paths-between-them)) |
 | `concepts.py` | concept paths: each PGN model plays itself, every position is encoded with the crosscoder, and path i -> j is "latent j turns on within a few plies after latent i", beyond what sibling rollouts show; graphs of the paths only one model takes and the ones both take, example rollouts for each path, and an SVD summary ([below](#interpretability-concepts-and-the-paths-between-them)) |
-| `predicates.py`, `pages.py` | helpers: the chess facts explanations are written in (hanging pieces, pins, forks, checks, passed pawns, what the move does, ...), and the boards and cards of the HTML pages |
+| `predicates.py`, `skill.py`, `pages.py` | helpers: the facts explanations are written in, board facts (hanging pieces, pins, forks, what the move does) and skill facts from Stockfish and Maia-2 (only move, deep move, sound sacrifice, blunder, rare for 1100s); and the boards and cards of the HTML pages |
 | `calibrate_levels.py` | rates each Lichess AI level against Maia-2 at known ratings, for `eval.py --level-ratings` (needs Fairy-Stockfish for levels 1-3) |
 
 Test sets (`data/lichess/puzzles/strata/`): 20,000 puzzles each at 1100 (control), 2400 and 2600,
@@ -165,13 +165,16 @@ nearly all of them, some **paths** between concepts are taken by only one model.
 python transcend/crosscoder.py collect --positions 3000000 --per-game 4 --layers 8 12 15 final --run runs/transcend/crosscoder/everything-3m
 python transcend/crosscoder.py train   --run runs/transcend/crosscoder/everything-3m --layers final
 python transcend/crosscoder.py top     --run runs/transcend/crosscoder/everything-3m --cc Lfinal
-# 2. an explanation for every latent, scored on held-out games (CPU for the facts, then a quick GPU pass)
+# 2. an explanation for every latent, scored on held-out games
+#    (board facts + Stockfish on every CPU core, ~30-40 min for 100k positions; then Maia-2 and the crosscoder on the GPU)
 python transcend/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
 # 3. self-play rollouts: which latents turn on after which, with each model playing
 python transcend/concepts.py rollout --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
-# 4. the path graphs, then example rollouts for every path (this redraws the graph with them)
+# 4. the path graphs, example rollouts for every path, then Stockfish on every move of those rollouts
+#    (examples and score each redraw the graph with what they add)
 python transcend/concepts.py graph    --run runs/transcend/concepts/everything-3m-Lfinal
 python transcend/concepts.py examples --run runs/transcend/concepts/everything-3m-Lfinal
+python transcend/concepts.py score    --run runs/transcend/concepts/everything-3m-Lfinal
 # optional: the same paths summarised as SVD "flow modes"
 python transcend/concepts.py modes    --run runs/transcend/concepts/everything-3m-Lfinal
 ```
@@ -179,10 +182,11 @@ python transcend/concepts.py modes    --run runs/transcend/concepts/everything-3
 | step | what it measures | look at |
 | --- | --- | --- |
 | crosscoder | which latents each model uses (relative decoder norm: 0 = only the 1000-1300 model, 1 = only 2400+) | `results/transcend/crosscoder/everything-3m/cc-Lfinal/report.md` |
-| explain | each latent's explanation, e.g. "one of their pieces is hanging and the move takes it", with its held-out precision, recall and F1, next to what an unrelated fact scores; *explained* = F1 >= 0.5 | `.../cc-Lfinal/explain.md`, `explanations.jsonl` |
+| explain | each latent's explanation, one or two facts, with its held-out precision, recall and F1 next to what an unrelated fact scores (*explained* = F1 >= 0.5). Board facts (`predicates.py`): hanging pieces, pins, forks, checks, passed pawns, what the move does. Skill facts (`skill.py`, Stockfish and Maia-2): only one good move, a best move found only at depth, a sound sacrifice, meeting a threat, a blunder, a move 1100s rarely play but 2000+ players do | `.../cc-Lfinal/explain.md` (including how many explanations need a skill fact, by which model uses the latent), `explanations.jsonl` |
 | rollout | per model, how often latent j turns on within 4 plies of latent i, against sibling rollouts from the same start (so the start position itself explains nothing) | `runs/.../concepts/everything-3m-Lfinal/<model>/` (counts) |
 | graph | three graphs: paths taken only by the 1000-1300 model (significant with it, absent with the other), only by 2400+, and by both; every latent on them comes up with both models | `runs/.../graph.html`, `results/transcend/concepts/everything-3m-Lfinal/summary.md` |
 | examples | for each path, rollouts where it happens: the position where i turns on, the one where j does, the moves between, and which facts changed | hover an arrow in `graph.html` |
+| score | Stockfish on every move of those rollouts: does the path gain or lose win chances for the side that takes it, how much each side's moves lose, and what kind of move starts and ends it (only move, deep, sacrifice, rare for 1100s, ...) | edge cards in `graph.html`; the per-graph table in `summary.md` |
 
 In `graph.html`, hover a node for its explanation and top positions (boards), hover an arrow for
 the path's example rollouts; click to pin a card. `summary.md` lists the strongest paths and how

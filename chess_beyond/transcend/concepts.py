@@ -28,6 +28,13 @@ examples For the graph's paths, example rollouts: replays rollouts from fresh st
          the graph; hovering an arrow shows them (the two positions and the moves between).
          -> results/transcend/concepts/<run>/path_examples.json
 
+score    Stockfish (skill.py) on every move of the example rollouts, from i's position to after
+         j's move: the change in win chances for the side to move at i (the side that takes the
+         path), each side's average loss per move, and the skill facts of the moves at i and j
+         (only move, deep move, sound sacrifice, rare for 1100s via Maia-2, ...); then redraws the
+         graph, whose edge cards and summary.md table show them.
+         -> results/transcend/concepts/<run>/path_scores.json
+
 graph    Edge statistics: excess = C - E, lift = (C + 1) / (E + 1), z = excess / sqrt(E + 1),
          rate = excess / N[i] (how much more likely j's onset is within the window, per onset of
          i). A path passes with a player at z >= --z, lift >= --lift, C >= --min-count. Latents are
@@ -50,12 +57,16 @@ modes    The graph summarised: truncated SVD (--modes components) of the excess-
             mode, the latents' top positions drawn as boards).
 
     python transcend/concepts.py modes   --run runs/transcend/concepts/everything-3m-Lfinal
+    python transcend/concepts.py score   --run runs/transcend/concepts/everything-3m-Lfinal   # after examples
 """
 import argparse
 import html
 import json
+import os
+import re
 import sys
 import time
+from multiprocessing import Pool
 from pathlib import Path
 
 import chess
@@ -71,6 +82,7 @@ from crosscoder import RESULTS as CC_RESULTS
 from crosscoder import FOLDERS, Corpus, CrossCoder, pick_positions, position
 from pgn_model import BOS, MAX_MOVE_CHARS, MAX_TRIES, SPACE, VOCAB, encode, prompt
 from pgn_probe import parse_movetext
+import skill
 from predicates import NAMES, TEXT, features
 from pages import BOARD_CSS, BOARD_DEFS, BOARD_JS, MOVE_HEAD
 from sae import last_moves
@@ -566,8 +578,14 @@ def examples(a):
     ctx = min(m.ctx for m, _ in models) - room(P)
     starts = pick_positions(corpus, a.ex_starts, 1, cfg["min_ply"], ctx, cfg["seed"] + 1)   # not the counted starts
     per_batch = max(1, a.batch // R)
-    found = {}
+    out_path = res / "path_examples.json"
+    # saved after each player, so a stopped run keeps the players it finished; "_done" marks them
+    found = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else {}
+    found.setdefault("_done", {})
     for n in names:
+        if found["_done"].get(n, 0) >= a.per_edge:
+            print(f"  {n}: done in an earlier run ({out_path})")
+            continue
         pi = names.index(n)
         pairs = sorted(want[n])
         I = torch.tensor([p[0] for p in pairs], device=dev)
@@ -577,7 +595,7 @@ def examples(a):
         need = [a.per_edge] * len(pairs)
         got = found[n] = {}
         gen = torch.Generator(device=dev).manual_seed(cfg["seed"] * 1000 + 7)
-        t0 = time.time()
+        t0, last_new, filled = time.time(), 0, 0
         for s in range(0, len(starts), per_batch):
             boards, prompts = [], []
             for f, g, ply, end in (tuple(int(v) for v in r) for r in starts[s:s + per_batch]):
@@ -610,9 +628,103 @@ def examples(a):
                   end="", flush=True)
             if full == len(pairs):
                 break
+            examples_now = sum(a.per_edge - k for k in need)
+            if examples_now > filled:
+                filled, last_new = examples_now, done
+            elif done - last_new >= a.stall:              # the paths left are too rare to be worth the wait
+                print(f"\n  {n}: no new example in the last {a.stall} starts; moving on", end="")
+                break
         print()
-    (res / "path_examples.json").write_text(json.dumps(found), encoding="utf-8")
-    print(f"wrote {res / 'path_examples.json'}; redrawing the graph with them")
+        found["_done"][n] = a.per_edge
+        out_path.write_text(json.dumps(found), encoding="utf-8")
+        print(f"  saved {out_path}", flush=True)
+    print(f"wrote {out_path}; redrawing the graph with them")
+    graph(a)
+
+
+# ---------------------------------------------------------------- engine scores for the paths' example rollouts
+
+_annotator = None
+
+
+def _score_init(depth):
+    global _annotator
+    _annotator = skill.Annotator(depth=depth)
+
+
+def _replay(x):
+    """An example's positions from i's (ply ti) to just after the move at j (ply tj): (board, move) pairs."""
+    b, out = chess.Board(x["fen_i"]), []
+    for tok, _ in x["line"][x["ti"]:x["tj"] + 1]:
+        san = re.sub(r"^\d+\.(\.\.)?", "", tok)
+        mv = b.parse_san(san)
+        out.append((b.copy(stack=False), mv))
+        b.push(mv)
+    return out, b
+
+
+def _score(job):
+    """Stockfish on every move of one example: win chances for the side to move at i (the path's
+    "taker") from i's position to after j's move, each move's loss, and the moves at i and j."""
+    key, k, x = job
+    try:
+        steps, end = _replay(x)
+    except ValueError:
+        return key, k, None
+    taker = steps[0][0].turn
+    ann = [_annotator.annotate(b, mv) for b, mv in steps]
+    if any(e is None for e in ann):
+        return key, k, None
+    pov = lambda wp, turn: wp if turn == taker else 100 - wp
+    wp_i = pov(ann[0]["wp"], taker)
+    last = ann[-1]
+    wp_end = pov(last["wp"] - last["loss"], steps[-1][0].turn)          # after the move at j
+    losses = [(b.turn == taker, e["loss"]) for (b, _), e in zip(steps, ann)]
+    return key, k, dict(k=k, wp_i=wp_i, wp_end=wp_end, gain=wp_end - wp_i,
+                        loss_taker=float(np.mean([l for t, l in losses if t] or [0])),
+                        loss_other=float(np.mean([l for t, l in losses if not t] or [0])),
+                        e_i=ann[0], e_j=last, fen_i=steps[0][0].fen(), fen_j=steps[-1][0].fen(),
+                        j_mover="taker" if steps[-1][0].turn == taker else "other")
+
+
+def score_paths(a):
+    """Stockfish (and Maia-2) on the paths' example rollouts (concepts.py examples): for each example,
+    does the path gain or lose for the side that takes it, how well is each move played, and what
+    kind of moves start and end it (skill.py's facts). -> results/.../<run>/path_scores.json"""
+    run = Path(a.run)
+    res = RESULTS / run.name
+    pe = res / "path_examples.json"
+    if not pe.exists():
+        sys.exit(f"{pe} is missing: run examples first")
+    found = json.loads(pe.read_text(encoding="utf-8"))
+    jobs = [((n, key), k, x) for n, paths in found.items() if n != "_done"
+            for key, xs in paths.items() for k, x in enumerate(xs)]
+    print(f"{len(jobs)} example rollouts; Stockfish depth {a.depth} on every move from i's position to j's", flush=True)
+    out, t0 = {}, time.time()
+    with Pool(a.workers, initializer=_score_init, initargs=(a.depth,)) as pool:
+        for d, ((n, key), k, r) in enumerate(pool.imap_unordered(_score, jobs, chunksize=4), 1):
+            if r is not None:
+                out.setdefault(n, {}).setdefault(key, {})[k] = r
+            if d % 20 == 0 or d == len(jobs):
+                rate = d / (time.time() - t0)
+                print(f"\r  {d}/{len(jobs)} examples, {rate:.1f}/s, {(len(jobs) - d) / max(rate, 1e-9) / 60:.0f} min left   ",
+                      end="", flush=True)
+    print()
+    # Maia-2 on the moves at i and j: how likely 1100s and 2000+ players are to play them
+    rs = [r for paths in out.values() for xs in paths.values() for r in xs.values()]
+    pairs = []
+    for r in rs:
+        for fen, e in ((r["fen_i"], r["e_i"]), (r["fen_j"], r["e_j"])):
+            pairs.append((chess.Board(fen), chess.Move.from_uci(e["move"]), chess.Move.from_uci(e["best"])))
+    print("  Maia-2 on the moves at i and j", flush=True)
+    maia = skill.maia_probs(pairs) if pairs else []
+    for t, r in enumerate(rs):
+        r["facts_i"] = [n for n, v in zip(skill.NAMES, skill.facts(r["e_i"], maia[2 * t])) if v]
+        r["facts_j"] = [n for n, v in zip(skill.NAMES, skill.facts(r["e_j"], maia[2 * t + 1])) if v]
+        r["maia_i"], r["maia_j"] = [float(v) for v in maia[2 * t]], [float(v) for v in maia[2 * t + 1]]
+    out = {n: {key: [xs[k] for k in sorted(xs)] for key, xs in paths.items()} for n, paths in out.items()}
+    (res / "path_scores.json").write_text(json.dumps(dict(depth=a.depth, scores=out)), encoding="utf-8")
+    print(f"wrote {res / 'path_scores.json'}; redrawing the graph with them")
     graph(a)
 
 
@@ -767,6 +879,27 @@ def transition(x):
                 move_i=moves(fi), move_j=moves(fj), j_mover="we" if same else "they")
 
 
+def slim(r):
+    """The parts of a path_scores.json record the page shows."""
+    if not r:
+        return None
+    return {k: r[k] for k in ("wp_i", "wp_end", "gain", "loss_taker", "loss_other", "facts_i", "facts_j", "j_mover")}
+
+
+def path_summary(rs):
+    """A path's engine scores over its example rollouts: mean win-% change for the taker, mean loss per
+    move by side, and the share of examples with each skill fact at the move at i and at j."""
+    if not rs:
+        return None
+    m = lambda k: float(np.mean([r[k] for r in rs]))
+    st = dict(n=len(rs), wp_i=m("wp_i"), wp_end=m("wp_end"), gain=m("gain"), loss_taker=m("loss_taker"),
+              loss_other=m("loss_other"))
+    for f in skill.NAMES:
+        st["i_" + f] = float(np.mean([f in r["facts_i"] for r in rs]))
+        st["j_" + f] = float(np.mean([f in r["facts_j"] for r in rs]))
+    return st
+
+
 def graph(a):
     run = Path(a.run)
     cfg = json.loads((run / "config.json").read_text())
@@ -796,6 +929,23 @@ def graph(a):
     nodes = sorted({e[k] for es in views.values() for e in es for k in ("i", "j")})
     print(f"describing {len(nodes)} latents", flush=True)
     desc = describe(cfg, set(nodes))
+
+    # Example rollouts per path (concepts.py examples), under the player(s) each view is about
+    pe, ps = out / "path_examples.json", out / "path_scores.json"
+    found_ex = json.loads(pe.read_text(encoding="utf-8")) if pe.exists() else {}
+    scores = json.loads(ps.read_text(encoding="utf-8"))["scores"] if ps.exists() else {}
+    score_of = {(n, key, r["k"]): r for n, sp in scores.items() for key, rs in sp.items() for r in rs}
+    paths, path_stats = {}, {}
+    for (kind, v), who in zip(titles.items(), ([A], [B], [A, B])):
+        keys = {f"{e['i']}-{e['j']}" for e in views[v]}
+        paths[v] = {}
+        for n in who:
+            for key, xs in found_ex.get(n, {}).items():
+                if key in keys:
+                    paths[v].setdefault(key, []).extend(
+                        dict(x, player=n, change=transition(x), score=slim(score_of.get((n, key, k))))
+                        for k, x in enumerate(xs))
+        path_stats[v] = {key: path_summary([x["score"] for x in xs if x["score"]]) for key, xs in paths[v].items()}
 
     slug = lambda v: v.replace(" ", "-")
     for v, es in views.items():
@@ -835,10 +985,30 @@ def graph(a):
                       f"{sum(x == 'weak' for x in st)} weak, {sum(x == 'unexplained' for x in st)} unexplained, "
                       f"{sum(x in ('too rare', 'none') for x in st)} not scored")
     md.append("")
+    if scores:
+        md += ["## What the paths do, by Stockfish (concepts.py score)", "",
+               "Per path, over its example rollouts: the change in win chances for the side to move at i (the side "
+               "that takes the path), from i's position to after the move at j; the average win-% points each "
+               "side's moves lost; and how often the move at i is the engine's best, the only good move, a deep "
+               "move, a sound sacrifice, or one 1100-level players rarely play.", "",
+               "| paths | with scores | mean gain for the taker | taker's loss per move | other side's | move at i: best / only / deep / sacrifice / rare for 1100 |",
+               "| --- | --- | --- | --- | --- | --- |"]
+        for v in views:
+            st = [x for x in path_stats[v].values() if x]
+            if st:
+                m = lambda k: np.mean([x[k] for x in st])
+                md.append(f"| {v} | {len(st)} | {m('gain'):+.1f} | {m('loss_taker'):.1f} | {m('loss_other'):.1f} | "
+                          + " / ".join(f"{100 * m('i_' + f):.0f}%" for f in ("move_best", "move_only", "move_deep",
+                                                                            "move_sound_sacrifice", "move_rare_for_1100")) + " |")
+        md.append("")
     for v, es in views.items():
         md += [f"## {v}: the {min(a.show, len(es))} strongest paths", ""]
         for e in es[:a.show]:
             extra = f"+{100 * e['rate_A']:.1f}% per onset with {A} (z {e['z_A']:.1f}), +{100 * e['rate_B']:.1f}% with {B} (z {e['z_B']:.1f})"
+            st = path_stats.get(v, {}).get(f"{e['i']}-{e['j']}") if scores else None
+            if st:
+                extra += (f"; Stockfish over {st['n']} rollouts: {st['gain']:+.1f} win-% for the taker, its moves lose "
+                          f"{st['loss_taker']:.1f}, the other side's {st['loss_other']:.1f}")
             md.append(f"- **{e['i']} -> {e['j']}** ({extra})  \n  {html.escape(label(e['i']))}  \n  -> {html.escape(label(e['j']))}")
         md.append("")
     (out / "summary.md").write_text("\n".join(md), encoding="utf-8")
@@ -861,19 +1031,9 @@ def graph(a):
     g += ["</graph>", "</graphml>"]
     (run / "graph.graphml").write_text("\n".join(g), encoding="utf-8")
 
-    # Example rollouts per path (concepts.py examples), under the player(s) each view is about
-    pe = out / "path_examples.json"
-    found_ex = json.loads(pe.read_text(encoding="utf-8")) if pe.exists() else {}
-    paths = {}
-    for (kind, v), who in zip(titles.items(), ([A], [B], [A, B])):
-        keys = {f"{e['i']}-{e['j']}" for e in views[v]}
-        paths[v] = {}
-        for n in who:
-            for k, xs in found_ex.get(n, {}).items():
-                if k in keys:
-                    paths[v].setdefault(k, []).extend(dict(x, player=n, change=transition(x)) for x in xs)
     data = dict(nodes={j: dict(r=desc[j]["rel_norm"], rate=desc[j]["rate"], ex=desc[j]["boards"], why=desc[j]["why"],
-                              expl=desc[j]["expl"]) for j in nodes}, paths=paths, have_examples=bool(found_ex),
+                              expl=desc[j]["expl"]) for j in nodes}, paths=paths, path_stats=path_stats,
+                skill_text=skill.SHORT, have_examples=bool(found_ex),
                 views={v: [[e["i"], e["j"], round(e["z"], 2), round(e["rate_A"], 4), round(e["rate_B"], 4)]
                            for e in es[:a.html_edges]] for v, es in views.items()},
                 found=found, A=A, B=B)
@@ -906,6 +1066,11 @@ function edgeHTML(id) {{
   let h = `<b>${{i}} &rarr; ${{j}}</b>: chance that ${{j}} turns on within {cfg['window']} plies of ${{i}}, above sibling
     rollouts: ${{pc(e[3])}} with ${{D.A}}, ${{pc(e[4])}} with ${{D.B}}
     <div><span class="mi">${{i}}</span></div>${{explHTML(D.nodes[i], true)}}<div><span class="mj">${{j}}</span></div>${{explHTML(D.nodes[j], true)}}`;
+  const st = (D.path_stats[sel.value] || {{}})[id];
+  if (st) h += `<div class="why" style="border-left:4px solid ${{st.gain >= 0 ? "#1d7a2e" : "#b3261e"}}"><b>Stockfish, over ${{st.n}}
+    rollout${{st.n > 1 ? "s" : ""}}:</b> win chance for the side that takes the path ${{st.wp_i.toFixed(0)}}% &rarr; ${{st.wp_end.toFixed(0)}}%
+    (<b>${{st.gain >= 0 ? "+" : ""}}${{st.gain.toFixed(1)}}</b>); its moves lose ${{st.loss_taker.toFixed(1)}} win-% points on average,
+    the other side's ${{st.loss_other.toFixed(1)}}` + skillList("move at i", st, "i_") + skillList("move at j", st, "j_") + "</div>";
   const xs = D.paths[sel.value][id] || [];
   if (!xs.length) h += D.have_examples ? "<i>no rollout with this path was found</i>"
                                        : "<i>no example rollouts yet: run concepts.py examples</i>";
@@ -913,9 +1078,22 @@ function edgeHTML(id) {{
     h += `<hr><div class="mv"><b>${{x.player}}</b> playing, from &hellip; ${{x.start}}</div><div class="pair">
       <div>${{board(x.fen_i, x.uci_i)}}<div class="cap"><span class="mi">${{i}}</span> turns on (ply ${{x.ti}})</div></div>
       <div>${{board(x.fen_j, x.uci_j)}}<div class="cap"><span class="mj">${{j}}</span> turns on (ply ${{x.tj}})</div></div></div>
-      <div class="mv">` + x.line.map(([t, k]) => k ? `<span class="m${{k}}">${{t}}</span>` : t).join(" ") + "</div>" + changeHTML(x.change);
+      <div class="mv">` + x.line.map(([t, k]) => k ? `<span class="m${{k}}">${{t}}</span>` : t).join(" ") + "</div>" + changeHTML(x.change)
+      + scoreHTML(x.score);
   }}
   return h;
+}}
+// Skill facts (skill.py) shared by the path's examples at the move at i or j: "only move (2 of 3)"
+function skillList(lab, st, pre) {{
+  const xs = Object.keys(D.skill_text).filter(f => st[pre + f] > 0)
+    .map(f => `${{D.skill_text[f]}} (${{Math.round(st[pre + f] * st.n)}} of ${{st.n}})`);
+  return xs.length ? `<div><b>${{lab}}:</b> ${{xs.join("; ")}}</div>` : "";
+}}
+function scoreHTML(sc) {{
+  if (!sc) return "";
+  const f = xs => xs.map(n => D.skill_text[n]).join(", ") || "nothing notable";
+  return `<div class="why">Stockfish: taker's win chance ${{sc.wp_i.toFixed(0)}}% &rarr; ${{sc.wp_end.toFixed(0)}}%
+    (${{sc.gain >= 0 ? "+" : ""}}${{sc.gain.toFixed(1)}}); move at i: ${{f(sc.facts_i)}}; move at j (${{sc.j_mover === "taker" ? "taker" : "other side"}}): ${{f(sc.facts_j)}}</div>`;
 }}
 // What changed from i's position to j's, told from the side to move at i ("we"), and the two moves
 function changeHTML(c) {{
@@ -1136,7 +1314,7 @@ sel.onchange = draw; draw();
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("rollout", "graph", "examples", "modes", "all"):
+    for cmd in ("rollout", "graph", "examples", "score", "modes", "all"):
         p = sub.add_parser(cmd)
         p.add_argument("--device", default="auto", help="auto, cuda, mps or cpu")
         p.add_argument("--run", default=None, help="run folder (default runs/transcend/concepts/<crosscoder run>-<cc>)")
@@ -1158,10 +1336,16 @@ def main():
         if cmd == "examples":
             p.add_argument("--ex-starts", type=int, default=25_000,
                            help="fresh start positions to replay at most (stops once every path has its examples)")
-            p.add_argument("--per-edge", type=int, default=2, help="example rollouts per path")
+            p.add_argument("--per-edge", type=int, default=4, help="example rollouts per path")
+            p.add_argument("--stall", type=int, default=3000,
+                           help="stop a player's search after this many starts without a new example")
             p.add_argument("--batch", type=int, default=1024, help="rollouts played at once")
             p.add_argument("--no-cuda-graphs", action="store_true", help="decode eagerly (slower; for debugging)")
-        if cmd in ("graph", "examples", "all"):
+        if cmd == "score":
+            p.add_argument("--depth", type=int, default=14, help="Stockfish depth")
+            p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
+                           help="processes, each running one single-threaded Stockfish")
+        if cmd in ("graph", "examples", "score", "all"):
             p.add_argument("--z", type=float, default=6.0)
             p.add_argument("--lift", type=float, default=1.5)
             p.add_argument("--min-count", type=int, default=30)
@@ -1199,6 +1383,10 @@ def main():
         if not a.run:
             sys.exit("--run is required")
         examples(a)
+    if a.cmd == "score":
+        if not a.run:
+            sys.exit("--run is required")
+        score_paths(a)
     if a.cmd == "modes":
         if not a.run:
             sys.exit("--run is required")
