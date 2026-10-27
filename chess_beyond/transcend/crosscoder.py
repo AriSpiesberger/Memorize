@@ -270,7 +270,7 @@ def train(a, layers):
     X = torch.empty((len(rows), S, d), dtype=torch.float16)
     for s, arr in enumerate(arrs):
         for i in range(0, len(rows), 200_000):
-            X[i:i + 200_000, s] = torch.from_numpy(np.asarray(arr[i:i + 200_000]))
+            X[i:i + 200_000, s] = torch.from_numpy(np.array(arr[i:i + 200_000]))
     sample = X[torch.from_numpy(tr_idx[:100_000])].float()
     scales = (math.sqrt(d) / sample.norm(dim=-1).mean(0)).to(dev)          # each source at mean norm sqrt(d)
     data_dev = "cpu" if a.data_on_cpu else dev
@@ -313,12 +313,12 @@ def train(a, layers):
         opt.step()
         if step % a.eval_every == 0 or step == a.steps:
             fvu, l0 = evaluate(cc, val)
-            row = dict(step=step, train_nmse=float(mse), aux=float(aux), val_fvu={source_name(info["names"][m], L): v
+            row = dict(step=step, train_nmse=float(mse.detach()), aux=float(aux.detach()), val_fvu={source_name(info["names"][m], L): v
                        for (m, L), v in zip(sources, fvu)}, val_l0=l0, dead_frac=float(dead.float().mean()),
                        theta=float(cc.theta), lr=lr)
             log.write(json.dumps(row) + "\n")
             log.flush()
-            print(f"  step {step}  train nmse {float(mse):.4f}  held-out FVU "
+            print(f"  step {step}  train nmse {row['train_nmse']:.4f}  held-out FVU "
                   + " ".join(f"{k} {v:.3f}" for k, v in row["val_fvu"].items())
                   + f"  L0 {l0:.1f}  dead {100 * row['dead_frac']:.1f}%  {time.time() - t0:.0f}s", flush=True)
     torch.save(dict(state=cc.state_dict(), sources=sources, d=d, latents=a.latents, k=a.k, scales=scales.cpu(),
