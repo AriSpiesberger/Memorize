@@ -30,9 +30,10 @@ train    A BatchTopK crosscoder (Lindsey et al. 2024, "Sparse Crosscoders for Cr
 top      Per latent, relative decoder norm r = |d_B| / (|d_A| + |d_B|): ~0 only model A (the first
          --models entry) uses it, ~1 only model B, ~0.5 shared; for shared latents, the cosine of
          the two models' decoder directions. Encodes every position and keeps each latent's top
-         --examples. Writes results/transcend/crosscoder/<run>/<cc>/: report.md (FVU per model,
-         the r histogram, then the --report strongest latents exclusive to A, exclusive to B,
-         and shared with dissimilar decoders, each with firing rates per folder and top positions:
+         --examples. (The cosine means little for models trained separately: no shared basis.)
+         Writes results/transcend/crosscoder/<run>/<cc>/: report.md (FVU per model, the r
+         histogram, then the --report strongest latents exclusive to A, exclusive to B and
+         shared, each with firing rates per folder and top positions:
          the move played and each model's own top move and probability), relative_norms.png and
          summary.json; <run>/<cc>/latents.jsonl (every latent) and features.html (boards).
 
@@ -432,8 +433,6 @@ def top(a, cc_dir):
     groups = {"A": alive & (r < x_), "B": alive & (r > 1 - x_), "shared": alive & (np.abs(r - 0.5) < 0.2)}
     ok = (rate >= a.min_rate) & (rate <= a.max_rate)
     picks = {g: sorted(np.flatnonzero(m & ok), key=lambda j: -best_v[j, 0])[:a.report] for g, m in groups.items()}
-    picks["shared, dissimilar decoders"] = sorted(np.flatnonzero(groups["shared"] & ok & (cos < 0.5)),
-                                                  key=lambda j: -best_v[j, 0])[:a.report]
     picks["shared"] = picks["shared"][:max(10, a.report // 3)]
 
     shown = sorted({int(i) for js in picks.values() for j in js for i, v in zip(best_i[j], best_v[j]) if v > 0})
@@ -470,7 +469,6 @@ def top(a, cc_dir):
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
 
     titles = {"A": f"Only in {A} (r < {x_})", "B": f"Only in {B} (r > {1 - x_:.1f})",
-              "shared, dissimilar decoders": "Shared (0.3 < r < 0.7), but the two decoders point different ways (cosine < 0.5)",
               "shared": "Shared (0.3 < r < 0.7), the strongest"}
     md = [f"# Crosscoder {A} vs {B}, {cc_dir.name}", "",
           f"BatchTopK crosscoder, {Lt} latents, k = {ck['k']} (held-out L0 {ck['val_l0']:.1f}), on {info['positions']} "
@@ -479,7 +477,9 @@ def top(a, cc_dir):
           *[f"| {k} | {v:.3f} |" for k, v in ck["val_fvu"].items()], "",
           f"Latents firing at least once: {alive.sum()} ({100 * alive.mean():.1f}%). "
           f"Only {A}: **{summary['only_A']}**, only {B}: **{summary['only_B']}**, shared: **{summary['shared']}** "
-          f"(median decoder cosine {summary['shared_cos_median'] or float('nan'):.2f}).", "",
+          ".", "",
+          "Models trained separately share no basis, so the cosine between a latent's two decoder directions "
+          "says nothing here (it would for a model and its fine-tune); latents.jsonl keeps it anyway.", "",
           "Relative decoder norm, 10 bins from 0 (only " + A + ") to 1 (only " + B + "): " + " ".join(map(str, hist)), "",
           "![relative decoder norms](relative_norms.png)", "",
           "Each example: activation, folder, move and side to move, the last moves, **the move played**, then each "
@@ -501,7 +501,7 @@ def top(a, cc_dir):
         page.append(f"<h2>{html.escape(titles[g])}</h2>")
         for j in js:
             rf = ", ".join(f"{n} {100 * rate_f[k, j]:.2f}%" for k, n in enumerate(info["folder_names"]))
-            head = f"latent {j}: r = {r[j]:.2f}, cosine {cos[j]:.2f}, fires on {100 * rate[j]:.2f}% ({rf})"
+            head = f"latent {j}: r = {r[j]:.2f}, fires on {100 * rate[j]:.2f}% ({rf})"
             md += [f"### {head}", ""]
             page.append(f"<h3>{html.escape(head)}</h3>")
             for i, v in zip(best_i[j], best_v[j]):
@@ -530,13 +530,13 @@ def sweep(run, summaries):
     """results/.../<run>/sweep.md: one line per crosscoder."""
     A, B = summaries[0]["A"], summaries[0]["B"]
     md = [f"# Crosscoder layer sweep, {A} vs {B}", "",
-          f"| crosscoder | FVU {A} | FVU {B} | L0 | alive | only {A} | only {B} | shared | shared cosine (median) |",
-          "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+          f"| crosscoder | FVU {A} | FVU {B} | L0 | alive | only {A} | only {B} | shared |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for s in summaries:
         fa = np.mean([v for k, v in s["val_fvu"].items() if k.startswith(A + "-")])
         fb = np.mean([v for k, v in s["val_fvu"].items() if k.startswith(B + "-")])
         md.append(f"| [{s['cc']}]({s['cc']}/report.md) | {fa:.3f} | {fb:.3f} | {s['val_l0']:.1f} | {s['alive']} | "
-                  f"{s['only_A']} | {s['only_B']} | {s['shared']} | {s['shared_cos_median'] or float('nan'):.2f} |")
+                  f"{s['only_A']} | {s['only_B']} | {s['shared']} |")
     out = RESULTS / Path(run).name / "sweep.md"
     out.write_text("\n".join(md) + "\n", encoding="utf-8")
     print("\n".join(md[2:]))
