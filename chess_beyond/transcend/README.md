@@ -17,9 +17,13 @@ are in [results/transcend/summary.md](../results/transcend/summary.md).
 | the Transcendence paper's character-level PGN model | `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` |
 | sparse autoencoder on the PGN model, with max-activating positions | `sae.py` (`collect`, `train`, `top`, or `all`) |
 | crosscoder between the two PGN models (shared vs model-only latents), layer sweep | `crosscoder.py` (`collect`, `train`, `top`, or `all`) |
-| concept graph from self-play rollouts: which crosscoder latents turn on after which, per model and diff | `concepts.py` (`rollout`, `graph`, or `all`) |
+| a scored chess explanation for every crosscoder latent | `explain.py` (facts from `predicates.py`) |
+| concept paths from self-play rollouts: which latents turn on after which, the paths only one model takes, example rollouts per path | `concepts.py` (`rollout`, `graph`, `examples`, `modes`); page helpers in `pages.py` |
 | evaluate the PGN models (games, positions, puzzles, by temperature) | `eval.py`, with level ratings from `calibrate_levels.py`; results in [../results/transcend/eval/](../results/transcend/eval/README.md) |
 | figures and summary | `plot_results.py` |
+
+The interpretability pipeline (crosscoder, explanations, concept paths), its commands and what
+each step writes: [chess_beyond README](../README.md#interpretability-concepts-and-the-paths-between-them).
 
 `puzzles.py` and `maia.py` are shared helpers. `train.py` and `rl_puzzles.py` also save
 activation snapshots at every eval ([../probe.py](../probe.py)).

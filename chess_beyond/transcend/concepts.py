@@ -23,15 +23,33 @@ rollout  Start positions: random plies (one per game) of games from --pgn-data (
          onsets.npy (N[i]), active.npy, meta.json; saved every --save-every batches, and a
          rerun resumes from the last save. sample.txt: some rollouts as text.
 
+examples For the graph's paths, example rollouts: replays rollouts from fresh starts (same models
+         and settings) until each path has --per-edge rollouts in which it happens, then redraws
+         the graph; hovering an arrow shows them (the two positions and the moves between).
+         -> results/transcend/concepts/<run>/path_examples.json
+
 graph    Edge statistics: excess = C - E, lift = (C + 1) / (E + 1), z = excess / sqrt(E + 1),
          rate = excess / N[i] (how much more likely j's onset is within the window, per onset of
-         i). Edges: z >= --z, lift >= --lift, C >= --min-count, the --edges strongest by z per
-         model; and a diff graph, edges whose rate differs between the two players
-         (z of the difference >= --z). Nodes carry the crosscoder's relative decoder norm
-         (0 = only model A, 1 = only model B) and their top positions.
-         -> results/transcend/concepts/<run>/edges-<model>.csv, edges-diff.csv, summary.md;
-            <run>/graph.graphml (for Gephi) and <run>/graph.html (interactive, both players and
-            the diff).
+         i). A path passes with a player at z >= --z, lift >= --lift, C >= --min-count. Latents are
+         nearly all shared between the models, so the graphs split PATHS, not latents: "only A"
+         paths pass when A plays and are absent when B plays (z < --absent, rates differ at
+         z >= --z), "only B" the reverse, "both" pass with both; the --edges strongest of each.
+         Only latents with >= --min-onsets onsets with each player (both models reach the
+         concept) and firing in <= --max-rate of positions (no hubs) take part. Nodes carry the
+         crosscoder's relative decoder norm, the latent's scored explanation (explain.py, when it
+         has been run), its top positions and the facts (predicates.py) those have in common.
+         -> results/transcend/concepts/<run>/edges-only-<model>.csv, edges-both.csv, summary.md;
+            <run>/graph.graphml (for Gephi) and <run>/graph.html (interactive, the three views).
+
+modes    The graph summarised: truncated SVD (--modes components) of the excess-rate matrix
+         r[i, j] = (C - E) / (N[i] + --prior), per player and as the diff (second player minus
+         first), over latents that fire in <= --max-rate of positions. Component k is a flow
+         pattern: source latents (u_k) whose onsets lead to onsets of target latents (v_k); each
+         is listed with its strongest real edges and the rates under both players.
+         -> results/transcend/concepts/<run>/modes.md, modes.json; <run>/modes.html (one card per
+            mode, the latents' top positions drawn as boards).
+
+    python transcend/concepts.py modes   --run runs/transcend/concepts/everything-3m-Lfinal
 """
 import argparse
 import html
@@ -49,9 +67,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
 import paths
 import eval as ev                                                 # load, board_of, device
+from crosscoder import RESULTS as CC_RESULTS
 from crosscoder import FOLDERS, Corpus, CrossCoder, pick_positions, position
 from pgn_model import BOS, MAX_MOVE_CHARS, MAX_TRIES, SPACE, VOCAB, encode, prompt
 from pgn_probe import parse_movetext
+from predicates import NAMES, TEXT, features
+from pages import BOARD_CSS, BOARD_DEFS, BOARD_JS, MOVE_HEAD
 from sae import last_moves
 
 RUNS = paths.RUNS / "transcend" / "concepts"
@@ -395,19 +416,36 @@ class Counts:
         (self.folder / "meta.json").write_text(json.dumps(meta, indent=1))
 
 
-def rollout(a):
-    dev = ev.device(a.device)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    cc_run = Path(a.cc_run)
-    cc_dir = cc_run / ("cc-" + a.cc.removeprefix("cc-"))
+def load_coder(cc_run, cc, dev):
+    """The crosscoder, the states it reads ((model, layer) sources), its scales and its two models, in order."""
+    cc_run = Path(cc_run)
+    cc_dir = cc_run / ("cc-" + cc.removeprefix("cc-"))
     info = json.loads((cc_run / "collect.json").read_text())
     ck = torch.load(cc_dir / "cc.pt", map_location="cpu", weights_only=False)
     sources = [tuple(s) for s in ck["sources"]]
-    cc = CrossCoder(len(sources), ck["d"], ck["latents"], ck["k"]).to(dev)
-    cc.load_state_dict(ck["state"])
-    scales = ck["scales"].to(dev)
-    models = [ev.load(m, dev) for m in info["models"]]                 # the crosscoder's two models, in order
-    layers = sorted({L for _, L in sources}, key=str)
+    coder = CrossCoder(len(sources), ck["d"], ck["latents"], ck["k"]).to(dev)
+    coder.load_state_dict(ck["state"])
+    models = [ev.load(m, dev) for m in info["models"]]
+    return cc_run, cc_dir, info, ck, sources, coder, ck["scales"].to(dev), models
+
+
+def activations(models, sources, coder, scales, pi, boards, prompts, R, plies, T, dev, gen, graphs):
+    """Model pi plays R rollouts from each start; every position is read by both models and encoded.
+    -> continuation characters, ends (see play), (S*R, plies, latents) active, illegal attempts."""
+    buf, ends, pst, fails = play(models[pi][0], boards, prompts, R, plies, T, dev, gen,
+                                 [L for m, L in sources if m == pi], graphs=graphs)
+    x, plen = pad(prompts, dev)
+    st = [pst if m == pi else states(mm, x, plen, R, buf, ends, [L for k, L in sources if k == m], dev)
+          for m, (mm, _) in enumerate(models)]
+    xs = torch.stack([st[m][L] for m, L in sources], 2)          # (B, plies, sources, d)
+    f, _, _ = coder.encode(xs.flatten(0, 1) * scales[None, :, None])
+    return buf, ends, (f > 0).view(len(buf), plies, -1), fails
+
+
+def rollout(a):
+    dev = ev.device(a.device)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    cc_run, cc_dir, info, ck, sources, cc, scales, models = load_coder(a.cc_run, a.cc, dev)
     run = Path(a.run) if a.run else RUNS / f"{cc_run.name}-{cc_dir.name.removeprefix('cc-')}"
     run.mkdir(parents=True, exist_ok=True)
     players = a.players or info["models"]
@@ -427,7 +465,6 @@ def rollout(a):
                                                      pgn_data=a.pgn_data, min_ply=a.min_ply, seed=a.seed), indent=1))
 
     for player in players:
-        pm = models[info["models"].index(player)][0]
         name = models[info["models"].index(player)][1]
         counts = Counts(ck["latents"], dev, run / name, resume=True)
         done_starts = counts.meta.get("starts_done", 0)
@@ -446,17 +483,9 @@ def rollout(a):
                 sans, _ = parse_movetext(corpus.text(f, g))
                 boards.append(ev.board_of(sans[:ply]))
                 prompts.append(corpus.ids(f, g, end + 1).tolist())
-            pi = info["models"].index(player)
-            mine = [L for m, L in sources if m == pi]
-            buf, ends, pst, fails = play(pm, boards, prompts, R, a.plies, a.temperature, dev, gen, mine,
-                                         graphs=not a.no_cuda_graphs)
+            buf, ends, act, fails = activations(models, sources, cc, scales, info["models"].index(player), boards,
+                                                prompts, R, a.plies, a.temperature, dev, gen, not a.no_cuda_graphs)
             valid = ends >= -1
-            x, plen = pad(prompts, dev)
-            st = [pst if m == pi else states(mm, x, plen, R, buf, ends, [L for k, L in sources if k == m], dev)
-                  for m, (mm, _) in enumerate(models)]
-            xs = torch.stack([st[m][L] for m, L in sources], 2)          # (B, plies, sources, d)
-            f, _, _ = cc.encode(xs.flatten(0, 1) * scales[None, :, None])
-            act = (f > 0).view(len(buf), a.plies, -1)
             counts.add(act, valid.float(), R, a.window)
             stats["rollouts"] += len(buf)
             stats["positions"] += int(valid.sum())
@@ -481,49 +510,196 @@ def rollout(a):
     return run
 
 
+# ---------------------------------------------------------------- example rollouts for the graph's paths
+
+def path_example(board, prompt_ids, cont, ends, ti, tj):
+    """One rollout as the graph shows it: the position at ply ti (where i turns on) and at ply tj (j),
+    each with the move played from it, and the moves from the start to tj with move numbers."""
+    pre = "".join(VOCAB[c] for c in prompt_ids)
+    n0 = len(parse_movetext(pre)[0])
+    n = max(0, int(ends.max()) + MAX_MOVE_CHARS + 1)
+    sans = parse_movetext(pre + "".join(VOCAB[c] for c in cont[:n].tolist()))[0][n0:]
+    b, moves = board.copy(), []
+    for s in sans:
+        try:
+            mv = b.parse_san(s)
+        except ValueError:
+            break
+        moves.append(mv)
+        b.push(mv)
+    if tj > len(moves):
+        return None
+    b, line, at = board.copy(), [], {}
+    for k in range(tj + 1):
+        at[k] = (b.fen(), moves[k].uci() if k < len(moves) else "")
+        if k == len(moves):
+            break
+        num = f"{b.fullmove_number}." if b.turn == chess.WHITE else (f"{b.fullmove_number}..." if k == 0 else "")
+        line.append([num + b.san(moves[k]), "i" if k == ti else "j" if k == tj else ""])
+        b.push(moves[k])
+    return dict(start=last_moves(prompt(board), 6), fen_i=at[ti][0], uci_i=at[ti][1], fen_j=at[tj][0],
+                uci_j=at[tj][1], ti=ti, tj=tj, line=line)
+
+
+def examples(a):
+    """Replays rollouts (fresh starts, same settings) until each of the graph's paths has --per-edge
+    rollouts where it happens: i turns on at some ply and j within the window after it."""
+    run = Path(a.run)
+    cfg = json.loads((run / "config.json").read_text())
+    dev = ev.device(a.device)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    names = [m.split("/")[-1] for m in cfg["models"]]
+    A, B = names
+    res = RESULTS / run.name
+    want = {n: set() for n in names}
+    for v, who in ((f"only {A}", [A]), (f"only {B}", [B]), ("both", [A, B])):
+        p = res / f"edges-{v.replace(' ', '-')}.csv"
+        if not p.exists():
+            sys.exit(f"{p} is missing: run graph first")
+        for line in p.read_text(encoding="utf-8").splitlines()[1:]:
+            i, j = (int(float(x)) for x in line.split(",")[:2])
+            for n in who:
+                want[n].add((i, j))
+    _, _, info, ck, sources, coder, scales, models = load_coder(cfg["cc_run"], cfg["cc"], dev)
+    R, P, w = cfg["rollouts"], cfg["plies"], cfg["window"]
+    corpus = Corpus(cfg["pgn_data"])
+    ctx = min(m.ctx for m, _ in models) - room(P)
+    starts = pick_positions(corpus, a.ex_starts, 1, cfg["min_ply"], ctx, cfg["seed"] + 1)   # not the counted starts
+    per_batch = max(1, a.batch // R)
+    found = {}
+    for n in names:
+        pi = names.index(n)
+        pairs = sorted(want[n])
+        I = torch.tensor([p[0] for p in pairs], device=dev)
+        J = torch.tensor([p[1] for p in pairs], device=dev)
+        U, inv = torch.unique(torch.cat([I, J]), return_inverse=True)
+        Iu, Ju = inv[:len(pairs)], inv[len(pairs):]
+        need = [a.per_edge] * len(pairs)
+        got = found[n] = {}
+        gen = torch.Generator(device=dev).manual_seed(cfg["seed"] * 1000 + 7)
+        t0 = time.time()
+        for s in range(0, len(starts), per_batch):
+            boards, prompts = [], []
+            for f, g, ply, end in (tuple(int(v) for v in r) for r in starts[s:s + per_batch]):
+                boards.append(ev.board_of(parse_movetext(corpus.text(f, g))[0][:ply]))
+                prompts.append(corpus.ids(f, g, end + 1).tolist())
+            buf, ends, act, _ = activations(models, sources, coder, scales, pi, boards, prompts, R, P,
+                                            cfg["temperature"], dev, gen, not a.no_cuda_graphs)
+            act = act[:, :, U] & (ends >= -1)[..., None]
+            on = act[:, 1:] & ~act[:, :-1]                    # on[:, t]: onset at ply t + 1
+            win = torch.zeros_like(on)
+            for d in range(1, w + 1):
+                win[:, :-d] |= on[:, d:]
+            hit = on[:, :, Iu] & win[:, :, Ju]                # (rollouts, plies, paths)
+            open_ = torch.tensor([k > 0 for k in need], device=dev)
+            for e in (hit.flatten(0, 1).any(0) & open_).nonzero().squeeze(1).tolist():
+                seen = set()
+                for b, t in hit[:, :, e].nonzero().tolist():
+                    if need[e] == 0 or b in seen:
+                        continue
+                    seen.add(b)
+                    d = next(d for d in range(1, w + 1) if t + d < on.shape[1] and bool(on[b, t + d, Ju[e]]))
+                    ex = path_example(boards[b // R], prompts[b // R], buf[b], ends[b], t + 1, t + d + 1)
+                    if ex:
+                        got.setdefault(f"{pairs[e][0]}-{pairs[e][1]}", []).append(ex)
+                        need[e] -= 1
+            full = sum(k == 0 for k in need)
+            done = min(s + per_batch, len(starts))
+            print(f"\r  {n}: {done}/{len(starts)} starts, {full}/{len(pairs)} paths have {a.per_edge} examples, "
+                  f"{sum(1 for k in need if k < a.per_edge)} at least one, {(time.time() - t0) / 60:.1f} min   ",
+                  end="", flush=True)
+            if full == len(pairs):
+                break
+        print()
+    (res / "path_examples.json").write_text(json.dumps(found), encoding="utf-8")
+    print(f"wrote {res / 'path_examples.json'}; redrawing the graph with them")
+    graph(a)
+
+
 # ---------------------------------------------------------------- the graph
 
-def edge_stats(folder, R, dev):
-    t = {n: torch.from_numpy(np.load(folder / f"{n}.npy")).float().to(dev) for n in ("C", "X")}
-    N = torch.from_numpy(np.load(folder / "onsets.npy")).float().to(dev)
-    C = t["C"]
-    E = (t["X"] - C) / (R - 1)
+def edge_stats(folder, R):
+    """Co-onset counts C, their expectation E and onsets N, kept in RAM: the latents x latents
+    matrices of two players (and the scoring's temporaries) don't fit on the card together."""
+    C = torch.from_numpy(np.load(folder / "C.npy")).float()
+    E = (torch.from_numpy(np.load(folder / "X.npy")).float() - C) / (R - 1)
+    N = torch.from_numpy(np.load(folder / "onsets.npy")).float()
     C.fill_diagonal_(0)
     E.fill_diagonal_(0)
     return C, E, N
 
 
-def top_edges(C, E, N, a):
-    excess = C - E
-    z = excess / (E + 1).sqrt()
-    lift = (C + 1) / (E + 1)
-    ok = (z >= a.z) & (lift >= a.lift) & (C >= a.min_count)
-    zz = torch.where(ok, z, torch.full_like(z, -1))
-    n = min(a.edges, int(ok.sum()))
-    v, flat = zz.flatten().topk(n)
-    i, j = flat // C.shape[1], flat % C.shape[1]
-    rate = excess[i, j] / N[i].clamp_min(1)
-    return [dict(i=int(a_), j=int(b_), C=float(C[a_, b_]), E=float(E[a_, b_]), lift=float(lift[a_, b_]),
-                 rate=float(r_), z=float(z_)) for a_, b_, r_, z_ in zip(i.tolist(), j.tolist(), rate.tolist(), v.tolist())], int(ok.sum())
+def chunked_top(score, L, k, dev, rows=1024):
+    """Top-k flat indices of an L x L score, scored --rows rows at a time on the GPU.
+    score(s, e) returns (score, passes) for rows s:e; returns (flat indices, number passing)."""
+    vals, idx, passing = [], [], 0
+    for s in range(0, L, rows):
+        sc, ok = score(s, min(s + rows, L))
+        passing += int(ok.sum())
+        v, f = torch.where(ok, sc, torch.full_like(sc, -1)).flatten().topk(min(k, sc.numel()))
+        vals.append(v.cpu()); idx.append(f.cpu() + s * L)
+    v, o = torch.cat(vals).topk(min(k, passing))
+    return torch.cat(idx)[o], passing
 
 
-def diff_edges(sa, sb, a):
-    """Edges whose excess rate (per onset of i) differs between the two players."""
+def path_edges(sa, sb, alive, kind, a, dev):
+    """Paths i -> j by who takes them. kind "A": strong when the first player plays (z >= --z, lift,
+    count) and absent when the second does (z < --absent, and the two rates differ by z >= --z, so
+    "absent" is measured, not just unseen); "B" the reverse; "both": strong with both players.
+    Only latents in alive (seen often enough with both players, not hubs) take part."""
     (Ca, Ea, Na), (Cb, Eb, Nb) = sa, sb
-    ra, rb = (Ca - Ea) / Na.clamp_min(1)[:, None], (Cb - Eb) / Nb.clamp_min(1)[:, None]
-    se = ((Ca + Ea + 1) / Na.clamp_min(1)[:, None] ** 2 + (Cb + Eb + 1) / Nb.clamp_min(1)[:, None] ** 2).sqrt()
-    z = (ra - rb) / se
-    ok = (z.abs() >= a.z) & ((Ca >= a.min_count) | (Cb >= a.min_count))
-    zz = torch.where(ok, z.abs(), torch.full_like(z, -1))
-    n = min(a.edges, int(ok.sum()))
-    v, flat = zz.flatten().topk(n)
-    i, j = flat // Ca.shape[1], flat % Ca.shape[1]
-    return [dict(i=int(x), j=int(y), rate_A=float(ra[x, y]), rate_B=float(rb[x, y]), z=float(z[x, y]),
-                 C_A=float(Ca[x, y]), C_B=float(Cb[x, y])) for x, y in zip(i.tolist(), j.tolist())], int(ok.sum())
+    L = Ca.shape[1]
+    na, nb = Na.clamp_min(1), Nb.clamp_min(1)
+
+    def score(s, e):
+        ca, ea, cb, eb = (t[s:e].to(dev) for t in (Ca, Ea, Cb, Eb))
+        ma, mb = na[s:e, None].to(dev), nb[s:e, None].to(dev)
+        za, zb = (ca - ea) / (ea + 1).sqrt(), (cb - eb) / (eb + 1).sqrt()
+        oka = (za >= a.z) & ((ca + 1) / (ea + 1) >= a.lift) & (ca >= a.min_count)
+        okb = (zb >= a.z) & ((cb + 1) / (eb + 1) >= a.lift) & (cb >= a.min_count)
+        dz = ((ca - ea) / ma - (cb - eb) / mb) / ((ca + ea + 1) / ma ** 2 + (cb + eb + 1) / mb ** 2).sqrt()
+        pair = (alive[s:e, None] & alive[None, :]).to(dev)
+        if kind == "A":
+            return za, pair & oka & (zb < a.absent) & (dz >= a.z)
+        if kind == "B":
+            return zb, pair & okb & (za < a.absent) & (-dz >= a.z)
+        return torch.minimum(za, zb), pair & oka & okb
+    flat, passing = chunked_top(score, L, a.edges, dev)
+    out = []
+    for x, y in zip((flat // L).tolist(), (flat % L).tolist()):
+        e = dict(i=x, j=y)
+        for tag, (C, E, N) in (("A", sa), ("B", sb)):
+            c, ex = float(C[x, y]), float(E[x, y])
+            e.update({f"C_{tag}": c, f"E_{tag}": ex, f"rate_{tag}": (c - ex) / max(float(N[x]), 1.0),
+                      f"z_{tag}": (c - ex) / (ex + 1) ** 0.5})
+        e["z"] = e["z_A"] if kind == "A" else e["z_B"] if kind == "B" else min(e["z_A"], e["z_B"])
+        out.append(e)
+    return out, passing
+
+
+def shared_facts(fact_rows):
+    """What a latent's top positions have in common: predicates true in at least half of them."""
+    if not fact_rows:
+        return ""
+    share = np.mean(fact_rows, 0)
+    common = sorted(((s, n) for n, s in zip(NAMES, share) if s >= 0.5), reverse=True)
+    if not common:
+        return f"its top {len(fact_rows)} positions share no fact"
+    return f"its top {len(fact_rows)} positions: " + "; ".join(f"{TEXT[n]} ({100 * s:.0f}%)" for s, n in common)
+
+
+def explanations(cfg):
+    """explain.py's scored explanations for this crosscoder, if it has been run: {latent: record}."""
+    p = CC_RESULTS / Path(cfg["cc_run"]).name / cfg["cc"] / "explanations.jsonl"
+    if not p.exists():
+        return {}
+    with open(p, encoding="utf-8") as f:
+        return {r["latent"]: r for r in map(json.loads, f)}
 
 
 def describe(cfg, nodes, n_examples=3):
-    """Per latent: crosscoder relative norm, firing rate and its top positions as 'last moves -> move'."""
+    """Per latent: crosscoder relative norm, firing rate, its scored explanation (explain.py), its top
+    positions as 'last moves -> move' (boards for the first n_examples) and the facts they share."""
     cc_run = Path(cfg["cc_run"])
     lat = {}
     with open(cc_run / cfg["cc"] / "latents.jsonl", encoding="utf-8") as f:
@@ -531,17 +707,64 @@ def describe(cfg, nodes, n_examples=3):
             r = json.loads(line)
             if r["latent"] in nodes:
                 lat[r["latent"]] = r
+    expl = explanations(cfg)
     info = json.loads((cc_run / "collect.json").read_text())
     corpus, rows = Corpus(info["folders"]), np.load(cc_run / "rows.npy", mmap_mode="r")
     out = {}
     for j in nodes:
         r = lat.get(j, dict(rel_norm=float("nan"), rate=0.0, top=[]))
-        ex = []
-        for i, v in r["top"][:n_examples]:
+        ex, boards, fr = [], [], []
+        for k, (i, v) in enumerate(r["top"]):
             b, nxt, _ = position(corpus, rows[i])
-            ex.append(f"{last_moves(prompt(b), 6)} -> {nxt}")
-        out[j] = dict(rel_norm=r["rel_norm"], rate=r["rate"], examples=ex)
+            try:
+                mv = b.parse_san(nxt)
+            except ValueError:
+                mv = None
+            fr.append(features(b, mv))
+            if k < n_examples:
+                ex.append(f"{last_moves(prompt(b), 6)} -> {nxt}")
+                boards.append([b.fen(), last_moves(prompt(b), 6), nxt, mv.uci() if mv else ""])   # drawn in the pages
+        out[j] = dict(rel_norm=r["rel_norm"], rate=r["rate"], examples=ex, boards=boards, why=shared_facts(fr),
+                      expl=expl.get(j))
     return out
+
+
+def short(d):
+    """A latent in one line, for summary.md and GraphML."""
+    e = d.get("expl")
+    if e and e["status"] in ("explained", "weak"):
+        return f"{e['status']}: {e['explanation']} (F1 {e['f1']:.2f})"
+    return d["why"]
+
+
+# A path's two positions, i's and j's, can have different sides to move; these pairs swap when they do,
+# so changes are always told from the side to move at i ("we").
+SWAP = dict(p for a_, b_ in (("our_piece_hanging", "their_piece_hanging"),
+                             ("our_piece_attacked_by_lower", "their_piece_attacked_by_lower"),
+                             ("our_piece_pinned", "their_piece_pinned"), ("we_can_castle", "they_can_castle"),
+                             ("our_king_exposed", "their_king_exposed"), ("our_back_rank_weak", "their_back_rank_weak"),
+                             ("we_have_a_passed_pawn", "they_have_a_passed_pawn"),
+                             ("we_have_an_advanced_passer", "they_have_an_advanced_passer"),
+                             ("material_up", "material_down")) for p in ((a_, b_), (b_, a_)))
+POSITION_FACTS = [n for n in NAMES if not n.startswith("move_") and n not in
+                  ("white_to_move", "they_just_captured", "they_just_checked", "in_check", "we_have_mate_in_1",
+                   "they_threaten_mate", "we_have_a_check", "we_have_a_fork")]
+
+
+def transition(x):
+    """What changed between a path example's two positions (concepts.py examples), and the two moves."""
+    def at(fen, uci):
+        b = chess.Board(fen)
+        return dict(zip(NAMES, features(b, chess.Move.from_uci(uci) if uci else None))), b.turn
+    fi, ti = at(x["fen_i"], x["uci_i"])
+    fj, tj = at(x["fen_j"], x["uci_j"])
+    same = ti == tj
+    fj_ours = {n: fj[SWAP.get(n, n) if not same else n] for n in POSITION_FACTS}
+    moves = lambda f: [TEXT[n].removeprefix("the move ") for n in NAMES if n.startswith("move_") and f[n]
+                       and n not in ("move_" + p for p in ("pawn", "knight", "bishop", "rook", "queen", "king"))]
+    return dict(appear=[TEXT[n] for n in POSITION_FACTS if fj_ours[n] and not fi[n]],
+                vanish=[TEXT[n] for n in POSITION_FACTS if fi[n] and not fj_ours[n]],
+                move_i=moves(fi), move_j=moves(fj), j_mover="we" if same else "they")
 
 
 def graph(a):
@@ -550,26 +773,33 @@ def graph(a):
     dev = ev.device(a.device)
     names = [m.split("/")[-1] for m in cfg["models"]]
     players = [n for n in names if (run / n / "C.npy").exists()]
+    if len(players) != 2:
+        sys.exit(f"graph compares two players; found rollouts for {players}")
+    A, B = players
     out = RESULTS / run.name
     out.mkdir(parents=True, exist_ok=True)
     R = cfg["rollouts"]
-    views, found, meta = {}, {}, {}
-    st = {}
-    for n in players:
-        st[n] = edge_stats(run / n, R, dev)
-        views[n], found[n] = top_edges(*st[n], a)
-        meta[n] = json.loads((run / n / "meta.json").read_text())
-        print(f"{n}: {found[n]} edges pass, keeping {len(views[n])}", flush=True)
-    if len(players) == 2:
-        views["diff"], found["diff"] = diff_edges(st[players[0]], st[players[1]], a)
-        print(f"diff: {found['diff']} edges pass, keeping {len(views['diff'])}", flush=True)
+    st = {n: edge_stats(run / n, R) for n in players}
+    meta = {n: json.loads((run / n / "meta.json").read_text()) for n in players}
+    L = st[A][0].shape[0]
+    rate = latent_rates(cfg)
+    fire = torch.tensor([rate.get(j, 0.0) for j in range(L)])
+    alive = (fire <= a.max_rate) & (st[A][2] >= a.min_onsets) & (st[B][2] >= a.min_onsets)
+    print(f"{int(alive.sum())} of {L} latents take part: firing in <= {100 * a.max_rate:g}% of positions, "
+          f">= {a.min_onsets} onsets with each player", flush=True)
+    titles = {"A": f"only {A}", "B": f"only {B}", "both": "both"}
+    views, found = {}, {}
+    for kind, v in titles.items():
+        views[v], found[v] = path_edges(st[A], st[B], alive, kind, a, dev)
+        print(f"{v}: {found[v]} paths pass, keeping {len(views[v])}", flush=True)
     del st
     nodes = sorted({e[k] for es in views.values() for e in es for k in ("i", "j")})
     print(f"describing {len(nodes)} latents", flush=True)
     desc = describe(cfg, set(nodes))
 
+    slug = lambda v: v.replace(" ", "-")
     for v, es in views.items():
-        with open(out / f"edges-{v}.csv", "w", encoding="utf-8") as f:
+        with open(out / f"edges-{slug(v)}.csv", "w", encoding="utf-8") as f:
             keys = list(es[0]) if es else ["i", "j"]
             f.write(",".join(keys) + "\n")
             for e in es:
@@ -577,26 +807,38 @@ def graph(a):
 
     def label(j):
         d = desc[j]
-        return f"latent {j} (r {d['rel_norm']:.2f}, fires {100 * d['rate']:.2f}%): " + " | ".join(d["examples"][:2])
+        return f"latent {j} (r {d['rel_norm']:.2f}, fires {100 * d['rate']:.2f}%; {short(d)}): " + " | ".join(d["examples"][:2])
 
-    md = [f"# Concept graph, {run.name}", "",
+    md = [f"# Concept paths, {run.name}", "",
           f"Self-play rollouts from {cfg['starts']} start positions x {R} rollouts x up to {cfg['plies']} plies at "
           f"T = {cfg['temperature']}, encoded with crosscoder {cfg['cc']} of {Path(cfg['cc_run']).name}. "
-          f"Edge i -> j: an onset of i is followed by an onset of j within {cfg['window']} plies more often than in "
-          f"sibling rollouts from the same start (z >= {a.z}, lift >= {a.lift}, count >= {a.min_count}).", ""]
+          f"Path i -> j: an onset of i is followed by an onset of j within {cfg['window']} plies more often than in "
+          f"sibling rollouts from the same start (z >= {a.z}, lift >= {a.lift}, count >= {a.min_count}). "
+          f"**only X**: the path passes when X plays, and when the other model plays it is absent (z < {a.absent}) "
+          f"and its rate differs (z >= {a.z}). **both**: it passes with both. Latents taking part fire in <= "
+          f"{100 * a.max_rate:g}% of positions and have >= {a.min_onsets} onsets with each player, so every concept "
+          "in a path comes up with both models; what differs is whether one leads to the other.", ""]
     for n in players:
         s = meta[n]["stats"]
         md.append(f"- **{n}** playing itself: {s['rollouts']} rollouts, {s['illegal'] / max(1, s['rollouts']):.3f} illegal "
                   f"attempts per rollout, {100 * s['stopped_early'] / max(1, s['rollouts']):.1f}% ended early (game over or "
-                  f"5 illegal attempts); {found[n]} edges pass.")
-    if "diff" in views:
-        md.append(f"- **diff**: {found['diff']} edges whose rate differs between the players (|z| >= {a.z}).")
+                  f"5 illegal attempts).")
+    for v in views:
+        md.append(f"- **{v}**: {found[v]} paths pass, {len(views[v])} kept.")
+    if any(d.get("expl") for d in desc.values()):
+        # the thesis check: are the concepts on these paths ones explain.py could name?
+        md += ["", "Latents on the kept paths with a scored explanation (explain.py: explained = held-out F1 >= 0.5):", ""]
+        for v, es in views.items():
+            ls = {e[k] for e in es for k in ("i", "j")}
+            st = [(desc[j].get("expl") or {}).get("status", "none") for j in ls]
+            md.append(f"- **{v}**: {len(ls)} latents, {sum(x == 'explained' for x in st)} explained, "
+                      f"{sum(x == 'weak' for x in st)} weak, {sum(x == 'unexplained' for x in st)} unexplained, "
+                      f"{sum(x in ('too rare', 'none') for x in st)} not scored")
     md.append("")
     for v, es in views.items():
-        md += [f"## {v}: the {min(a.show, len(es))} strongest edges", ""]
+        md += [f"## {v}: the {min(a.show, len(es))} strongest paths", ""]
         for e in es[:a.show]:
-            extra = (f"rate {100 * e['rate_A']:.1f}% vs {100 * e['rate_B']:.1f}%, z {e['z']:.1f}" if v == "diff"
-                     else f"lift {e['lift']:.2f}, +{100 * e['rate']:.1f}% per onset, z {e['z']:.0f}")
+            extra = f"+{100 * e['rate_A']:.1f}% per onset with {A} (z {e['z_A']:.1f}), +{100 * e['rate_B']:.1f}% with {B} (z {e['z_B']:.1f})"
             md.append(f"- **{e['i']} -> {e['j']}** ({extra})  \n  {html.escape(label(e['i']))}  \n  -> {html.escape(label(e['j']))}")
         md.append("")
     (out / "summary.md").write_text("\n".join(md), encoding="utf-8")
@@ -619,37 +861,274 @@ def graph(a):
     g += ["</graph>", "</graphml>"]
     (run / "graph.graphml").write_text("\n".join(g), encoding="utf-8")
 
-    data = dict(nodes={j: dict(r=desc[j]["rel_norm"], rate=desc[j]["rate"], label=label(j)) for j in nodes},
-                views={v: [[e["i"], e["j"], round(e["z"], 2)] for e in es[:a.html_edges]] for v, es in views.items()},
-                A=names[0], B=names[1] if len(names) > 1 else "")
-    page = f"""<!doctype html><meta charset="utf-8"><title>Concept graph</title>
+    # Example rollouts per path (concepts.py examples), under the player(s) each view is about
+    pe = out / "path_examples.json"
+    found_ex = json.loads(pe.read_text(encoding="utf-8")) if pe.exists() else {}
+    paths = {}
+    for (kind, v), who in zip(titles.items(), ([A], [B], [A, B])):
+        keys = {f"{e['i']}-{e['j']}" for e in views[v]}
+        paths[v] = {}
+        for n in who:
+            for k, xs in found_ex.get(n, {}).items():
+                if k in keys:
+                    paths[v].setdefault(k, []).extend(dict(x, player=n, change=transition(x)) for x in xs)
+    data = dict(nodes={j: dict(r=desc[j]["rel_norm"], rate=desc[j]["rate"], ex=desc[j]["boards"], why=desc[j]["why"],
+                              expl=desc[j]["expl"]) for j in nodes}, paths=paths, have_examples=bool(found_ex),
+                views={v: [[e["i"], e["j"], round(e["z"], 2), round(e["rate_A"], 4), round(e["rate_B"], 4)]
+                           for e in es[:a.html_edges]] for v, es in views.items()},
+                found=found, A=A, B=B)
+    page = f"""<!doctype html><meta charset="utf-8"><title>Concept paths</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
-<style>body{{margin:0;font:13px system-ui,sans-serif}}#bar{{padding:8px;border-bottom:1px solid #ccc}}#g{{height:calc(100vh - 44px)}}</style>
-<div id="bar">view <select id="v"></select> &nbsp; colour: blue = only {html.escape(names[0])}, red = only {html.escape(data['B'])}, grey = shared;
-arrows i &rarr; j: j turns on after i (diff view: grey = stronger when {html.escape(names[0])} plays, red = when {html.escape(data['B'])} plays). Hover a node for its top positions.</div><div id="g"></div>
+<style>body{{margin:0;font:13px system-ui,sans-serif}}#bar{{padding:8px;border-bottom:1px solid #ccc}}
+#g{{height:calc(100vh - 60px)}}
+.pair{{display:flex;gap:10px}}.cap{{font-size:12px;text-align:center}}.mi{{background:#cfe0ff;padding:0 2px}}.mj{{background:#ffd5cf;padding:0 2px}}
+#tip{{position:fixed;display:none;max-width:560px;max-height:90vh;overflow-y:auto;background:#fff;border:1px solid #999;
+border-radius:6px;padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.25);z-index:10}}#tip.pinned{{border:2px solid #258}}
+{BOARD_CSS}</style>
+{BOARD_DEFS}{MOVE_HEAD}
+<div id="bar">paths <select id="v"></select> <span id="n"></span> &nbsp; size <select id="sz"><option value="deg">paths in this view</option>
+<option value="rate">firing rate</option><option value="one">equal</option></select> &nbsp; <button id="mv">unfreeze layout</button><br>
+arrow i &rarr; j: concept j turns on within {cfg['window']} plies of concept i, more than in sibling rollouts. <b>only X</b>: this path is taken when X
+plays and not when the other model does (both concepts come up with both models). Node colour: decoder share, blue = {html.escape(A)},
+red = {html.escape(B)}, grey = both. Hover a node to see the concept, or an arrow to see a rollout where the path happens; click to pin.</div>
+<div id="g"></div><div id="tip"></div>
 <script>
 const D = {json.dumps(data)};
-const sel = document.getElementById("v");
+const sel = document.getElementById("v"), sz = document.getElementById("sz"), tip = document.getElementById("tip");
 for (const v of Object.keys(D.views)) sel.add(new Option(v, v));
 function colour(r) {{ if (!(r >= 0)) return "#999"; const b = Math.round(255 * (1 - r)), rr = Math.round(255 * r);
-  return Math.abs(r - 0.5) < 0.2 ? "#aaa" : `rgb(${{rr}},80,${{b}})`; }}
-let net;
-function draw() {{
-  const es = D.views[sel.value], used = new Set();
-  es.forEach(e => {{ used.add(e[0]); used.add(e[1]); }});
-  const nodes = [...used].map(j => ({{id: j, label: String(j), title: D.nodes[j].label, color: colour(D.nodes[j].r),
-                                     value: Math.sqrt(D.nodes[j].rate + 1e-6)}}));
-  const edges = es.map(e => ({{from: e[0], to: e[1], value: Math.abs(e[2]), arrows: "to", title: "z " + e[2],
-                              color: {{color: e[2] < 0 ? "#c33" : "#8899aa", opacity: 0.5}}}}));
-  if (net) net.destroy();
-  net = new vis.Network(document.getElementById("g"), {{nodes, edges}},
-    {{physics: {{solver: "forceAtlas2Based", stabilization: {{iterations: 300}}}}, nodes: {{shape: "dot", scaling: {{min: 4, max: 24}}}},
-      edges: {{scaling: {{min: 0.5, max: 4}}, smooth: false}}, interaction: {{hover: true}}}});
+  return Math.abs(r - 0.5) < 0.1 ? "#aaa" : `rgb(${{rr}},80,${{b}})`; }}
+{BOARD_JS}
+let net, frozen = true, pinned = false;
+const pc = x => (x >= 0 ? "+" : "") + (100 * x).toFixed(1) + "%";
+function edgeHTML(id) {{
+  const [i, j] = id.split("-"), e = D.views[sel.value].find(e => `${{e[0]}}-${{e[1]}}` === id);
+  let h = `<b>${{i}} &rarr; ${{j}}</b>: chance that ${{j}} turns on within {cfg['window']} plies of ${{i}}, above sibling
+    rollouts: ${{pc(e[3])}} with ${{D.A}}, ${{pc(e[4])}} with ${{D.B}}
+    <div><span class="mi">${{i}}</span></div>${{explHTML(D.nodes[i], true)}}<div><span class="mj">${{j}}</span></div>${{explHTML(D.nodes[j], true)}}`;
+  const xs = D.paths[sel.value][id] || [];
+  if (!xs.length) h += D.have_examples ? "<i>no rollout with this path was found</i>"
+                                       : "<i>no example rollouts yet: run concepts.py examples</i>";
+  for (const x of xs) {{
+    h += `<hr><div class="mv"><b>${{x.player}}</b> playing, from &hellip; ${{x.start}}</div><div class="pair">
+      <div>${{board(x.fen_i, x.uci_i)}}<div class="cap"><span class="mi">${{i}}</span> turns on (ply ${{x.ti}})</div></div>
+      <div>${{board(x.fen_j, x.uci_j)}}<div class="cap"><span class="mj">${{j}}</span> turns on (ply ${{x.tj}})</div></div></div>
+      <div class="mv">` + x.line.map(([t, k]) => k ? `<span class="m${{k}}">${{t}}</span>` : t).join(" ") + "</div>" + changeHTML(x.change);
+  }}
+  return h;
 }}
-sel.onchange = draw; draw();
+// What changed from i's position to j's, told from the side to move at i ("we"), and the two moves
+function changeHTML(c) {{
+  if (!c) return "";
+  const li = (lab, xs) => xs.length ? `<div><b>${{lab}}</b> ${{xs.join("; ")}}</div>` : "";
+  return `<div class="why">` + li("move at i (ours):", c.move_i) + li(`move at j (${{c.j_mover === "we" ? "ours" : "theirs"}}):`, c.move_j) +
+         li("now true:", c.appear) + li("no longer true:", c.vanish) +
+         (c.appear.length || c.vanish.length ? "" : "<div>no change in the position facts</div>") + "</div>";
+}}
+function showTip(j, ev, edge) {{
+  tip.innerHTML = edge ? edgeHTML(j) : latentHTML(j); tip.style.display = "block";
+  const x = ev.clientX + 16, y = ev.clientY - 20;
+  tip.style.left = Math.min(x, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.max(8, Math.min(y, innerHeight - tip.offsetHeight - 8)) + "px";
+}}
+function draw() {{
+  const es = D.views[sel.value], used = new Set(), deg = {{}};
+  document.getElementById("n").textContent = `${{es.length}} shown of ${{D.found[sel.value]}} passing`;
+  es.forEach(e => {{ used.add(e[0]); used.add(e[1]); deg[e[0]] = (deg[e[0]] || 0) + 1; deg[e[1]] = (deg[e[1]] || 0) + 1; }});
+  const size = j => sz.value === "rate" ? Math.sqrt(D.nodes[j].rate + 1e-6) : sz.value === "deg" ? Math.sqrt(deg[j]) : 1;
+  const nodes = [...used].map(j => ({{id: j, label: String(j), color: colour(D.nodes[j].r), value: size(j)}}));
+  const edges = es.map(e => ({{id: `${{e[0]}}-${{e[1]}}`, from: e[0], to: e[1], value: Math.abs(e[2]), arrows: "to",
+                              color: {{color: "#8899aa", opacity: 0.6, hover: "#258", highlight: "#258"}}}}));
+  if (net) net.destroy();
+  tip.style.display = "none"; pinned = false; tip.classList.remove("pinned");
+  net = new vis.Network(document.getElementById("g"), {{nodes, edges}},
+    {{physics: {{solver: "forceAtlas2Based", stabilization: {{iterations: 400}}}}, nodes: {{shape: "dot", scaling: {{min: 5, max: 26}}}},
+      edges: {{scaling: {{min: 0.5, max: 4}}, smooth: false}}, interaction: {{hover: true, tooltipDelay: 100}}}});
+  // the layout settles once and then stays put (the button turns the simulation back on)
+  net.once("stabilizationIterationsDone", () => {{ net.setOptions({{physics: false}}); frozen = true; }});
+  net.on("hoverNode", p => {{ if (!pinned) showTip(p.node, p.event); }});
+  net.on("blurNode", () => {{ if (!pinned) tip.style.display = "none"; }});
+  net.on("hoverEdge", p => {{ if (!pinned) showTip(p.edge, p.event, true); }});
+  net.on("blurEdge", () => {{ if (!pinned) tip.style.display = "none"; }});
+  net.on("click", p => {{
+    if (p.nodes.length) {{ pinned = true; tip.classList.add("pinned"); showTip(p.nodes[0], p.event.srcEvent); }}
+    else if (p.edges.length) {{ pinned = true; tip.classList.add("pinned"); showTip(p.edges[0], p.event.srcEvent, true); }}
+    else {{ pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; }}
+  }});
+}}
+document.getElementById("mv").onclick = e => {{
+  frozen = !frozen; net.setOptions({{physics: !frozen}}); e.target.textContent = frozen ? "unfreeze layout" : "freeze layout"; }};
+sel.onchange = draw; sz.onchange = draw; draw();
 </script>"""
     (run / "graph.html").write_text(page, encoding="utf-8")
     print(f"wrote {out / 'summary.md'}, {out}/edges-*.csv, {run / 'graph.graphml'} and {run / 'graph.html'}")
+
+
+# ---------------------------------------------------------------- modes: SVD of the flow matrices
+
+def latent_rates(cfg):
+    with open(Path(cfg["cc_run"]) / cfg["cc"] / "latents.jsonl", encoding="utf-8") as f:
+        return {r["latent"]: r["rate"] for r in map(json.loads, f)}
+
+
+def modes(a):
+    run = Path(a.run)
+    cfg = json.loads((run / "config.json").read_text())
+    dev = ev.device(a.device)
+    names = [m.split("/")[-1] for m in cfg["models"]]
+    players = [n for n in names if (run / n / "C.npy").exists()]
+    st = {n: edge_stats(run / n, cfg["rollouts"]) for n in players}
+    L = st[players[0]][0].shape[0]
+    rate = latent_rates(cfg)
+    fire = torch.tensor([rate.get(j, 0.0) for j in range(L)])
+    keep = fire <= a.max_rate
+    for n in players:
+        keep &= st[n][2] >= a.min_onsets
+    keep = keep.nonzero().squeeze(1)
+    print(f"{len(keep)} of {L} latents kept: firing in <= {100 * a.max_rate:g}% of positions, "
+          f">= {a.min_onsets} onsets with each player", flush=True)
+    sub = {}
+    for n in players:
+        C, E, N = st[n]
+        C, E, N = C[keep][:, keep], E[keep][:, keep], N[keep]
+        sub[n] = (C, (C - E) / (N[:, None] + a.prior))            # excess rate per onset of i, shrunk for rare i
+    del st
+    zero = torch.zeros(())
+    mats = {n: torch.where(sub[n][0] >= a.min_count, sub[n][1], zero) for n in players}
+    if len(players) == 2:
+        A, B = players
+        both = (sub[A][0] >= a.min_count) | (sub[B][0] >= a.min_count)
+        mats = {"diff": torch.where(both, sub[B][1] - sub[A][1], zero), **mats}
+
+    res, used = {}, set()
+    for v, M in mats.items():
+        Mg = M.to(dev)
+        U, S, V = torch.svd_lowrank(Mg, q=a.modes + 10, niter=6)
+        total = float((Mg ** 2).sum())
+        del Mg
+        U, S, V = U[:, :a.modes].cpu(), S[:a.modes].cpu(), V[:, :a.modes].cpu()
+        out = []
+        for k in range(len(S)):
+            u, w = U[:, k], V[:, k]
+            if u[u.abs().argmax()] < 0:                           # sign: the strongest source is positive
+                u, w = -u, -w
+            t = min(a.top, len(u))
+            su, sw = u.abs().topk(t).indices, w.abs().topk(t).indices
+            contrib = float(S[k]) * u[su][:, None] * w[sw][None, :]
+            real = M[su][:, sw]
+            ok = (torch.sign(real) == torch.sign(contrib)) & (real != 0)  # edges the mode explains, and that are there
+            score = torch.where(ok, contrib.abs(), torch.full_like(contrib, -1)).flatten()
+            edges = []
+            for f in score.topk(min(a.mode_edges, int(ok.sum()))).indices.tolist():
+                x, y = int(su[f // t]), int(sw[f % t])
+                e = dict(i=int(keep[x]), j=int(keep[y]), value=float(M[x, y]))
+                for n in players:
+                    e["rate_" + n] = float(sub[n][1][x, y])
+                edges.append(e)
+            m = dict(s=float(S[k]), share=float(S[k]) ** 2 / max(total, 1e-12),
+                     sources=[[int(keep[x]), float(u[x])] for x in su[:a.show_latents].tolist()],
+                     targets=[[int(keep[x]), float(w[x])] for x in sw[:a.show_latents].tolist()], edges=edges)
+            used |= {l for l, _ in m["sources"] + m["targets"]} | {e[c] for e in edges for c in ("i", "j")}
+            out.append(m)
+        res[v] = out
+        first = ", ".join("%.1f" % (100 * m["share"]) for m in out[:5])
+        print(f"{v}: top {len(S)} modes hold {100 * sum(m['share'] for m in out):.1f}% of the matrix ({first}% ...)",
+              flush=True)
+
+    print(f"describing {len(used)} latents", flush=True)
+    desc = describe(cfg, used)
+    outdir = RESULTS / run.name
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "modes.json").write_text(json.dumps(dict(args={k: v for k, v in vars(a).items() if k != "func"},
+                                                        players=players, modes=res)), encoding="utf-8")
+    md = [f"# Flow modes, {run.name}", "",
+          "Truncated SVD of the excess-rate matrix r[i, j] = (C - E) / (N_i + prior): how much more often latent j "
+          f"turns on within {cfg['window']} plies of i's onset than in sibling rollouts. **diff** = r under "
+          f"{players[-1]} minus r under {players[0]} (positive: stronger when {players[-1]} plays). A mode is a group "
+          "of source latents (u) feeding a group of target latents (v).", ""]
+    lab = lambda j: f"{j} (r {desc[j]['rel_norm']:.2f}): {desc[j]['examples'][0] if desc[j]['examples'] else ''}"
+    for v, out in res.items():
+        md += [f"## {v}", ""]
+        for k, m in enumerate(out):
+            md += [f"### {v} mode {k}: {100 * m['share']:.1f}% of the matrix", ""]
+            for e in m["edges"][:a.show]:
+                rates = ", ".join(f"{n} {100 * e['rate_' + n]:+.1f}%" for n in players)
+                md.append(f"- **{e['i']} -> {e['j']}** ({rates})  \n  {html.escape(lab(e['i']))}  \n  -> {html.escape(lab(e['j']))}")
+            md.append("")
+    (outdir / "modes.md").write_text("\n".join(md), encoding="utf-8")
+
+    data = dict(nodes={j: dict(r=desc[j]["rel_norm"], rate=desc[j]["rate"], ex=desc[j]["boards"], why=desc[j]["why"],
+                              expl=desc[j]["expl"]) for j in used},
+                modes=res, players=players, A=names[0], B=names[1] if len(names) > 1 else "")
+    page = f"""<!doctype html><meta charset="utf-8"><title>Flow modes</title>
+<style>body{{margin:0;font:13px system-ui,sans-serif}}#bar{{padding:8px;border-bottom:1px solid #ccc}}
+#wrap{{display:flex;height:calc(100vh - 60px)}}#main{{flex:1;overflow-y:auto;padding:8px}}
+#side{{width:300px;overflow-y:auto;padding:8px;border-left:1px solid #ccc}}
+.mode{{border:1px solid #ccc;border-radius:6px;padding:8px;margin-bottom:12px}}.cols{{display:flex;gap:16px;flex-wrap:wrap}}
+.lats{{display:flex;flex-wrap:wrap;gap:6px}}.lat{{cursor:pointer;text-align:center;font-size:11px}}.lat:hover{{outline:2px solid #69c}}
+table{{border-collapse:collapse;margin-top:6px}}td,th{{padding:2px 8px;text-align:right;font-size:12px}}
+td.l{{cursor:pointer;color:#258;text-decoration:underline}}.pos{{color:#c33}}.neg{{color:#36c}}
+{BOARD_CSS}</style>
+{BOARD_DEFS}{MOVE_HEAD}
+<div id="bar">view <select id="v"></select> &nbsp; Each mode: <b>source</b> latents (left) turn on, then <b>target</b> latents (right)
+turn on within {cfg['window']} plies, more than in sibling rollouts. In <b>diff</b>, red = stronger when {html.escape(players[-1])} plays,
+blue = stronger when {html.escape(players[0])} plays. Click a latent for its top positions.</div>
+<div id="wrap"><div id="main"></div><div id="side">click a latent</div></div>
+<script>
+const D = {json.dumps(data)};
+const sel = document.getElementById("v"), main = document.getElementById("main"), side = document.getElementById("side");
+for (const v of Object.keys(D.modes)) sel.add(new Option(v, v));
+{BOARD_JS}
+const pct = x => (x >= 0 ? "+" : "") + (100 * x).toFixed(1) + "%";
+function chip(j, w) {{
+  const ex = D.nodes[j].ex[0];
+  return `<div class="lat" onclick="side.innerHTML = latentHTML(${{j}})">${{ex ? board(ex[0], ex[3], "sm") : ""}}
+    ${{j}} <span class="${{w >= 0 ? "pos" : "neg"}}">${{w.toFixed(2)}}</span><br>r ${{(+D.nodes[j].r).toFixed(2)}}</div>`;
+}}
+function colour(r) {{ if (!(r >= 0)) return "#999"; const b = Math.round(255 * (1 - r)), rr = Math.round(255 * r);
+  return Math.abs(r - 0.5) < 0.2 ? "#aaa" : `rgb(${{rr}},80,${{b}})`; }}
+// A mode as a fixed two-column graph: sources left, targets right, arrows for its edges
+// (width ~ size of the effect; in diff, red = stronger for the second player, blue = for the first).
+function flow(m, diff) {{
+  const left = m.sources.map(s => s[0]), right = m.targets.map(t => t[0]);
+  for (const e of m.edges) {{ if (!left.includes(e.i)) left.push(e.i); if (!right.includes(e.j)) right.push(e.j); }}
+  const W = 420, H = 30 * Math.max(left.length, right.length) + 20, xl = 60, xr = W - 60;
+  const y = (k, n) => 20 + (k + 0.5) * (H - 30) / n;
+  const pos = {{}};
+  left.forEach((j, k) => pos["s" + j] = y(k, left.length)); right.forEach((j, k) => pos["t" + j] = y(k, right.length));
+  const big = Math.max(...m.edges.map(e => Math.abs(e.value)), 1e-9);
+  let s = `<svg width="${{W}}" height="${{H}}" style="flex:none"><defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="#666"/></marker></defs>
+    <text x="${{xl}}" y="12" text-anchor="middle" font-size="11">sources</text><text x="${{xr}}" y="12" text-anchor="middle" font-size="11">targets</text>`;
+  for (const e of m.edges) {{
+    const c = diff ? (e.value >= 0 ? "#c33" : "#36c") : "#778";
+    s += `<line x1="${{xl + 9}}" y1="${{pos["s" + e.i]}}" x2="${{xr - 11}}" y2="${{pos["t" + e.j]}}" stroke="${{c}}" stroke-opacity="0.7"
+      stroke-width="${{1 + 5 * Math.abs(e.value) / big}}" marker-end="url(#ar)"><title>${{e.i}} → ${{e.j}}: ${{pct(e.value)}}</title></line>`;
+  }}
+  const node = (j, x, yy, anchor, dx) => `<g style="cursor:pointer" onclick="side.innerHTML = latentHTML(${{j}})">
+    <circle cx="${{x}}" cy="${{yy}}" r="8" fill="${{colour(D.nodes[j].r)}}" stroke="#333"/>
+    <text x="${{x + dx}}" y="${{yy + 4}}" text-anchor="${{anchor}}" font-size="11">${{j}}</text></g>`;
+  left.forEach(j => s += node(j, xl, pos["s" + j], "end", -12));
+  right.forEach(j => s += node(j, xr, pos["t" + j], "start", 12));
+  return s + "</svg>";
+}}
+function draw() {{
+  const v = sel.value, diff = v === "diff";
+  main.innerHTML = D.modes[v].map((m, k) => {{
+    const rows = m.edges.map(e => `<tr><td class="l" onclick="side.innerHTML = latentHTML(${{e.i}})">${{e.i}}</td><td>&rarr;</td>
+      <td class="l" onclick="side.innerHTML = latentHTML(${{e.j}})">${{e.j}}</td>` +
+      D.players.map(n => `<td>${{pct(e["rate_" + n])}}</td>`).join("") +
+      (diff ? `<td class="${{e.value >= 0 ? "pos" : "neg"}}">${{pct(e.value)}}</td>` : "") + "</tr>").join("");
+    return `<div class="mode"><b>mode ${{k}}</b>: ${{(100 * m.share).toFixed(1)}}% of the matrix
+      <div class="cols">${{flow(m, diff)}}<div><b>sources</b><div class="lats">${{m.sources.map(([j, w]) => chip(j, w)).join("")}}</div></div>
+      <div><b>targets</b><div class="lats">${{m.targets.map(([j, w]) => chip(j, w)).join("")}}</div></div></div>
+      <table><tr><th>i</th><th></th><th>j</th>${{D.players.map(n => `<th>${{n}}</th>`).join("")}}${{diff ? "<th>diff</th>" : ""}}</tr>${{rows}}</table></div>`;
+  }}).join("");
+}}
+sel.onchange = draw; draw();
+</script>"""
+    (run / "modes.html").write_text(page, encoding="utf-8")
+    print(f"wrote {outdir / 'modes.md'}, {outdir / 'modes.json'} and {run / 'modes.html'}")
 
 
 # ---------------------------------------------------------------- command line
@@ -657,7 +1136,7 @@ sel.onchange = draw; draw();
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("rollout", "graph", "all"):
+    for cmd in ("rollout", "graph", "examples", "modes", "all"):
         p = sub.add_parser(cmd)
         p.add_argument("--device", default="auto", help="auto, cuda, mps or cpu")
         p.add_argument("--run", default=None, help="run folder (default runs/transcend/concepts/<crosscoder run>-<cc>)")
@@ -676,13 +1155,37 @@ def main():
             p.add_argument("--save-every", type=int, default=100, help="batches between saves (a rerun resumes)")
             p.add_argument("--no-cuda-graphs", action="store_true", help="decode eagerly (slower; for debugging)")
             p.add_argument("--seed", type=int, default=0)
-        if cmd in ("graph", "all"):
+        if cmd == "examples":
+            p.add_argument("--ex-starts", type=int, default=25_000,
+                           help="fresh start positions to replay at most (stops once every path has its examples)")
+            p.add_argument("--per-edge", type=int, default=2, help="example rollouts per path")
+            p.add_argument("--batch", type=int, default=1024, help="rollouts played at once")
+            p.add_argument("--no-cuda-graphs", action="store_true", help="decode eagerly (slower; for debugging)")
+        if cmd in ("graph", "examples", "all"):
             p.add_argument("--z", type=float, default=6.0)
             p.add_argument("--lift", type=float, default=1.5)
             p.add_argument("--min-count", type=int, default=30)
-            p.add_argument("--edges", type=int, default=20_000, help="edges kept per view")
-            p.add_argument("--html-edges", type=int, default=3000, help="edges drawn per view in graph.html")
+            p.add_argument("--absent", type=float, default=1.0,
+                           help="an 'only X' path has z below this when the other model plays")
+            p.add_argument("--max-rate", type=float, default=0.05,
+                           help="leave out latents firing in more than this share of positions (hubs)")
+            p.add_argument("--min-onsets", type=int, default=200,
+                           help="latents need this many onsets with EACH player, so both models reach the concept")
+            p.add_argument("--edges", type=int, default=400, help="paths kept per view")
+            p.add_argument("--html-edges", type=int, default=400, help="paths drawn per view in graph.html")
             p.add_argument("--show", type=int, default=40, help="edges listed per view in summary.md")
+        if cmd == "modes":
+            p.add_argument("--modes", type=int, default=15, help="SVD components per view")
+            p.add_argument("--max-rate", type=float, default=0.05,
+                           help="leave out latents firing in more than this share of positions (they swamp the matrix)")
+            p.add_argument("--min-onsets", type=int, default=100, help="keep latents with at least this many onsets per player")
+            p.add_argument("--prior", type=float, default=100.0,
+                           help="pseudo-onsets added to N_i: shrinks the rates of rarely seen latents toward 0")
+            p.add_argument("--min-count", type=int, default=20, help="cells with fewer co-onsets are set to 0")
+            p.add_argument("--top", type=int, default=40, help="sources x targets searched for each mode's edges")
+            p.add_argument("--mode-edges", type=int, default=12, help="edges listed per mode")
+            p.add_argument("--show-latents", type=int, default=8, help="source and target latents drawn per mode")
+            p.add_argument("--show", type=int, default=8, help="edges per mode in modes.md")
     a = ap.parse_args()
     if a.cmd in ("rollout", "all"):
         if a.rollouts < 2:
@@ -692,6 +1195,14 @@ def main():
         if not a.run:
             sys.exit("--run is required")
         graph(a)
+    if a.cmd == "examples":
+        if not a.run:
+            sys.exit("--run is required")
+        examples(a)
+    if a.cmd == "modes":
+        if not a.run:
+            sys.exit("--run is required")
+        modes(a)
 
 
 if __name__ == "__main__":
