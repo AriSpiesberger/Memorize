@@ -16,6 +16,8 @@ means the move drops the mover's win chances by 15 percentage points against the
 """
 import logging
 import math
+import random
+import time
 
 import chess
 import chess.engine
@@ -82,20 +84,49 @@ class Annotator:
 
     def __init__(self, depth=14, threat_depth=8, engine=None, hash_mb=64):
         self.depth, self.threat_depth = depth, threat_depth
-        self.engine = chess.engine.SimpleEngine.popen_uci(engine or paths.stockfish())
-        self.engine.configure({"Threads": 1, "Hash": hash_mb})
+        self.path, self.hash_mb = engine or paths.stockfish(), hash_mb
+        self.start()
+
+    def start(self, tries=6):
+        """Launch Stockfish. Many workers starting at once can fail on Windows (exit code 0xC0000142,
+        a process that could not initialise), so wait a random moment and retry."""
+        for t in range(tries):
+            try:
+                self.engine = chess.engine.SimpleEngine.popen_uci(self.path)
+                self.engine.configure({"Threads": 1, "Hash": self.hash_mb})
+                return
+            except (chess.engine.EngineError, OSError):
+                if t == tries - 1:
+                    raise
+                time.sleep(0.5 + 2 * random.random() * (t + 1))
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
-        self.engine.quit()
+        try:
+            self.engine.quit()
+        except chess.engine.EngineError:
+            pass
 
     def score(self, info, turn):
         return info["score"].pov(turn).score(mate_score=MATE)
 
     def annotate(self, board, move):
-        """Engine numbers for a position and the move played from it (move may be None)."""
+        """Engine numbers for a position and the move played from it (move may be None); None if
+        Stockfish keeps failing on it. A dead engine is restarted."""
+        for attempt in range(2):
+            try:
+                return self._annotate(board, move)
+            except (chess.engine.EngineError, chess.engine.EngineTerminatedError):
+                try:
+                    self.engine.quit()
+                except Exception:
+                    pass
+                self.start()
+        return None
+
+    def _annotate(self, board, move):
         b = board.copy(stack=False)
         us = b.turn
         top, lines = {}, {}

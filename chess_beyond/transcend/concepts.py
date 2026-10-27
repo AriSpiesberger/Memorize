@@ -1456,7 +1456,7 @@ def main():
             p.add_argument("--no-cuda-graphs", action="store_true", help="decode eagerly (slower; for debugging)")
         if cmd == "score":
             p.add_argument("--depth", type=int, default=14, help="Stockfish depth")
-            p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
+            p.add_argument("--workers", type=int, default=max(1, min(16, (os.cpu_count() or 2) - 2)),
                            help="processes, each running one single-threaded Stockfish")
         if cmd in ("graph", "examples", "score", "all"):
             p.add_argument("--z", type=float, default=6.0)

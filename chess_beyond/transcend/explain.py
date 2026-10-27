@@ -231,7 +231,7 @@ def main():
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run, e.g. Lfinal or L12")
     ap.add_argument("--n", type=int, default=100_000, help="positions to sample from the stored ones")
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
+    ap.add_argument("--workers", type=int, default=max(1, min(16, (os.cpu_count() or 2) - 2)),
                     help="processes for the facts (each runs one single-threaded Stockfish)")
     ap.add_argument("--depth", type=int, default=14, help="Stockfish depth for the skill facts")
     ap.add_argument("--no-engine", action="store_true", help="board facts only: no Stockfish, no Maia-2")
