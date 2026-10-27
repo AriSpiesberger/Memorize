@@ -1,0 +1,34 @@
+{
+ "cc": "cc-L12",
+ "sources": [
+  "chess-pgn-1000-1300-L12",
+  "chess-pgn-2400plus-L12"
+ ],
+ "latents": 16384,
+ "k": 64,
+ "val_fvu": {
+  "chess-pgn-1000-1300-L12": 0.08825644105672836,
+  "chess-pgn-2400plus-L12": 0.09971196949481964
+ },
+ "val_l0": 64.23165,
+ "dead_frac": 0.0,
+ "alive": 16384,
+ "only_A": 2,
+ "only_B": 2,
+ "shared": 15407,
+ "shared_cos_median": 0.043483883142471313,
+ "rel_norm_hist": [
+  2,
+  153,
+  356,
+  954,
+  5608,
+  6712,
+  2133,
+  327,
+  137,
+  2
+ ],
+ "A": "chess-pgn-1000-1300",
+ "B": "chess-pgn-2400plus"
+}
