@@ -7,7 +7,8 @@ rollout  Start positions: random plies (one per game) of games from --pgn-data (
          rating). Each player model (default both models of the crosscoder) plays itself from each
          start, --rollouts times, for --plies plies at --temperature (characters sampled, the
          move parsed as SAN, an illegal move resampled up to 5 times as in eval.py), with a
-         KV cache so millions of rollouts are affordable. Every position reached is then read by
+         KV cache that keeps each start's prompt once for all its rollouts, so millions
+         of rollouts are affordable. Every position reached is then read by
          BOTH models (the crosscoder needs both) and encoded with the crosscoder; a latent's
          onset at ply t is: active at t, not at t - 1.
          Edge counts, per player model, for latents i, j (dense, every pair):
@@ -58,42 +59,84 @@ RESULTS = paths.ROOT / "results" / "transcend" / "concepts"
 # ---------------------------------------------------------------- self-play with a KV cache
 
 class Cache:
-    def __init__(self, model, B, T, dev):
+    """KV cache in two parts: each start's prompt once, shared by its R rollouts, and each rollout's own
+    continuation. Attention reads the prompt once per start, not once per rollout: the prompt is most of
+    the context, and reading the cache is what a decoding step costs."""
+
+    def __init__(self, model, S, R, Lp, Ls, dev):
         heads, d = model.blocks[0].heads, model.ln.normalized_shape[0]
         dt = torch.bfloat16 if dev == "cuda" else torch.float32
-        self.k = [torch.zeros((B, heads, T, d // heads), dtype=dt, device=dev) for _ in model.blocks]
-        self.v = [torch.zeros_like(k) for k in self.k]
+        self.pk = [torch.zeros((S, heads, Lp, d // heads), dtype=dt, device=dev) for _ in model.blocks]
+        self.pv = [torch.zeros_like(k) for k in self.pk]
+        self.sk = [torch.zeros((S * R, heads, Ls, d // heads), dtype=dt, device=dev) for _ in model.blocks]
+        self.sv = [torch.zeros_like(k) for k in self.sk]
+        self.S, self.R, self.plen, self.pmask = S, R, None, None
 
 
-def prefill(model, x, lens, cache):
-    """Right-padded prompts through the model, filling the cache; next-character logits at each prompt's end."""
+def attend(q, cache, l, spos):
+    """q (B, heads, T, dh) at continuation positions spos (B, T): attention over the start's prompt
+    and the rollout's continuation up to spos, one softmax over both."""
+    B, H, T, dh = q.shape
+    S, R = cache.S, cache.R
+    Lp = cache.pk[l].shape[2]
+    Ls = int(spos.max()) + 1
+    qg = q.reshape(S, R, H, T, dh).transpose(1, 2).reshape(S, H, R * T, dh)
+    sp = (qg @ cache.pk[l].transpose(-1, -2)).float() * dh ** -0.5
+    sp = sp.masked_fill(~cache.pmask[:, None, None, :], -float("inf"))
+    sp = sp.view(S, H, R, T, Lp).transpose(1, 2).reshape(B, H, T, Lp)
+    ss = (q @ cache.sk[l][:, :, :Ls].transpose(-1, -2)).float() * dh ** -0.5
+    ss = ss.masked_fill(~(torch.arange(Ls, device=q.device)[None, None, :] <= spos[:, :, None])[:, None], -float("inf"))
+    w = torch.softmax(torch.cat([sp, ss], -1), -1).to(q.dtype)
+    wp = w[..., :Lp].reshape(S, R, H, T, Lp).transpose(1, 2).reshape(S, H, R * T, Lp)
+    yp = (wp @ cache.pv[l]).view(S, H, R, T, dh).transpose(1, 2).reshape(B, H, T, dh)
+    return yp + w[..., Lp:] @ cache.sv[l][:, :, :Ls]
+
+
+def prefill(model, x, plen, cache, layers=()):
+    """The S prompts (right-padded) through the model, filling the prompt cache. -> next-character logits
+    at each prompt's end, repeated for the R rollouts, and {layer: (S, d)} states there."""
+    S, T = x.shape
+    d = model.ln.normalized_shape[0]
+    rows = torch.arange(S, device=x.device)
+    cache.plen = plen
+    cache.pmask = torch.arange(cache.pk[0].shape[2], device=x.device)[None, :] < plen[:, None]
+    h = model.tok(x) + model.pos(torch.arange(T, device=x.device))
+    out = {}
+    for l, blk in enumerate(model.blocks):
+        q, k, v = (z.view(S, T, blk.heads, d // blk.heads).transpose(1, 2) for z in blk.qkv(blk.ln1(h)).split(d, dim=2))
+        cache.pk[l][:, :, :T], cache.pv[l][:, :, :T] = k, v
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        h = h + blk.proj(y.transpose(1, 2).reshape(S, T, d))
+        h = h + blk.mlp(blk.ln2(h))
+        if str(l) in layers:
+            out[str(l)] = h[rows, plen - 1].float()
+    f = model.ln(h[rows, plen - 1])
+    if "final" in layers:
+        out["final"] = f.float()
+    return model.head(f).float().repeat_interleave(cache.R, 0), out
+
+
+def extend(model, x, spos, cache, layers=()):
+    """Continuation characters x (B, T) at positions spos (B, T) through the model, writing their cache.
+    -> logits at the last position and {layer: (B, T, d)} states."""
     B, T = x.shape
     d = model.ln.normalized_shape[0]
-    h = model.tok(x) + model.pos(torch.arange(T, device=x.device))
+    rows = torch.arange(B, device=x.device)[:, None]
+    h = model.tok(x) + model.pos(cache.plen.repeat_interleave(cache.R)[:, None] + spos)
+    out = {}
     for l, blk in enumerate(model.blocks):
         q, k, v = (z.view(B, T, blk.heads, d // blk.heads).transpose(1, 2) for z in blk.qkv(blk.ln1(h)).split(d, dim=2))
-        cache.k[l][:, :, :T], cache.v[l][:, :, :T] = k, v
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        cache.sk[l][rows, :, spos] = k.transpose(1, 2).to(cache.sk[l].dtype)
+        cache.sv[l][rows, :, spos] = v.transpose(1, 2).to(cache.sv[l].dtype)
+        y = attend(q, cache, l, spos)
         h = h + blk.proj(y.transpose(1, 2).reshape(B, T, d))
         h = h + blk.mlp(blk.ln2(h))
-    return model.head(model.ln(h[torch.arange(B, device=x.device), lens - 1])).float()
-
-
-def step(model, tok, pos, cache):
-    """One character per row, each at its own position; next-character logits."""
-    B, d = len(tok), model.ln.normalized_shape[0]
-    rows = torch.arange(B, device=tok.device)
-    Tm = int(pos.max()) + 1
-    mask = (torch.arange(Tm, device=tok.device)[None, :] <= pos[:, None])[:, None, None, :]
-    h = (model.tok(tok) + model.pos(pos))[:, None]
-    for l, blk in enumerate(model.blocks):
-        q, k, v = (z.view(B, 1, blk.heads, d // blk.heads).transpose(1, 2) for z in blk.qkv(blk.ln1(h)).split(d, dim=2))
-        cache.k[l][rows, :, pos] = k[:, :, 0].to(cache.k[l].dtype)
-        cache.v[l][rows, :, pos] = v[:, :, 0].to(cache.v[l].dtype)
-        y = F.scaled_dot_product_attention(q, cache.k[l][:, :, :Tm], cache.v[l][:, :, :Tm], attn_mask=mask)
-        h = h + blk.proj(y.transpose(1, 2).reshape(B, 1, d))
-        h = h + blk.mlp(blk.ln2(h))
-    return model.head(model.ln(h[:, 0])).float()
+        if str(l) in layers:
+            out[str(l)] = h.float()
+    f = model.ln(h)
+    if "final" in layers:
+        out["final"] = f.float()
+    return model.head(f[:, -1]).float(), out
 
 
 def room(plies):
@@ -101,24 +144,32 @@ def room(plies):
     return plies * (MAX_MOVE_CHARS + 1) + (plies // 2 + 1) * 5 + 4
 
 
+def pad(prompts, dev):
+    plen = torch.tensor([len(p) for p in prompts], device=dev)
+    x = torch.full((len(prompts), int(plen.max())), SPACE, dtype=torch.long, device=dev)
+    for s, p in enumerate(prompts):
+        x[s, :len(p)] = torch.tensor(p)
+    return x, plen
+
+
 @torch.no_grad()
-def play(model, boards, prompts, plies, T, dev, gen):
-    """Self-play from each board (its prompt as token ids) for up to `plies` plies.
-    -> tokens (B, n) on dev; ends (B, plies) long, the prompt's last character before each ply's move
-    (-1 once the game stopped); illegal attempts."""
-    B = len(boards)
-    lens = torch.tensor([len(p) for p in prompts], device=dev)
-    Tc = int(lens.max()) + room(plies)
-    buf = torch.full((B, Tc), SPACE, dtype=torch.long, device=dev)
-    for b, p in enumerate(prompts):
-        buf[b, :len(p)] = torch.tensor(p)
-    cache = Cache(model, B, Tc, dev)
+def play(model, boards, prompts, R, plies, T, dev, gen):
+    """Self-play, R rollouts from each of the S boards (their prompts as token ids), up to `plies` plies.
+    -> continuation characters (S*R, n) on dev; ends (S*R, plies): where each ply's prompt ends,
+    -1 = the start prompt's last character, >= 0 = that index in the continuation, -2 = game stopped;
+    illegal attempts. Rows are start-major: row s*R + r."""
+    x, plen = pad(prompts, dev)
+    boards = [b.copy() for b in boards for _ in range(R)]
+    B, Ls = len(boards), room(plies)
+    cache = Cache(model, len(prompts), R, x.shape[1], Ls, dev)
+    buf = torch.full((B, Ls), SPACE, dtype=torch.long, device=dev)
+    rows = torch.arange(B, device=dev)
     with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-        logits = prefill(model, buf[:, :int(lens.max())], lens, cache)
+        logits, _ = prefill(model, x, plen, cache)
     ply_logits = logits.clone()                       # logits at the start of each row's current move (for retries)
-    ends = torch.full((B, plies), -1, dtype=torch.long)
-    ends[:, 0] = (lens - 1).cpu()
-    pos = lens.tolist()                               # next index to write
+    ends = torch.full((B, plies), -2, dtype=torch.long)
+    ends[:, 0] = -1
+    pos = [0] * B                                     # next continuation index to write
     ply, tries, done = [0] * B, [0] * B, [False] * B
     partial, queue = [[] for _ in range(B)], [[] for _ in range(B)]
     fails = 0
@@ -129,7 +180,7 @@ def play(model, boards, prompts, plies, T, dev, gen):
         lg[empty, SPACE] = -float("inf")              # a move has at least one character
         return torch.multinomial(torch.softmax(lg, -1), 1, generator=gen).squeeze(1)
 
-    while not all(done):
+    while True:
         empty = torch.tensor([not q for q in partial], device=dev)
         nxt = sample(logits, empty).tolist()
         feed, starting, retry = [SPACE] * B, [], []
@@ -165,7 +216,7 @@ def play(model, boards, prompts, plies, T, dev, gen):
             boards[b].push(mv)
             tries[b] = 0
             ply[b] += 1
-            if ply[b] >= plies or boards[b].is_game_over() or pos[b] + room(1) >= Tc:
+            if ply[b] >= plies or boards[b].is_game_over() or pos[b] + room(1) >= Ls:
                 done[b] = True
                 continue
             if boards[b].turn == chess.WHITE:
@@ -184,9 +235,9 @@ def play(model, boards, prompts, plies, T, dev, gen):
             break
         p = torch.tensor(pos, device=dev)
         tok = torch.tensor(feed, device=dev)
-        buf[torch.arange(B, device=dev), p] = tok
+        buf[rows, p] = tok
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-            logits = step(model, tok, p, cache)
+            logits, _ = extend(model, tok[:, None], p[:, None], cache)
         if starting:
             s = torch.tensor(starting, device=dev)
             ply_logits[s] = logits[s]
@@ -197,20 +248,30 @@ def play(model, boards, prompts, plies, T, dev, gen):
 
 
 @torch.no_grad()
-def states(model, x, ends, layers, dev):
-    """{layer: (B, plies, d)} states at the ends (clamped; mask them with ends >= 0)."""
-    grabbed = {}
-    hooks = [model.blocks[int(L)].register_forward_hook(lambda m, i, o, L=L: grabbed.__setitem__(L, o))
-             for L in layers if L != "final"]
-    try:
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-            feats = model.features(x)
-    finally:
-        for h in hooks:
-            h.remove()
-    e = ends.clamp_min(0).to(dev)
-    rows = torch.arange(len(x), device=dev)[:, None]
-    return {L: (feats if L == "final" else grabbed[L])[rows, e].float() for L in layers}
+def states(model, x, plen, R, buf, ends, layers, dev, chunk=32):
+    """{layer: (S*R, plies, d)} states where each ply's prompt ends (zeros where ends == -2): the start
+    prompts once per start, then every rollout's continuation, in chunks of `chunk` characters."""
+    B = len(buf)
+    n = int(ends.max()) + 1
+    cache = Cache(model, len(x), R, x.shape[1], max(n, 1), dev)
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
+        _, first = prefill(model, x, plen, cache, layers)
+        cont = {L: [] for L in layers}
+        for c in range(0, n, chunk):
+            spos = torch.arange(c, min(n, c + chunk), device=dev).expand(B, -1)
+            _, st = extend(model, buf[:, c:c + spos.shape[1]], spos, cache, layers)
+            for L in layers:
+                cont[L].append(st[L])
+    e = ends.to(dev)
+    rows = torch.arange(B, device=dev)[:, None]
+    out = {}
+    for L in layers:
+        base = first[L].repeat_interleave(R, 0)[:, None].expand(-1, e.shape[1], -1)
+        if n:
+            got = torch.cat(cont[L], 1)[rows, e.clamp_min(0)]
+            base = torch.where((e >= 0)[..., None], got, base)
+        out[L] = base * (e >= -1)[..., None]
+    return out
 
 
 # ---------------------------------------------------------------- edge counts
@@ -306,26 +367,24 @@ def rollout(a):
             for i in idx:
                 f, g, ply, end = (int(v) for v in starts[i])
                 sans, _ = parse_movetext(corpus.text(f, g))
-                b = ev.board_of(sans[:ply])
-                ids = corpus.ids(f, g, end + 1).tolist()
-                for _ in range(R):
-                    boards.append(b.copy())
-                    prompts.append(ids)
-            buf, ends, fails = play(pm, boards, prompts, a.plies, a.temperature, dev, gen)
-            valid = (ends >= 0).to(dev)
-            x = buf[:, :int(ends.max()) + 1]
-            st = [states(m, x, ends, layers, dev) for m, _ in models]
+                boards.append(ev.board_of(sans[:ply]))
+                prompts.append(corpus.ids(f, g, end + 1).tolist())
+            buf, ends, fails = play(pm, boards, prompts, R, a.plies, a.temperature, dev, gen)
+            valid = (ends >= -1).to(dev)
+            x, plen = pad(prompts, dev)
+            st = [states(m, x, plen, R, buf, ends, layers, dev) for m, _ in models]
             xs = torch.stack([st[m][L] for m, L in sources], 2)          # (B, plies, sources, d)
             f, _, _ = cc.encode(xs.flatten(0, 1) * scales[None, :, None])
-            act = (f > 0).view(len(boards), a.plies, -1)
+            act = (f > 0).view(len(buf), a.plies, -1)
             counts.add(act, valid.float(), R, a.window)
-            stats["rollouts"] += len(boards)
+            stats["rollouts"] += len(buf)
             stats["positions"] += int(valid.sum())
             stats["illegal"] += fails
-            stats["stopped_early"] += int((ends[:, -1] < 0).sum())
+            stats["stopped_early"] += int((ends[:, -1] < -1).sum())
             if sample_f and s < done_starts + 4 * per_batch:
-                for r in range(min(8, len(boards))):
-                    sample_f.write("".join(VOCAB[c] for c in buf[r, :int(ends[r].max()) + MAX_MOVE_CHARS + 1].tolist()).rstrip() + "\n")
+                for r in range(min(2 * R, len(buf))):
+                    text = prompts[r // R] + buf[r, :max(0, int(ends[r].max())) + MAX_MOVE_CHARS + 1].tolist()
+                    sample_f.write("".join(VOCAB[c] for c in text).rstrip() + "\n")
                 sample_f.flush()
             n_batches += 1
             s_done = min(s + per_batch, len(order))
@@ -526,14 +585,14 @@ def main():
             p.add_argument("--cc", default="Lfinal", help="crosscoder in that run, e.g. Lfinal or L12")
             p.add_argument("--players", nargs="+", default=None, help="models that play (default: both crosscoder models)")
             p.add_argument("--pgn-data", nargs="+", default=FOLDERS, help="make_pgn_data.py folders for start positions")
-            p.add_argument("--starts", type=int, default=250_000)
-            p.add_argument("--rollouts", type=int, default=4, help="rollouts per start (>= 2: siblings are the control)")
+            p.add_argument("--starts", type=int, default=125_000)
+            p.add_argument("--rollouts", type=int, default=8, help="rollouts per start (>= 2: siblings are the control)")
             p.add_argument("--plies", type=int, default=16)
             p.add_argument("--window", type=int, default=4, help="plies after i's onset in which j's onset counts")
             p.add_argument("--temperature", type=float, default=1.0)
             p.add_argument("--min-ply", type=int, default=10)
-            p.add_argument("--batch", type=int, default=256, help="rollouts played at once")
-            p.add_argument("--save-every", type=int, default=200, help="batches between saves (a rerun resumes)")
+            p.add_argument("--batch", type=int, default=1024, help="rollouts played at once")
+            p.add_argument("--save-every", type=int, default=100, help="batches between saves (a rerun resumes)")
             p.add_argument("--seed", type=int, default=0)
         if cmd in ("graph", "all"):
             p.add_argument("--z", type=float, default=6.0)
