@@ -5,6 +5,7 @@ models' states on the same positions, so each latent is either shared or belongs
     python transcend/crosscoder.py train --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --layers 12
     python transcend/crosscoder.py top   --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --cc L12
     python transcend/crosscoder.py all                           # collect, then train + top for each layer (a sweep)
+    python transcend/crosscoder.py sweep --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus
 
 collect  Samples random games from make_pgn_data.py folders (default pgn-everything: Lichess games
          of every rating) and, per game, --per-game random plies from
@@ -547,7 +548,7 @@ def sweep(run, summaries):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("collect", "train", "top", "all"):
+    for cmd in ("collect", "train", "top", "all", "sweep"):
         p = sub.add_parser(cmd)
         p.add_argument("--device", default="auto", help="auto, cuda, mps or cpu")
         p.add_argument("--seed", type=int, default=0)
@@ -596,6 +597,9 @@ def main():
     if a.cmd == "all":
         summaries = [top(a, train(a, [L])) for L in a.layers]
         sweep(a.run, summaries)
+    if a.cmd == "sweep":                                     # sweep.md from the crosscoders already through `top`
+        found = sorted((RESULTS / Path(a.run).name).glob("cc-*/summary.json"), key=lambda f: f.stat().st_mtime)
+        sweep(a.run, [json.loads(f.read_text()) for f in found])
 
 
 if __name__ == "__main__":
