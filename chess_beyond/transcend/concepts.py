@@ -6,9 +6,11 @@
 rollout  Start positions: random plies (one per game) of games from --pgn-data (default every
          rating). Each player model (default both models of the crosscoder) plays itself from each
          start, --rollouts times, for --plies plies at --temperature (characters sampled, the
-         move parsed as SAN, an illegal move resampled up to 5 times as in eval.py), with a
-         KV cache that keeps each start's prompt once for all its rollouts, so millions
-         of rollouts are affordable. Every position reached is then read by
+         move parsed as SAN, an illegal move resampled up to 5 times as in eval.py). For speed:
+         a KV cache that keeps each start's prompt once for all its rollouts, the per-character
+         bookkeeping as GPU tensors (python-chess only for finished moves), the decoding step
+         replayed as a CUDA graph, and the playing model's states taken while it plays.
+         Games stop at checkmate, stalemate or a dead position (no repetition rules). Every position reached is then read by
          BOTH models (the crosscoder needs both) and encoded with the crosscoder; a latent's
          onset at ply t is: active at t, not at t - 1.
          Edge counts, per player model, for latents i, j (dense, every pair):
@@ -70,16 +72,15 @@ class Cache:
         self.pv = [torch.zeros_like(k) for k in self.pk]
         self.sk = [torch.zeros((S * R, heads, Ls, d // heads), dtype=dt, device=dev) for _ in model.blocks]
         self.sv = [torch.zeros_like(k) for k in self.sk]
-        self.S, self.R, self.plen, self.pmask = S, R, None, None
+        self.S, self.R, self.plen, self.plen_rep, self.pmask = S, R, None, None, None
 
 
-def attend(q, cache, l, spos):
+def attend(q, cache, l, spos, Ls):
     """q (B, heads, T, dh) at continuation positions spos (B, T): attention over the start's prompt
-    and the rollout's continuation up to spos, one softmax over both."""
+    and the first Ls continuation positions up to spos, one softmax over both."""
     B, H, T, dh = q.shape
     S, R = cache.S, cache.R
     Lp = cache.pk[l].shape[2]
-    Ls = int(spos.max()) + 1
     qg = q.reshape(S, R, H, T, dh).transpose(1, 2).reshape(S, H, R * T, dh)
     sp = (qg @ cache.pk[l].transpose(-1, -2)).float() * dh ** -0.5
     sp = sp.masked_fill(~cache.pmask[:, None, None, :], -float("inf"))
@@ -98,7 +99,7 @@ def prefill(model, x, plen, cache, layers=()):
     S, T = x.shape
     d = model.ln.normalized_shape[0]
     rows = torch.arange(S, device=x.device)
-    cache.plen = plen
+    cache.plen, cache.plen_rep = plen, plen.repeat_interleave(cache.R)
     cache.pmask = torch.arange(cache.pk[0].shape[2], device=x.device)[None, :] < plen[:, None]
     h = model.tok(x) + model.pos(torch.arange(T, device=x.device))
     out = {}
@@ -116,19 +117,21 @@ def prefill(model, x, plen, cache, layers=()):
     return model.head(f).float().repeat_interleave(cache.R, 0), out
 
 
-def extend(model, x, spos, cache, layers=()):
-    """Continuation characters x (B, T) at positions spos (B, T) through the model, writing their cache.
+def extend(model, x, spos, cache, layers=(), Ls=None):
+    """Continuation characters x (B, T) at positions spos (B, T) through the model, writing their cache;
+    attention covers the first Ls continuation positions (default spos.max() + 1, which syncs).
     -> logits at the last position and {layer: (B, T, d)} states."""
     B, T = x.shape
     d = model.ln.normalized_shape[0]
+    Ls = Ls or int(spos.max()) + 1
     rows = torch.arange(B, device=x.device)[:, None]
-    h = model.tok(x) + model.pos(cache.plen.repeat_interleave(cache.R)[:, None] + spos)
+    h = model.tok(x) + model.pos(cache.plen_rep[:, None] + spos)
     out = {}
     for l, blk in enumerate(model.blocks):
         q, k, v = (z.view(B, T, blk.heads, d // blk.heads).transpose(1, 2) for z in blk.qkv(blk.ln1(h)).split(d, dim=2))
         cache.sk[l][rows, :, spos] = k.transpose(1, 2).to(cache.sk[l].dtype)
         cache.sv[l][rows, :, spos] = v.transpose(1, 2).to(cache.sv[l].dtype)
-        y = attend(q, cache, l, spos)
+        y = attend(q, cache, l, spos, Ls)
         h = h + blk.proj(y.transpose(1, 2).reshape(B, T, d))
         h = h + blk.mlp(blk.ln2(h))
         if str(l) in layers:
@@ -137,6 +140,57 @@ def extend(model, x, spos, cache, layers=()):
     if "final" in layers:
         out["final"] = f.float()
     return model.head(f[:, -1]).float(), out
+
+
+class Stepper:
+    """One decoding step (one character per row) at fixed shapes, recorded as a CUDA graph and replayed,
+    so a step is one launch instead of hundreds. Falls back to running eagerly if capture fails or the
+    first replay disagrees with the eager step."""
+
+    def __init__(self, model, cache, layers, dev, graphs):
+        B = cache.sk[0].shape[0]
+        self.model, self.cache, self.layers, self.dev = model, cache, layers, dev
+        self.Ls = cache.sk[0].shape[2]
+        self.tok = torch.full((B, 1), SPACE, dtype=torch.long, device=dev)
+        self.spos = torch.zeros((B, 1), dtype=torch.long, device=dev)
+        self.graph, self.checked = None, False
+        if graphs and dev == "cuda":
+            try:
+                s = torch.cuda.Stream()
+                s.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(s):                  # warm-up (writes only continuation position 0,
+                    for _ in range(2):                      # which the first real step overwrites)
+                        self.eager()
+                torch.cuda.current_stream().wait_stream(s)
+                self.graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(self.graph):
+                    self.out = self.eager()
+            except Exception as e:
+                print(f"\n  CUDA graph capture failed ({type(e).__name__}: {e}); decoding eagerly", flush=True)
+                self.graph = None
+
+    def eager(self):
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self.dev == "cuda", cache_enabled=False):
+            return extend(self.model, self.tok, self.spos, self.cache, self.layers, Ls=self.Ls)
+
+    def __call__(self, tok, spos):
+        self.tok.copy_(tok)
+        self.spos.copy_(spos)
+        if self.graph is None:
+            return self.eager()
+        if not self.checked:                                # same inputs, same cache writes: compare once
+            self.checked = True
+            ref = self.eager()
+            ref = (ref[0].clone(), {k: v.clone() for k, v in ref[1].items()})
+            self.graph.replay()
+            err = (self.out[0] - ref[0]).abs().max().item()
+            if not err < 1e-2:
+                print(f"\n  CUDA graph replay differs from the eager step (max {err:.3g}); decoding eagerly", flush=True)
+                self.graph = None
+                return ref
+            return self.out
+        self.graph.replay()
+        return self.out
 
 
 def room(plies):
@@ -152,99 +206,121 @@ def pad(prompts, dev):
     return x, plen
 
 
+def over(board):
+    """Checkmate, stalemate or dead position (repetition and 50-move draws are not checked; rollouts are short)."""
+    return not any(board.generate_legal_moves()) or board.is_insufficient_material()
+
+
 @torch.no_grad()
-def play(model, boards, prompts, R, plies, T, dev, gen):
+def play(model, boards, prompts, R, plies, T, dev, gen, layers=(), graphs=True):
     """Self-play, R rollouts from each of the S boards (their prompts as token ids), up to `plies` plies.
-    -> continuation characters (S*R, n) on dev; ends (S*R, plies): where each ply's prompt ends,
-    -1 = the start prompt's last character, >= 0 = that index in the continuation, -2 = game stopped;
-    illegal attempts. Rows are start-major: row s*R + r."""
+    The character-level bookkeeping runs on the GPU; only rows that just finished a move go to python-chess.
+    -> continuation characters (S*R, n); ends (S*R, plies): where each ply's prompt ends, -1 = the start
+    prompt's last character, >= 0 = that index in the continuation, -2 = game stopped; the playing model's
+    {layer: (S*R, plies, d)} states there (zeros where ends == -2); illegal attempts.
+    Rows are start-major: row s*R + r."""
     x, plen = pad(prompts, dev)
-    boards = [b.copy() for b in boards for _ in range(R)]
-    B, Ls = len(boards), room(plies)
+    boards = [b.copy(stack=False) for b in boards for _ in range(R)]
+    B, Ls, M = len(boards), room(plies), MAX_MOVE_CHARS
     cache = Cache(model, len(prompts), R, x.shape[1], Ls, dev)
-    buf = torch.full((B, Ls), SPACE, dtype=torch.long, device=dev)
-    rows = torch.arange(B, device=dev)
     with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-        logits, _ = prefill(model, x, plen, cache)
-    ply_logits = logits.clone()                       # logits at the start of each row's current move (for retries)
-    ends = torch.full((B, plies), -2, dtype=torch.long)
+        logits, first = prefill(model, x, plen, cache, layers)
+    stepper = Stepper(model, cache, layers, dev, graphs)
+    rows = torch.arange(B, device=dev)
+    L_ = lambda: torch.zeros(B, dtype=torch.long, device=dev)
+    buf = torch.full((B, Ls), SPACE, dtype=torch.long, device=dev)
+    ends = torch.full((B, plies), -2, dtype=torch.long, device=dev)
     ends[:, 0] = -1
-    pos = [0] * B                                     # next continuation index to write
-    ply, tries, done = [0] * B, [0] * B, [False] * B
-    partial, queue = [[] for _ in range(B)], [[] for _ in range(B)]
+    pst = {L: torch.zeros((B, plies, v.shape[-1]), device=dev) for L, v in first.items()}
+    for L, v in first.items():
+        pst[L][:, 0] = v.repeat_interleave(R, 0)
+    ply_logits = logits.clone()                               # logits where each row's current move starts (retries)
+    pos, ply, tries, npart, qlen, qidx = L_(), L_(), L_(), L_(), L_(), L_()
+    pos_end = L_() - 1                                        # the current ply's prompt end
+    done = torch.zeros(B, dtype=torch.bool, device=dev)
+    part = torch.zeros((B, M), dtype=torch.long, device=dev)  # the move being written
+    qbuf = torch.zeros((B, 6), dtype=torch.long, device=dev)  # forced characters ' <n>.' still to feed
     fails = 0
 
     def sample(lg, empty):
         lg = lg / T
-        lg[:, BOS] = -float("inf")                    # never a new game mid-move
-        lg[empty, SPACE] = -float("inf")              # a move has at least one character
+        lg[:, BOS] = -float("inf")                            # never a new game mid-move
+        lg[:, SPACE] = torch.where(empty, -float("inf"), lg[:, SPACE])   # a move has at least one character
         return torch.multinomial(torch.softmax(lg, -1), 1, generator=gen).squeeze(1)
 
     while True:
-        empty = torch.tensor([not q for q in partial], device=dev)
-        nxt = sample(logits, empty).tolist()
-        feed, starting, retry = [SPACE] * B, [], []
-        for b in range(B):
-            if done[b]:
-                continue
-            if queue[b]:                              # forced move number ' <n>.'
-                feed[b] = queue[b].pop(0)
-                if not queue[b]:
-                    starting.append(b)
-                continue
-            c = nxt[b]
-            if c != SPACE and len(partial[b]) < MAX_MOVE_CHARS:
-                partial[b].append(c)
-                feed[b] = c
-                continue
-            mv = None
-            if c == SPACE:
-                try:
-                    mv = boards[b].parse_san("".join(VOCAB[i] for i in partial[b]))
-                except ValueError:
-                    pass
-            partial[b] = []
-            if mv is None:                            # illegal or too long: resample the move
-                fails += 1
-                tries[b] += 1
-                if tries[b] >= MAX_TRIES:
-                    done[b] = True
-                else:
-                    pos[b] = int(ends[b, ply[b]]) + 1
-                    retry.append(b)
-                continue
-            boards[b].push(mv)
-            tries[b] = 0
-            ply[b] += 1
-            if ply[b] >= plies or boards[b].is_game_over() or pos[b] + room(1) >= Ls:
-                done[b] = True
-                continue
-            if boards[b].turn == chess.WHITE:
-                queue[b] = encode(f"{boards[b].fullmove_number}.")
-            else:
-                starting.append(b)
-        if retry:
-            idx = torch.tensor(retry, device=dev)
-            first = sample(ply_logits[idx].clone(), torch.ones(len(retry), dtype=torch.bool, device=dev)).tolist()
-            for b, c in zip(retry, first):
-                partial[b] = [c]
-                feed[b] = c
-        for b in starting:
-            ends[b, ply[b]] = pos[b]
-        if all(done):
+        nxt = sample(logits, npart == 0)
+        live = ~done
+        forced = live & (qlen > 0)
+        samp = live & (qlen == 0)
+        cont = samp & (nxt != SPACE) & (npart < M)
+        comp = samp & ~cont                                   # a space (move written) or too long
+        feed = torch.where(forced, qbuf.gather(1, qidx[:, None]).squeeze(1), torch.full_like(nxt, SPACE))
+        feed = torch.where(cont, nxt, feed)
+        at = npart.clamp(max=M - 1)[:, None]
+        part.scatter_(1, at, torch.where(cont[:, None], nxt[:, None], part.gather(1, at)))
+        npart = npart + cont.long()
+        qidx, qlen = qidx + forced.long(), qlen - forced.long()
+        start = forced & (qlen == 0)                          # the last forced character is the prompt's end
+
+        ci = comp.nonzero().squeeze(1)
+        if len(ci):
+            info = torch.stack([nxt[ci], npart[ci], ply[ci], pos[ci], tries[ci]], 1).tolist()
+            chars = part[ci].tolist()
+            ok, stop, qn, qc, retry = [], [], [], [], []
+            for b, (c, n, p, ps, tr), ch in zip(ci.tolist(), info, chars):
+                mv = None
+                if c == SPACE:
+                    try:
+                        mv = boards[b].parse_san("".join(VOCAB[i] for i in ch[:n]))
+                    except ValueError:
+                        pass
+                if mv is None:
+                    fails += 1
+                    ok.append(False), stop.append(tr + 1 >= MAX_TRIES), qn.append(0), qc.append([0] * 6)
+                    if tr + 1 < MAX_TRIES:
+                        retry.append(b)
+                    continue
+                bd = boards[b]
+                bd.push(mv)
+                end = p + 1 >= plies or ps + room(1) >= Ls or over(bd)
+                q = encode(f"{bd.fullmove_number}.") if not end and bd.turn == chess.WHITE else []
+                ok.append(True), stop.append(end), qn.append(len(q)), qc.append(q + [0] * (6 - len(q)))
+            okm = torch.zeros(B, dtype=torch.bool, device=dev)
+            stm = torch.zeros(B, dtype=torch.bool, device=dev)
+            qnm = L_()
+            okm[ci] = torch.tensor(ok, device=dev)
+            stm[ci] = torch.tensor(stop, device=dev)
+            qnm[ci] = torch.tensor(qn, device=dev)
+            qbuf[ci] = torch.tensor(qc, dtype=torch.long, device=dev)
+            fail = comp & ~okm
+            ply = ply + okm.long()
+            tries = torch.where(okm, 0, tries + fail.long())
+            npart = torch.where(comp, 0, npart)
+            done = done | (comp & stm)
+            qlen = torch.where(okm, qnm, qlen)
+            qidx = torch.where(okm, 0, qidx)
+            start = start | (okm & ~stm & (qnm == 0))         # Black to move: the space fed now is the prompt's end
+            if retry:                                         # resample the move from where it starts
+                r = torch.tensor(retry, device=dev)
+                c = sample(ply_logits[r].clone(), torch.ones(len(retry), dtype=torch.bool, device=dev))
+                feed[r] = c
+                part[r, 0] = c
+                npart[r] = 1
+                pos[r] = pos_end[r] + 1
+        pk = ply.clamp(max=plies - 1)[:, None]
+        ends.scatter_(1, pk, torch.where(start[:, None], pos[:, None], ends.gather(1, pk)))
+        pos_end = torch.where(start, pos, pos_end)
+        if bool(done.all()):
             break
-        p = torch.tensor(pos, device=dev)
-        tok = torch.tensor(feed, device=dev)
-        buf[rows, p] = tok
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-            logits, _ = extend(model, tok[:, None], p[:, None], cache)
-        if starting:
-            s = torch.tensor(starting, device=dev)
-            ply_logits[s] = logits[s]
-        for b in range(B):
-            if not done[b]:
-                pos[b] += 1
-    return buf, ends, fails
+        p = pos.clamp(max=Ls - 1)
+        buf[rows, p] = feed
+        logits, out = stepper(feed[:, None], p[:, None])
+        ply_logits = torch.where(start[:, None], logits, ply_logits)
+        for L in pst:
+            pst[L][rows, pk[:, 0]] = torch.where(start[:, None], out[L][:, 0], pst[L][rows, pk[:, 0]])
+        pos = pos + live.long() * (~done).long()
+    return buf, ends, pst, fails
 
 
 @torch.no_grad()
@@ -258,8 +334,9 @@ def states(model, x, plen, R, buf, ends, layers, dev, chunk=32):
         _, first = prefill(model, x, plen, cache, layers)
         cont = {L: [] for L in layers}
         for c in range(0, n, chunk):
-            spos = torch.arange(c, min(n, c + chunk), device=dev).expand(B, -1)
-            _, st = extend(model, buf[:, c:c + spos.shape[1]], spos, cache, layers)
+            m = min(n, c + chunk)
+            spos = torch.arange(c, m, device=dev).expand(B, -1)
+            _, st = extend(model, buf[:, c:m], spos, cache, layers, Ls=m)
             for L in layers:
                 cont[L].append(st[L])
     e = ends.to(dev)
@@ -369,10 +446,14 @@ def rollout(a):
                 sans, _ = parse_movetext(corpus.text(f, g))
                 boards.append(ev.board_of(sans[:ply]))
                 prompts.append(corpus.ids(f, g, end + 1).tolist())
-            buf, ends, fails = play(pm, boards, prompts, R, a.plies, a.temperature, dev, gen)
-            valid = (ends >= -1).to(dev)
+            pi = info["models"].index(player)
+            mine = [L for m, L in sources if m == pi]
+            buf, ends, pst, fails = play(pm, boards, prompts, R, a.plies, a.temperature, dev, gen, mine,
+                                         graphs=not a.no_cuda_graphs)
+            valid = ends >= -1
             x, plen = pad(prompts, dev)
-            st = [states(m, x, plen, R, buf, ends, layers, dev) for m, _ in models]
+            st = [pst if m == pi else states(mm, x, plen, R, buf, ends, [L for k, L in sources if k == m], dev)
+                  for m, (mm, _) in enumerate(models)]
             xs = torch.stack([st[m][L] for m, L in sources], 2)          # (B, plies, sources, d)
             f, _, _ = cc.encode(xs.flatten(0, 1) * scales[None, :, None])
             act = (f > 0).view(len(buf), a.plies, -1)
@@ -593,6 +674,7 @@ def main():
             p.add_argument("--min-ply", type=int, default=10)
             p.add_argument("--batch", type=int, default=1024, help="rollouts played at once")
             p.add_argument("--save-every", type=int, default=100, help="batches between saves (a rerun resumes)")
+            p.add_argument("--no-cuda-graphs", action="store_true", help="decode eagerly (slower; for debugging)")
             p.add_argument("--seed", type=int, default=0)
         if cmd in ("graph", "all"):
             p.add_argument("--z", type=float, default=6.0)
