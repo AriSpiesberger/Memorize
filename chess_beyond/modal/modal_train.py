@@ -293,16 +293,17 @@ def stepsize(band: str = "1000-1300"):
 @app.local_entrypoint()
 def train_band(band: str = "1000-1300", name: str = "", steps: int = 0, lr: str = "", min_lr: str = "",
                patience: int = -1, eval_every: int = 1000, probe_every: int = 0, init: str = "",
-               min_epochs: float = -1):
+               min_epochs: float = -1, warmup: int = 0):
     """--name gives the run its own files (runs/transcend/pgn-<band><name>.pt); --steps sets the cosine
     schedule; --lr/--min-lr override 5e-5 -> 5e-6; --patience 0 never stops early (-1 = trainer default);
     --probe-every N takes the activation snapshot every N steps instead of at every eval;
     --init runs/transcend/<file>.pt starts from a finished run's weights (fresh optimizer, use a new --name);
-    --min-epochs sets when early stopping starts counting (-1 = trainer default, 1 epoch).
+    --min-epochs sets when early stopping starts counting (-1 = trainer default, 1 epoch);
+    --warmup sets the warmup steps (0 = trainer default, 2,000); early stopping never counts during it.
     The trainer refuses to start over a finished run's checkpoint."""
     extra = (["--steps", str(steps)] if steps else []) + (["--lr", lr] if lr else []) \
         + (["--min-lr", min_lr] if min_lr else []) + (["--patience", str(patience)] if patience >= 0 else []) \
         + (["--probe-every", str(probe_every)] if probe_every else []) + (["--init", init] if init else []) \
-        + (["--min-epochs", str(min_epochs)] if min_epochs >= 0 else [])
+        + (["--min-epochs", str(min_epochs)] if min_epochs >= 0 else []) + (["--warmup", str(warmup)] if warmup else [])
     call = train.spawn(band, eval_every=eval_every, name=name, micro=MICRO, compile_mode=COMPILE, extra=extra)
     print(f"training {band} on Modal ({call.object_id}); with --detach it runs on after this terminal closes")
