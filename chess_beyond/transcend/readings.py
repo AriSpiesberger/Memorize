@@ -233,6 +233,8 @@ def main():
             got = fn(lab, sgn)
             if got is not None:
                 vals.append(got[2])
+            print(f"\r    permutations {_ + 1}/{a.perms}", end="", flush=True)
+        print()
         vals = np.array(vals)
         return float(((vals >= stat).sum() + 1) / (len(vals) + 1)), vals
 
@@ -249,6 +251,7 @@ def main():
             "|---|---|---|---|---|---|---|"]
     for kind, fn in (("(1) readings", lp_readings), ("(2) contrast", lp_contrast)):
         for side, sgn in (("S", 1), ("W", -1)):
+            print(f"  {kind}, {side}'s side: fitting, then {a.perms} permutations", flush=True)
             got = fn(dis, sgn)
             if got is None:
                 out.append(f"| {kind} | {side} | no solution | | | | |")
