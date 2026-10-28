@@ -90,6 +90,8 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                        per cluster of --cluster-size roots whose rollouts diverge alike (cosine k-means on the
                        fit roots' d); soft margin: a share --nu of the roots may fall inside it. Dual simplex
                        (scipy's HiGHS): a vertex, so sparse.
+                       Deflation: up to --per-cluster concepts per cluster per side, each fitted after the
+                       previous ones' latents are taken out.
           2. merge     concepts matching at cosine >= --dedupe join one group (the members' mean).
           3. margin    the filter: on the selection roots, the concept's soft margin (the share --nu quantile
                        of v . d, what the LP maximised) must be > 0 and above the 95th percentile of
@@ -105,7 +107,10 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                        sides. Each S-vs-W concept is also scored on S - S2 on its roots: one that separates S from S
                        too is noise, and dropped.
           scoring      one rule everywhere: a concept's filter, threshold, execution and graph edges all use the
-                       same roots (its own clusters' with --local, all with --no-local).
+                       same roots (its own clusters' with --local, all with --no-local). --crossfit (default, with
+                       --local and >= 2 rollouts per model): a held-out root joins a cluster by the S - W of half its
+                       rollouts and is scored on the other half (as are its threshold, execution, graphs and control),
+                       so the noise that picks a concept's roots is independent of the noise it is graded on.
           4. graphs    three, over the same concepts (all that passed, S's and W's), on the replication roots,
                        ply-free: a rollout executes a concept when its aggregated score reaches the threshold
                        (halfway between the concept's mean on S's and on W's selection roots).
@@ -204,6 +209,37 @@ EXCL = {0: "not scored", 1: "confirmed", 2: "not confirmed", 3: "unconfirmed"}
 
 
 # ---------------------------------------------------------------- the crosscoder and the policies
+
+def compare(a):
+    """The settings side by side (every plans*.json of the run), ranked by the selection rule: the most concepts
+    passing for S against W beyond those passing for S against S (S-vs-S clearly lower), the graph controls next to
+    them. -> results/.../<run>/compare.md"""
+    out, res = dirs(a)
+    rows = []
+    for p in sorted(out.glob("plans*.json")):
+        r = json.loads(p.read_text(encoding="utf-8"))
+        f, g, st = r["funnel"], r["graph"], r["settings"]
+        c, gc = f.get("control") or {}, g.get("control") or {}
+        rows.append(dict(name=p.stem, sw=f["replicated"], ss=c.get("replicated", 0), nodes=sum(n["sig"] for n in g["nodes"]),
+                         nodes_c=gc.get("nodes", "-"), edges=len(g["diff"]), edges_c=gc.get("edges", "-"),
+                         bar=(c.get("calib") or {}).get("replicate"),
+                         how=", ".join(f"{k}={v}" for k, v in st.items() if k in ("local", "crossfit", "nu", "max_rate", "aggregate",
+                                                                                  "per_cluster", "calibrate"))))
+    rows.sort(key=lambda x: -(x["sw"] - x["ss"]))
+    lines_ = ["# Settings compared", "",
+              "Rule: the setting with the most concepts passing for S against W beyond those passing for S against S, with S "
+              "against S clearly lower; the graph-level controls (S against S) next to every graph count.", "",
+              "| setting | concepts: S vs W | S vs S | difference | control bar (replication) | G_diff nodes (control) | "
+              "G_diff edges (control) | settings |", "|---|---|---|---|---|---|---|---|"]
+    for x in rows:
+        lines_.append(f"| {x['name']} | {x['sw']} | {x['ss']} | {x['sw'] - x['ss']:+d} | "
+                      f"{'-' if x['bar'] is None else format(x['bar'], '.4f')} | {x['nodes']} ({x['nodes_c']}) | "
+                      f"{x['edges']} ({x['edges_c']}) | {x['how']} |")
+    res.mkdir(parents=True, exist_ok=True)
+    (res / "compare.md").write_text("\n".join(lines_) + "\n", encoding="utf-8")
+    print("\n".join(lines_))
+    print(f"wrote {res / 'compare.md'}")
+
 
 def load_cc(cc_run, cc, strong, dev):
     """The crosscoder, its (model, layer) sources and scales, which model is S (its name contains
@@ -901,7 +937,7 @@ def line_states(model, seqs, ends, layer, dev, max_tokens):
 
 def dirs(a):
     """This crosscoder's run folder (runs/transcend/graphdiff/<run>) and results folder."""
-    name = f"{Path(a.cc_run).name}-{a.cc.removeprefix('cc-')}"
+    name = a.name or f"{Path(a.cc_run).name}-{a.cc.removeprefix('cc-')}"
     return RUNS / name, RESULTS / name
 
 
@@ -1862,6 +1898,23 @@ def maxmin(job):
     return key, (cols[nz], w[nz], float(r.x[kk]), float(np.mean(D @ w > 0)))
 
 
+def maxmin_many(job):
+    """Up to n concepts from one cluster (deflation): fit the LP, take its latents out, fit again on the rest.
+    -> [(key + (i,), result)]."""
+    key, D, cols, nu, signed, n = job
+    out, left = [], np.ones(len(cols), bool)
+    for i in range(n):
+        sub = np.flatnonzero(left)
+        if not len(sub):
+            break
+        _, r = maxmin((key, D[:, sub], cols[sub], nu, signed))
+        if r is None or r[2] <= 1e-9 or not len(r[0]):
+            break
+        out.append(((*key, i), r))
+        left &= ~np.isin(cols, r[0])
+    return out
+
+
 def kmeans(X, K, seed, iters=25):
     """Cosine k-means on the rows of X (dense torch) -> cluster of each row, and the unit centroids."""
     X = X / X.norm(dim=1, keepdim=True).clamp_min(1e-9)
@@ -2033,15 +2086,17 @@ def local_margins(D, Wm, sign, masks, nu, chunk=2048):
     return m, share
 
 
-def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None):
+def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None, D_assign=None, D_score=None):
     """Fit, merge and filter concepts on D (roots x features): the max-min LP per cluster of roots whose
     differences look alike, once per side (v >= 0 on D and on -D); concepts matching at cosine >= --dedupe
     merged; then the margin filter on the selection and the replication roots, each concept scored on the roots
     of its own clusters (held-out roots join their nearest cluster centroid), against rate-matched random
-    concepts scored on the same roots; with calib ({split: margin}), also above that bar (set by the S-vs-S control)."""
+    concepts scored on the same roots; with calib ({split: margin}), also above that bar (set by the S-vs-S control).
+    Cross-fitting: held-out roots join a cluster by D_assign (from some of their rollouts) and are scored on D_score
+    (from the others), so the noise that picks a concept's roots isn't the noise it is graded on."""
     fit_rows = np.flatnonzero(psplit == 0)
-    Xd = torch.from_numpy(D.toarray()).float().to(dev)
-    lab, cent = kmeans(Xd[torch.from_numpy(fit_rows).to(dev)], max(1, round(len(fit_rows) / a.cluster_size)), a.seed)
+    Xd = torch.from_numpy((D if D_assign is None else D_assign).toarray()).float().to(dev)
+    lab, cent = kmeans(torch.from_numpy(D[fit_rows].toarray()).float().to(dev), max(1, round(len(fit_rows) / a.cluster_size)), a.seed)
     assign = (Xd / Xd.norm(dim=1, keepdim=True).clamp_min(1e-9) @ cent.T).argmax(1).cpu().numpy()
     assign[fit_rows] = lab
     del Xd
@@ -2054,14 +2109,15 @@ def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None):
             Dr = D[rows] * sign_
             cols = np.unique(Dr.indices)
             if len(cols):
-                jobs.append((("cluster", k, sign_), Dr[:, cols].tocsc().tocsr(), cols, a.nu, False))
-    print(f"  {tag_}fitting {len(jobs)} LPs ({len(cent)} clusters x S's and W's concepts), {a.workers} workers", flush=True)
+                jobs.append((("cluster", k, sign_), Dr[:, cols].tocsc().tocsr(), cols, a.nu, False, a.per_cluster))
+    print(f"  {tag_}fitting {len(cent)} clusters x S's and W's concepts, up to {a.per_cluster} each (deflation), "
+          f"{a.workers} workers", flush=True)
     temps, t0 = [], time.time()
     with Pool(a.workers) as pool:
-        for d_, (key, r) in enumerate(pool.imap_unordered(maxmin, jobs, chunksize=4), 1):
-            if r is not None and r[2] > 1e-9 and len(r[0]):
+        for d_, found_ in enumerate(pool.imap_unordered(maxmin_many, jobs, chunksize=1), 1):
+            for key, r in found_:
                 temps.append(dict(key=key, sign=key[2], cols=r[0], w=r[1], m=r[2], sep=r[3]))
-            if d_ % 50 == 0 or d_ == len(jobs):
+            if d_ % 10 == 0 or d_ == len(jobs):
                 print(f"\r  {d_}/{len(jobs)} LPs, {len(temps)} concepts with a positive margin, {time.time() - t0:.0f}s",
                       end="", flush=True)
     print()
@@ -2090,8 +2146,9 @@ def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None):
     for nm, s_ in (("select", 1), ("replicate", 2)):
         rows = np.flatnonzero(psplit == s_)
         mk = [np.isin(assign[rows], o) if a.local else np.ones(len(rows), bool) for o in own]
-        m, share = local_margins(D[rows], Wm, sign, mk, a.nu)
-        mn, _ = local_margins(D[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
+        Ds = D if D_score is None else D_score
+        m, share = local_margins(Ds[rows], Wm, sign, mk, a.nu)
+        mn, _ = local_margins(Ds[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
         mn = mn.reshape(len(templates), a.null_templates)
         n95 = np.quantile(mn, 0.95, axis=1)
         used = np.array([x.sum() for x in mk])
@@ -2247,10 +2304,24 @@ def plans(a):
     if zero.any():
         psplit = np.where(zero, -1, psplit)
     k_ = len(by[(rr[0], "S")]) if len(rr) else 0
+    # cross-fitting (local scoring with >= 2 rollouts per model): rollouts 1..k/2 assign a held-out root to a cluster,
+    # the rest score it, and everything scored on those roots (threshold, execution, graphs, control) uses the rest
+    halves = None
+    if a.local and a.crossfit and k_ >= 2:
+        halves = []
+        for h in (0, 1):
+            m_ = {}
+            for kind in mean:
+                rows_ = [(q, g) for g, ri in enumerate(rr) for j, q in enumerate(by[(ri, kind)]) if (j < k_ // 2) == (h == 0)]
+                m_[kind] = per_root(X[[q for q, _ in rows_]], [g for _, g in rows_], len(rr))
+            halves.append(m_)
+    msc = halves[1] if halves else mean                                 # the means everything is scored on
+    cross = (lambda x, y: dict(D_assign=(halves[0][x] - halves[0][y]).tocsr(), D_score=(halves[1][x] - halves[1][y]).tocsr())) \
+        if halves else (lambda x, y: {})
     print(f"concepts{sfx}: {len(rr)} roots, {k_} rollouts per model each ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}"
           f"{f', {zero.sum()} with identical rollouts left out' if zero.any() else ''}); {keep.sum()} candidate latents "
           f"(firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions); plies: {a.sum_plies}; aggregate: {a.aggregate}; "
-          f"scoring: {'local (own clusters)' if a.local else 'global'}{'; control: S against a second set of S rollouts' if control else ''}",
+          f"scoring: {'local (own clusters)' if a.local else 'global'}{', cross-fitted' if a.local and a.crossfit else ''}{'; control: S against a second set of S rollouts' if control else ''}",
           flush=True)
 
     # the S-vs-S control goes first: the identical pipeline (clusters, fitting, scoring) on S - S2. With --calibrate
@@ -2259,7 +2330,7 @@ def plans(a):
     calib, cf = None, None
     if control:
         Dc = (mean["S"] - mean["S2"]).tocsr()
-        cf = discover(Dc, psplit, keep, rate, nlat, F, a, dev, tag_="control (S against S): ")
+        cf = discover(Dc, psplit, keep, rate, nlat, F, a, dev, tag_="control (S against S): ", **cross("S", "S2"))
         if a.calibrate and cf["templates"]:
             calib = {}
             for nm in ("select", "replicate"):
@@ -2268,7 +2339,7 @@ def plans(a):
                 calib[nm] = float(np.quantile(m_, 0.95)) if len(m_) else 0.0
             print(f"  the bar the control sets: soft margin above {calib['select']:.4f} (selection), {calib['replicate']:.4f} "
                   f"(replication)", flush=True)
-    found = discover(D, psplit, keep, rate, nlat, F, a, dev, calib=calib)
+    found = discover(D, psplit, keep, rate, nlat, F, a, dev, calib=calib, **cross("S", "W"))
     templates, sign, groups, stats = found["templates"], found["sign"], found["groups"], found["stats"]
     if not templates:
         sys.exit("no concept has a positive margin: larger clusters (--cluster-size) or a larger --nu")
@@ -2295,8 +2366,9 @@ def plans(a):
         nsign = np.repeat(sign, a.null_templates)
         for nm in ("select", "replicate"):
             rows, mk = found["masks"][nm]
-            m, _ = local_margins(Dc[rows], Wm, sign, mk, a.nu)
-            mn, _ = local_margins(Dc[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
+            Dcs = (msc["S"] - msc["S2"]).tocsr()
+            m, _ = local_margins(Dcs[rows], Wm, sign, mk, a.nu)
+            mn, _ = local_margins(Dcs[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
             n95 = np.quantile(mn.reshape(len(templates), a.null_templates), 0.95, axis=1)
             ctrl[nm] = dict(margin=m, null95=n95, passed=(m > 0) & (m > n95) & (m > (calib or {}).get(nm, -np.inf)))
         ctrl_both = ctrl["select"]["passed"] & ctrl["replicate"]["passed"]
@@ -2310,12 +2382,12 @@ def plans(a):
     rep_rows, mk_rep = found["masks"]["replicate"]
     MS, MR = np.stack(mk_sel, 1), np.stack(mk_rep, 1)
     dense = lambda Y: np.asarray(Y.todense()) if sparse.issparse(Y) else np.asarray(Y)
-    sS, sW = dense(mean["S"][sel_rows] @ Wm), dense(mean["W"][sel_rows] @ Wm)
+    sS, sW = dense(msc["S"][sel_rows] @ Wm), dense(msc["W"][sel_rows] @ Wm)
     tau = ((sS * MS).sum(0) + (sW * MS).sum(0)) / 2 / np.maximum(MS.sum(0), 1)
     droots = rr[rep_rows]
     band = np.array([roots[ri]["band"] for ri in droots])
-    xS = (dense(mean["S"][rep_rows] @ Wm) >= tau) & MR
-    xW = (dense(mean["W"][rep_rows] @ Wm) >= tau) & MR
+    xS = (dense(msc["S"][rep_rows] @ Wm) >= tau) & MR
+    xW = (dense(msc["W"][rep_rows] @ Wm) >= tau) & MR
     b, c, _ = mcnemar(xS, xW)
 
     # three graphs over the same concepts (every one that passed, S's and W's together), on the replication roots,
@@ -2331,8 +2403,9 @@ def plans(a):
     Wo, tau_o = Wm[:, order], tau[order]
     kinds = ("S", "W") + (("S2",) if control else ())
     nk = {ri: min(len(by[(ri, k)]) for k in kinds) for ri in droots}
-    rows = {k: [by[(ri, k)][j] for ri in droots for j in range(nk[ri])] for k in kinds}
-    grp = np.array([g for g, ri in enumerate(droots) for _ in range(nk[ri])])
+    j0 = k_ // 2 if halves else 0                                      # cross-fitting: the scoring half only
+    rows = {k: [by[(ri, k)][j] for ri in droots for j in range(j0, nk[ri])] for k in kinds}
+    grp = np.array([g for g, ri in enumerate(droots) for _ in range(j0, nk[ri])])
     member = MR[grp][:, order] if len(grp) else np.zeros((0, len(order)), bool)
     ex_ = {k: (dense(X[rows[k]] @ Wo) >= tau_o) & member for k in kinds}           # (rollouts, concepts)
     graphs = dict(nodes=[], S=[], W=[], diff=[], control=None)
@@ -2367,7 +2440,7 @@ def plans(a):
         graphs["tested"] = tested
         if control:
             Ec = cooc(ex_["S"], ex_["S2"], member, grp, a, dev)
-            xS2 = (dense(mean["S2"][rep_rows] @ Wm) >= tau) & MR
+            xS2 = (dense(msc["S2"][rep_rows] @ Wm) >= tau) & MR
             _, _, pc = mcnemar(xS[:, order], xS2[:, order])
             graphs["control"] = dict(nodes=int(bh(pc, a.fdr)[1].sum()), edges=len(edges(Ec, "diff")[0]))
         print(f"  graphs on {len(droots)} replication roots ({len(grp)} rollouts each side), {len(order)} concepts: "
@@ -2410,7 +2483,8 @@ def plans(a):
                                       for n in sorted(set(band))}))
         recs.append(r)
     rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate",
-                                                    "local", "calibrate", "null_templates", "max_plans", "tag")},
+                                                    "local", "crossfit", "calibrate", "per_cluster", "null_templates", "max_plans",
+                                                    "tag")},
                funnel=dict(roots=len(rr), rollouts=k_, identical=int(zero.sum()), fit_roots=int((psplit == 0).sum()),
                            select_roots=stats["select"]["roots"], replicate_roots=stats["replicate"]["roots"],
                            lps=found["lps"], clusters=found["clusters"], templates=len(found["temps"]), merged=len(templates),
@@ -2463,11 +2537,13 @@ def plans_text(rec, a):
            f"{f['select_roots']} to select, {f['replicate_roots']} to replicate (different games)"
            + (f"; {f['identical']} with identical S and W rollouts left out" if f.get("identical") else "") + ". "
            "Concepts are fitted, filtered and compared on the crosscoder's latents alone, each scored (filter, threshold, "
-           "execution and graphs alike) " + ("on the held-out roots of its own clusters (nearest centroid)." if a.local
-                                              else "on all held-out roots.")
+           "execution and graphs alike) " + (("on the held-out roots of its own clusters (nearest centroid"
+                                               + ("; cross-fitted: half of each root's rollouts assign it, the other half "
+                                                  "score it" if a.crossfit else "") + ").") if a.local else "on all held-out roots.")
            + f" Latents firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions; aggregate: {a.aggregate}.", "",
            "| step | S against W | control: S against S |", "|---|---|---|",
-           f"| LPs fitted ({f['clusters']} clusters of ~{a.cluster_size} roots, S's and W's concepts) | {f['lps']} | |",
+           f"| LP fits ({f['clusters']} clusters of ~{a.cluster_size} roots x S's and W's concepts, up to {a.per_cluster} each) | "
+           f"{f['lps']} | |",
            f"| concepts with a positive margin | {f['templates']} | |",
            f"| after merging similar ones | {f['merged']} | {ctl['templates'] if ctl else '-'} |",
            *([f"| the bar set by the control: soft margin above its concepts' 95th percentile | "
@@ -2617,7 +2693,8 @@ net.on("click", ev => {{
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["health", "recall", "lines", "roots", "play", "gather", "judge", "encode", "nodes",
-                                        "graph", "plans", "all"])
+                                        "graph", "plans", "compare", "all"])
+    ap.add_argument("--name", default=None, help="the run folder's name (default <crosscoder run>-<layer>), e.g. for a second set of rollouts")
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run (one layer per model), e.g. Lfinal or L15")
     ap.add_argument("--strong", default="2400", help="a part of the strong model's name (S); the other is W")
@@ -2684,6 +2761,10 @@ def main():
     g.add_argument("--cluster-size", type=int, default=100, help="roots per cluster (k-means on the roots' S - W differences)")
     g.add_argument("--min-concept-roots", type=int, default=15,
                    help="held-out roots a concept must be scored on (its clusters' roots with --local) to pass")
+    g.add_argument("--per-cluster", type=int, default=3,
+                   help="concepts per cluster per side (deflation: each fit's latents taken out before the next)")
+    g.add_argument("--crossfit", action=argparse.BooleanOptionalAction, default=True,
+                   help="local scoring: assign held-out roots to clusters from half their rollouts, score on the other half")
     g.add_argument("--calibrate", action=argparse.BooleanOptionalAction, default=True,
                    help="the S-vs-S control's concepts set the bar: a concept must beat the 95th percentile of their margins")
     g.add_argument("--tag", default="", help="suffix for plans' outputs (plans-<tag>.md/json/html), to compare settings")
@@ -2699,7 +2780,7 @@ def main():
     g.add_argument("--show-examples", type=int, default=60, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
     steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
-                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans)
+                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare)
     for name in (["health", "recall", "lines", "plans", "nodes", "graph"] if a.command == "all" else [a.command]):
         print(f"\n=== {name}", flush=True)
         steps[name](a)
