@@ -3051,7 +3051,8 @@ const line = x => x.sans.map((m, i) => {
 const roll = x => `<div class="ex"><div class="ln">${line(x)}</div><a target="_blank" href="${x.link}">step through on Lichess</a></div>`;
 // one row per starting position: the same model's rollouts from it that carry the concept out and that don't
 function rows(g, who) {
-  const P = g[who].present, A = g[who].absent;
+  const pairs = g[who].present.map((p, i) => [p, g[who].absent[i]]).filter(([p, a]) => a && a.fen === p.fen);   // the same position only
+  const P = pairs.map(x => x[0]), A = pairs.map(x => x[1]);
   if (!P.length) return `<p>no starting position where one model carries it out and the other doesn't</p>`;
   return `<table class="g"><tr><th>starting position</th><th>the ${NM[who]} model carrying it out</th><th>the ${NM[who === "S" ? "W" : "S"]} model from the same position, not carrying it out</th></tr>` +
     P.map((p, i) => `<tr><td>${board(p.fen, null, "sm")}<div style="color:#667">${p.band} game</div></td><td>${roll(p)}</td><td>${A[i] ? roll(A[i]) : "-"}</td></tr>`).join("") + "</table>";
