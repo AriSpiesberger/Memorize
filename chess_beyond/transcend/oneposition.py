@@ -475,7 +475,9 @@ def main():
     for c in c1:
         fire = carrying(X1, np.array(c["latents"]), med1)
         c["spread"] = spread(D1, w1, fire, Ps[0], np.array(c["latents"]), a.plies, fens1, rng, a.null_sets)
-        c["plan"] = not c["spread"]["branch"] and not c["spread"]["branch_boards"]
+        c["early"] = (c["spread"]["onset"] or 0) <= 1                  # firing from the first ply: no route to compare
+        c["plan"] = not c["early"] and not c["spread"]["branch"] and not c["spread"]["branch_boards"]
+        c["verdict"] = "from ply 1 (untestable)" if c["early"] else "candidate" if c["plan"] else "branch"
         ph = sorted(((wphi(fire, m, w1), nm) for nm, m in splits.items()), key=lambda x: -abs(x[0]))
         c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ splits[nm][fire] / max(w1[fire].sum(), 1e-12)),
                             other=float(w1[~fire] @ splits[nm][~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
@@ -500,7 +502,7 @@ def main():
         out.append(f"| {c['name']} | {', '.join(map(str, c['latents']))} | {c['r']:.2f} | {c['share']:.0%} | "
                    f"{'yes' if c['replicated'] else 'no'} ({c['match']['jaccard']:.2f}, {c['match']['shared']}) | "
                    f"{sp['onset'] if sp['onset'] else '-'} | {sp['effective']:.1f} ({sp['null5']:.1f}) | "
-                   f"{sp['boards_eff']:.1f} ({sp['null5_boards']:.1f}) | {'candidate' if c['plan'] else 'branch'} | "
+                   f"{sp['boards_eff']:.1f} ({sp['null5_boards']:.1f}) | {c['verdict']} | "
                    + (f"{bs['split']} ({bs['phi']:+.2f}): {bs['carrying']:.0%} / {bs['other']:.0%}" if bs else "-") + " |")
     out += ["", f"{len(splits)} board splits tested (each in 5-95% of the rollouts).", ""]
     for c in sorted(rk, key=lambda c: not c["plan"]):                 # step 7, candidate plans first
@@ -510,7 +512,7 @@ def main():
         yes = [i for i in np.argsort(-dens) if fire[i]][:3]
         no = [i for i in np.argsort(dens) if not fire[i]][:3]
         sp = c["spread"]
-        out += [f"### Concept {c['name']} ({'candidate' if c['plan'] else 'branch'}): latents {', '.join(map(str, c['latents']))}; "
+        out += [f"### Concept {c['name']} ({c['verdict']}): latents {', '.join(map(str, c['latents']))}; "
                 f"carried by {c['share']:.0%} of the rollouts, its latents starting at ply {sp['onset']}: {sp['effective']:.1f} "
                 f"effective routes (random lines: {sp['null5']:.1f} at the 5th percentile), {sp['boards_eff']:.1f} effective boards "
                 f"({sp['null5_boards']:.1f})", ""]
