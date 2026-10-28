@@ -2333,6 +2333,47 @@ def structure(e, grp, a):
                 within=int(s_w.sum()), within_pos=int((s_w & (r_w > 0)).sum()), rollouts=int(cnt.mean()) if G else 0)
 
 
+def concept_chains(order, templates, ex_, rows, C, nlat, T, most=5, share=0.1):
+    """Each concept as a directed chain through its heaviest latents (at most `most`, each >= `share` of its largest
+    weight), per model: in the rollouts of that model that carry the concept out, the latents in the order they first
+    fire (mean first ply), each link with the share of those rollouts in which its first latent fires before its
+    second (ties count half). The concept is still ply-free; only the order of its latents comes from the rollouts."""
+    out = {}
+    for k, g in enumerate(order):
+        cols, w = templates[g]
+        j_all, w_all = cols % nlat, np.abs(w)
+        top, seen = [], set()
+        for i in np.argsort(-w_all):
+            if w_all[i] < share * w_all.max() or len(top) >= most:
+                break
+            if int(j_all[i]) not in seen:
+                seen.add(int(j_all[i]))
+                top.append(int(j_all[i]))
+        rec = {}
+        for kind in ("S", "W"):
+            lines = np.array(rows[kind])[ex_[kind][:, k]]
+            if len(lines) < 5 or len(top) < 2:
+                continue
+            M = C[lines]
+            first = np.full((len(lines), len(top)), np.nan)
+            for c_, j in enumerate(top):
+                fired = M[:, [t * nlat + j for t in range(1, T + 1)]].toarray() > 0
+                any_ = fired.any(1)
+                first[any_, c_] = fired[any_].argmax(1) + 1
+            mean_first = np.nanmean(np.where(np.isnan(first), np.nan, first), 0)
+            fires = (~np.isnan(first)).mean(0)
+            o = [c_ for c_ in np.argsort(np.nan_to_num(mean_first, nan=1e9)) if fires[c_] > 0]
+            links = []
+            for x, y in zip(o, o[1:]):
+                both = ~np.isnan(first[:, x]) & ~np.isnan(first[:, y])
+                prec = float(((first[both, x] < first[both, y]) + 0.5 * (first[both, x] == first[both, y])).mean()) if both.any() else 0.5
+                links.append(dict(a=top[x], b=top[y], before=prec, both=int(both.sum())))
+            rec[kind] = dict(chain=[dict(latent=top[c_], first=float(mean_first[c_]), fires=float(fires[c_])) for c_ in o],
+                             links=links, rollouts=int(len(lines)))
+        out[str(int(g))] = rec
+    return out
+
+
 def cooc(E1, E2, M, groups, a, dev):
     """Co-execution lifts of every pair of concepts in two sets of rollouts from the same roots (E: rollouts x
     concepts, executed; M: where each concept is scored, so a pair counts only the rollouts where both are), with
@@ -2554,6 +2595,8 @@ def plans(a):
     # is clearly present and clearly absent), and the same for a random concept, for a blind check
     examples = (concept_examples(order, templates, found["nulls"], Wo, member, grp, rows, droots, X, C, nlat, nf, a, Ld, by, F)
                 if len(order) and len(grp) else {})
+    if len(order) and len(grp):
+        graphs["chains"] = concept_chains(order, templates, ex_, rows, C, nlat, T)
 
     # each concept as a direction in each model's own activation space (for steering): u_m = sum_j v_j d_j^m, with v
     # undone of the latents' scaling and the crosscoder's input scale
@@ -2816,8 +2859,9 @@ border-right:1px solid #ccc}.panel h3{margin:6px 10px;height:24px}.net{position:
 <div class="panel"><h3>2400+ model (S)</h3><div id="netS" class="net"></div></div></div>
 <div id="card"><b>__NAME__</b>: the same crosscoder latents in both graphs (green: the latent's decoder leans to S, orange: to W, grey: shared;
 size: its weight across the concepts). Each concept that passed the margin filter joins its heaviest latents, in its own colour, in both
-graphs; an edge's width is how often that model's rollouts execute the concept (solid where that model executes it significantly more,
-dashed otherwise). Click an edge for the concept's rollouts, a latent for the concepts that use it.</div>
+graphs, as a directed chain: its latents in the order they first fire in that model's rollouts that carry it out (the order can differ
+between the models). An edge's width is how often that model's rollouts execute the concept (solid where that model executes it
+significantly more, dashed otherwise). Click an edge for the concept's rollouts, a latent for the concepts that use it.</div>
 <script>__BOARD_JS__
 const D = __DATA__;
 const C = {}; for (const c of D.concepts) C[c.id] = c;
@@ -2829,10 +2873,13 @@ function edges(who) {
   const out = [];
   for (const c of D.concepts) {
     const rate = who === "S" ? c.rate_S : c.rate_W, more = c.sig && (who === "S" ? c.rate_S > c.rate_W : c.rate_W > c.rate_S);
-    for (const [a, b] of c.pairs) out.push({from: a, to: b, concept: c.id, width: 1 + 10 * rate, dashes: !more,
-      color: {color: `hsl(${hue(c.id)},70%,45%)`, opacity: more ? 0.95 : 0.45},
+    const ch = c.chains && c.chains[who];
+    const links = ch ? ch.links.map(l => [l.a, l.b, l]) : c.pairs.map(([a, b]) => [a, b, null]);
+    for (const [a, b, l] of links) out.push({from: a, to: b, concept: c.id, width: 1 + 10 * rate, dashes: !more,
+      arrows: l ? "to" : undefined, color: {color: `hsl(${hue(c.id)},70%,45%)`, opacity: more ? 0.95 : 0.45},
       title: `concept ${c.id} (${c.side}'s): executed by ${(100 * rate).toFixed(0)}% of this model's rollouts ` +
-             `(S ${(100 * c.rate_S).toFixed(0)}%, W ${(100 * c.rate_W).toFixed(0)}%${c.sig ? `, q ${c.q.toPrecision(2)}` : ""})`});
+             `(S ${(100 * c.rate_S).toFixed(0)}%, W ${(100 * c.rate_W).toFixed(0)}%${c.sig ? `, q ${c.q.toPrecision(2)}` : ""})` +
+             (l ? `; latent ${l.a} fires before ${l.b} in ${(100 * l.before).toFixed(0)}% of the ${l.both} rollouts carrying it out where both fire` : "")});
   }
   return out;
 }
@@ -2858,7 +2905,9 @@ function concept(id) {
   const c = C[id], X = D.examples[id];
   let h = `<h3>concept ${c.id} (${c.side}'s)</h3><div>executed by ${(100 * c.rate_S).toFixed(0)}% of S's rollouts, ${(100 * c.rate_W).toFixed(0)}% of W's
     ${c.sig ? `(different: roots S not W ${c.S_not_W}, W not S ${c.W_not_S}, q ${c.q.toPrecision(2)})` : "(not significantly different)"}</div>
-    <div>latents: ${c.latents.map(l => `${l.latent} (${l.weight.toFixed(2)})`).join(", ")}</div>`;
+    <div>latents: ${c.latents.map(l => `${l.latent} (${l.weight.toFixed(2)})`).join(", ")}</div>` +
+    ["W", "S"].map(k => c.chains && c.chains[k] ? `<div>order in ${k === "S" ? "2400+" : "1000-1300"}'s rollouts carrying it out: ` +
+      c.chains[k].chain.map(x => `${x.latent} (ply ${x.first.toFixed(1)})`).join(" &rarr; ") + "</div>" : "").join("");
   if (X) h += `<h4>rollouts (replication roots)</h4>${grid(X.real)}<p><button id="blind">blind check: this concept against a random one</button></p><div id="blindout"></div>`;
   document.getElementById("card").innerHTML = h;
   if (X) document.getElementById("blind").onclick = () => {
@@ -2884,11 +2933,13 @@ netW.on("click", click(netW));
 
 def latent_page(path, name, rec, r, most=5, share=0.1):
     """<plans>-latents.html: two graphs side by side, the 1000-1300 model's and the 2400+ model's, over the same nodes:
-    the crosscoder latents the passing concepts are made of. Each concept joins its heaviest latents (at most `most`,
-    each >= `share` of its largest weight) with edges in its own colour; an edge's width is how often that model's
-    rollouts execute the concept (the concept graph's execution rates)."""
+    the crosscoder latents the passing concepts are made of. Each concept is a directed chain through its heaviest
+    latents, in the order they fire in that model's rollouts carrying it out (concept_chains; an undirected clique for
+    results made before chains existed), in its own colour; an edge's width is how often that model's rollouts execute
+    the concept."""
     nodes = {n["id"]: n for n in rec["graph"]["nodes"]}
     plans_ = {p["id"]: p for p in rec["plans"]}
+    chains = rec["graph"].get("chains", {})
     concepts, lat = [], {}
     for cid, n in nodes.items():
         feats = sorted(plans_[cid]["features"], key=lambda f: -abs(f["weight"]))
@@ -2900,7 +2951,7 @@ def latent_page(path, name, rec, r, most=5, share=0.1):
             x["concepts"].append(cid)
         concepts.append(dict(id=cid, side=n["side"], rate_S=n["rate_S"], rate_W=n["rate_W"], sig=n["sig"], q=n["q"],
                              S_not_W=n["S_not_W"], W_not_S=n["W_not_S"],
-                             latents=[dict(latent=f["latent"], weight=f["weight"]) for f in top],
+                             latents=[dict(latent=f["latent"], weight=f["weight"]) for f in top], chains=chains.get(str(cid)),
                              pairs=[(ids[i], ids[j]) for i in range(len(ids)) for j in range(i + 1, len(ids))]))
     data = dict(concepts=concepts, latents=list(lat.values()), examples=rec.get("examples", {}))
     page_ = (LATENT_PAGE.replace("__DATA__", json.dumps(data, default=float).replace("</", "<\\/"))
