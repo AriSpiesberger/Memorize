@@ -283,14 +283,14 @@ def policy(model, boards, dev, prompts=None, grab=(), layer=None, repl=None, bat
         R = max(1, max(len(legal[i]) for i in idx))
         x, plen = pad([ids[i] for i in idx], dev)
         cache = Cache(model, len(idx), R, x.shape[1], n, dev)
-        c = torch.full((len(idx) * R, n + 1), SPACE, dtype=torch.long)
-        clen = torch.ones(len(idx) * R, dtype=torch.long)
+        c = np.full((len(idx) * R, n + 1), SPACE, dtype=np.int64)
+        clen = np.ones(len(idx) * R, dtype=np.int64)
         for j, i in enumerate(idx):
             for r, mv in enumerate(legal[i]):
                 t = encode(boards[i].san(mv) + " ")
-                c[j * R + r, :len(t)] = torch.tensor(t)
+                c[j * R + r, :len(t)] = t
                 clen[j * R + r] = len(t)
-        c, clen = c.to(dev), clen.to(dev)
+        c, clen = torch.from_numpy(c).to(dev), torch.from_numpy(clen).to(dev)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
             first, st = prefill_at(model, x, plen, cache, grab, layer, None if repl is None else repl[idx].to(dev))
             _, out = extend(model, c[:, :n], torch.arange(n, device=dev).expand(len(c), n), cache, ("final",), Ls=n)

@@ -12,12 +12,15 @@ Stages (graphdiff.py's commands; --stages takes a comma-separated list, "lines" 
 judge, encode):
   health, recall   one GPU container each
   roots            one GPU container: candidates and both models' policies at them
-  play             --play-parts GPU containers, each playing the lines of its share of the roots
+  play             --play-parts GPU containers, each running CHESS_PLAY_PROCS play processes side by side (playing
+                   is bound by python-chess on the CPU, so one process leaves the GPU mostly idle), each process
+                   the lines of its share of the roots
   gather           the play parts -> lines.json (CPU)
   judge            --judge-parts CPU containers of CHESS_JUDGE_CPU cores, each running Stockfish on its share
                    of the positions (the part files survive a rerun, so a failed part is redone alone)
   encode           one GPU container: both models' states, the crosscoder codes
-  nodes, plans     CPU (plans fits its LPs on CHESS_PLANS_CPU cores)
+  nodes, plans     CPU (plans fits its LPs on CHESS_PLANS_CPU cores); plans needs only the encoded lines, so it
+                   runs alongside nodes and graph
   graph            one GPU container (the bootstraps)
 --extra passes more flags to every stage (e.g. "--roots 8000 --plies 10"); --cc / --cc-run pick the crosscoder.
 
@@ -45,6 +48,7 @@ RUNS, RESULTS = f"{REMOTE}/runs", f"{REMOTE}/results"
 GPU = os.environ.get("CHESS_GPU", "L40S")             # small models, Python-bound decoding: a big GPU buys little
 JUDGE_CPU = int(os.environ.get("CHESS_JUDGE_CPU", "8"))
 PLANS_CPU = int(os.environ.get("CHESS_PLANS_CPU", "32"))
+PLAY_PROCS = int(os.environ.get("CHESS_PLAY_PROCS", "4"))   # play processes per GPU container
 SF11 = "/usr/local/bin/stockfish11"
 CC_RUN, CC = "runs/transcend/crosscoder/everything-3m", "Lfinal"
 POPULATION = f"{DATA}/graphdiff/population.jsonl"     # the roots' held-out positions, as uploaded from this machine
@@ -84,6 +88,21 @@ def gpu_stage(stage, args):
     run(stage, args, 16, "cuda")
 
 
+@app.function(image=image, gpu=GPU, cpu=16.0, memory=64 * 1024, volumes=VOLUMES, secrets=SECRETS, timeout=8 * 60 * 60)
+def play_group(arglists):
+    """Several play parts side by side on one GPU, each with its share of the CPU threads."""
+    for v in (data, runs, results):
+        v.reload()
+    threads = str(max(1, 16 // len(arglists)))
+    env = dict(os.environ, OMP_NUM_THREADS=threads, MKL_NUM_THREADS=threads)
+    procs = [subprocess.Popen([sys.executable, "transcend/graphdiff.py", "play", *args, "--device", "cuda"], cwd=REMOTE, env=env)
+             for args in arglists]
+    codes = [p.wait() for p in procs]
+    runs.commit()
+    if any(codes):
+        raise RuntimeError(f"play parts exited with {codes}")
+
+
 @app.function(image=image, cpu=float(JUDGE_CPU), memory=8 * 1024, volumes=VOLUMES, timeout=4 * 60 * 60)
 def judge_stage(args):
     run("judge", args, JUDGE_CPU, "cpu")
@@ -99,18 +118,31 @@ def main(stages: str = "health,recall,lines,nodes,graph,plans", play_parts: int 
          cc_run: str = CC_RUN, cc: str = CC, extra: str = ""):
     base = ["--cc-run", cc_run, "--cc", cc, "--population", POPULATION, *extra.split()]
     order = [s for x in stages.split(",") for s in (["roots", "play", "gather", "judge", "encode"] if x == "lines" else [x])]
+    parts = play_parts * PLAY_PROCS
+    plans = None
     for stage in order:
         print(f"=== {stage}", flush=True)
         if stage == "play":
-            list(gpu_stage.starmap([("play", [*base, "--part", str(p), "--parts", str(play_parts)]) for p in range(play_parts)]))
+            groups = [[[*base, "--part", str(p), "--parts", str(parts)] for p in range(g * PLAY_PROCS, (g + 1) * PLAY_PROCS)]
+                      for g in range(play_parts)]
+            list(play_group.map(groups))
         elif stage == "gather":
-            cpu_stage.remote("gather", [*base, "--parts", str(play_parts)])
+            cpu_stage.remote("gather", [*base, "--parts", str(parts)])
         elif stage == "judge":
             list(judge_stage.map([[*base, "--part", str(p), "--parts", str(judge_parts)] for p in range(judge_parts)]))
-        elif stage in ("nodes", "plans"):
+        elif stage == "plans":
+            if plans is None:
+                cpu_stage.remote("plans", base)
+        elif stage in ("nodes", "graph") and "plans" in order and plans is None:
+            plans = cpu_stage.spawn("plans", base)            # needs only the encoded lines: run it alongside
+            print("  (plans started alongside)", flush=True)
+            (cpu_stage if stage == "nodes" else gpu_stage).remote(stage, base)
+        elif stage == "nodes":
             cpu_stage.remote(stage, base)
         else:
             gpu_stage.remote(stage, base)
+    if plans is not None:
+        plans.get()
 
 
 @app.local_entrypoint()
