@@ -115,6 +115,12 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                          G_diff     nodes: execution rate S minus W, McNemar over roots, BH; edges: log-lift in
                                     G_S minus in G_W, bootstrap over roots, BH at --fdr
                          control    G_diff from S against S2: should come out nearly empty
+          examples     per concept (the --show-examples strongest), a 2x2 of replication rollouts: S's and W's, where it
+                       is clearly present (top 10% of its score, one per game, strongest first) and clearly absent
+                       (bottom 10%: another sample of the same model from the same root when there is one, else the
+                       most similar root by the root position's latents); each with the root board, the rollout in
+                       SAN with its two highest-scoring plies marked (for reading only) and a Lichess link. The same
+                       2x2 for a rate-matched random concept, for a blind check on the page.
           5. directions  each concept in each model's own activation space, u_m = sum_j v_j d_j^m (the latents'
                        decoder directions, v undone of the scaling): for steering. -> <run>/concept_directions.npz
         -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the three graphs and a
@@ -2098,6 +2104,91 @@ def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None):
     return out
 
 
+def lichess_line(root, sans):
+    """A Lichess analysis link: the game from its start, through the rollout, opened at the root."""
+    from urllib.parse import quote
+    from pgn_model import movetext
+    pre = parse_movetext(root["prompt"])[0]
+    return f"https://lichess.org/analysis/pgn/{quote(movetext(pre + list(sans))[1:])}#{len(pre)}"
+
+
+def concept_cells(score, member, grp, kinds_rows, root_vec, droots, Ld, ply_score, n):
+    """The 2x2 for one concept (or a random one): per model, n rollouts where it is clearly present (top 10% of
+    its score among the rollouts it is scored on, one per game, strongest first) and, for each, one where it is
+    clearly absent (bottom 10%): another sample of the same model from the same root when there is one, else the
+    rollout of that model from the most similar root (cosine on the root position's latents)."""
+    roots, L = Ld["roots"], Ld["lines"]
+    out = {}
+    for kind, s in score.items():
+        cand = np.flatnonzero(member)
+        if len(cand) < 20:
+            out[kind] = dict(present=[], absent=[])
+            continue
+        hi_cut, lo_cut = np.quantile(s[cand], 0.9), np.quantile(s[cand], 0.1)
+        hi = cand[s[cand] >= hi_cut]
+        hi = hi[np.argsort(-s[hi])]
+        lo = cand[s[cand] <= lo_cut]
+        pres, absn, games = [], [], set()
+        for i in hi:
+            ri = droots[grp[i]]
+            gk = (roots[ri]["band"], roots[ri]["game"])
+            if gk in games:
+                continue
+            same = [j for j in lo if grp[j] == grp[i]]
+            if same:
+                j, how = min(same, key=lambda j: s[j]), "same root"
+            else:
+                sim = root_vec[grp[lo]] @ root_vec[grp[i]]
+                j, how = lo[int(np.argmax(sim))], "similar root"
+            games.add(gk)
+            for idx, dst, extra in ((i, pres, {}), (j, absn, {"how": how})):
+                q = kinds_rows[kind][idx]
+                l, r = L[q], roots[droots[grp[idx]]]
+                ps = ply_score(q)
+                top = sorted(np.argsort(-ps)[:2].tolist()) if ps.max() > 0 else []
+                dst.append(dict(fen=r["fen"], band=r["band"], sans=l["sans"], first=l["moves"][0], score=float(s[idx]),
+                                start=int(chess.Board(r["fen"]).fullmove_number), white=r["fen"].split()[1] == "w",
+                                top=top, link=lichess_line(r, l["sans"]), **extra))
+            if len(pres) >= n:
+                break
+        out[kind] = dict(present=pres, absent=absn)
+    return out
+
+
+def concept_examples(order, templates, nulls, Wo, member, grp, rows, droots, X, C, nlat, nf, a, Ld, by, F):
+    """Per concept in order: its 2x2 of rollouts, and the same for one of its random concepts (the blind check)."""
+    from scipy import sparse
+    dense = lambda Y: np.asarray(Y.todense()) if sparse.issparse(Y) else np.asarray(Y)
+    first = [by[(ri, "S")][0] for ri in droots]                             # the root position: ply 0 of any rollout
+    rv = np.asarray(C[first][:, :nlat].todense(), dtype=np.float64)
+    rv /= np.maximum(np.linalg.norm(rv, axis=1, keepdims=True), 1e-12)
+    show = order[:a.show_examples]
+    rand = [nulls[g * a.null_templates] for g in show]                     # each concept's first rate-matched random concept
+    Wr = weights_matrix(rand, F)
+    sc = {k: dense(X[rows[k]] @ Wo[:, :len(show)]) for k in ("S", "W")}
+    sr = {k: dense(X[rows[k]] @ Wr) for k in ("S", "W")}
+    kr = {k: rows[k] for k in ("S", "W")}
+    out = {}
+    for k, g in enumerate(show):
+        for nm, Wv, S_ in (("real", Wo[:, k], sc), ("random", Wr[:, k], sr)):
+            v = dense(Wv).ravel()
+
+            def ply_score(q, v=v):
+                """The concept's score at each ply of a rollout, for reading only (the concept is the whole-rollout sum)."""
+                cl = C[q]
+                T1 = cl.shape[1] // nlat
+                ps = np.zeros(T1 - 1)
+                for t in range(1, T1):
+                    half = (t % 2) * nlat * (nf - 1)
+                    ps[t - 1] = float(np.asarray(cl[:, t * nlat:(t + 1) * nlat] @ v[half:half + nlat]).ravel()[0])
+                return ps
+
+            cells = concept_cells({kk: S_[kk][:, k] for kk in ("S", "W")}, member[:, k], grp, kr, rv, droots, Ld,
+                                  ply_score, a.examples)
+            out.setdefault(int(g), {})[nm] = cells
+    return out
+
+
 def cooc(E1, E2, M, groups, a, dev):
     """Co-execution lifts of every pair of concepts in two sets of rollouts from the same roots (E: rollouts x
     concepts, executed; M: where each concept is scored, so a pair counts only the rollouts where both are), with
@@ -2285,6 +2376,11 @@ def plans(a):
               + (f"; control (S against S): {graphs['control']['nodes']} concepts, {graphs['control']['edges']} G_diff edges"
                  if graphs["control"] else ""), flush=True)
 
+    # the rollouts themselves, which are what a concept is read from: per concept a 2x2 (S's and W's rollouts, where it
+    # is clearly present and clearly absent), and the same for a random concept, for a blind check
+    examples = (concept_examples(order, templates, found["nulls"], Wo, member, grp, rows, droots, X, C, nlat, nf, a, Ld, by, F)
+                if len(order) and len(grp) else {})
+
     # each concept as a direction in each model's own activation space (for steering): u_m = sum_j v_j d_j^m, with v
     # undone of the latents' scaling and the crosscoder's input scale
     cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
@@ -2312,9 +2408,6 @@ def plans(a):
                  executed=dict(S_not_W=int(b[g]), W_not_S=int(c[g]),
                                bands={n: [int((xS[band == n, g] & ~xW[band == n, g]).sum()), int((~xS[band == n, g] & xW[band == n, g]).sum())]
                                       for n in sorted(set(band))}))
-        if keep_g[g]:
-            want = (xS[:, g] & ~xW[:, g]) if sign[g] > 0 else (xW[:, g] & ~xS[:, g])
-            r["examples"] = [example(Ld, by, evals, z, int(ri)) for ri in droots[want][:3]]
         recs.append(r)
     rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate",
                                                     "local", "calibrate", "null_templates", "max_plans", "tag")},
@@ -2325,7 +2418,7 @@ def plans(a):
                            replicated_S=int((sign[replicated] > 0).sum()), replicated_W=int((sign[replicated] < 0).sum()),
                            null_select=stats["select"]["null_pos"], null_replicate=stats["replicate"]["null_pos"],
                            control=ctrl_run, also_control=int((replicated & ctrl_both).sum()), kept=int(keep_g.sum())),
-               plans=recs, graph=graphs)
+               plans=recs, graph=graphs, examples={str(k): v for k, v in examples.items()})
     (out / f"plans{sfx}.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
     res.mkdir(parents=True, exist_ok=True)
     (res / f"plans{sfx}.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
@@ -2357,8 +2450,9 @@ def example(Ld, by, evals, z, ri):
 
 
 def plan_words(r, most=6):
+    """A concept by its heaviest latents' numbers (their labels are loose correlates: read the rollouts in plans.html)."""
     top = sorted(r["features"], key=lambda f: -abs(f["weight"]))[:most]
-    return "; ".join(f"{f['text']} ({f['weight']:.2f})" for f in top)
+    return "; ".join(f"latent {f['latent']} ({f['weight']:.2f})" for f in top)
 
 
 def plans_text(rec, a):
@@ -2394,8 +2488,9 @@ def plans_text(rec, a):
         if not rs:
             continue
         bn = list(rs[0]["executed"]["bands"])
-        out += [f"## Plans {title}", "",
-                "| plan | template (heaviest features, by ply) | margin: fit / selection / replication (random 95%) | "
+        out += [f"## Concepts {title}", "", "Read them from their rollouts in plans.html (a 2x2 of S's and W's rollouts "
+                "where each is clearly present and clearly absent, with a blind check against a random concept).", "",
+                "| concept | heaviest latents | margin: fit / selection / replication (random 95%) | "
                 "replication roots where it beats the other side | executed S not W / W not S | "
                 + " | ".join(f"{n} roots" for n in bn) + " | fits merged |", "|---|---|---|---|---|" + "---|" * len(bn) + "---|"]
         for r in rs:
@@ -2445,12 +2540,14 @@ def plans_page(path, name, rec):
     """plans.html: the three concept graphs (vis-network, one view at a time) and a card per concept, with roots where its
     side's rollouts carry it out and the other's don't."""
     keep = {n["id"] for n in rec["graph"]["nodes"]}
-    data = dict(plans={r["id"]: r for r in rec["plans"] if r["id"] in keep}, graph=rec["graph"])
+    data = dict(plans={r["id"]: r for r in rec["plans"] if r["id"] in keep}, graph=rec["graph"], examples=rec.get("examples", {}))
     js = json.dumps(data, default=float).replace("</", "<\\/")
     path.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Plans: {html.escape(name)}</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>body{{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}}#net{{flex:1;border-right:1px solid #ccc}}
-#card{{width:560px;overflow:auto;padding:12px}}.ln{{font-family:monospace;font-size:12px}}.f{{margin:2px 0}}{BOARD_CSS}</style></head>
+#card{{width:760px;overflow:auto;padding:12px}}.ln{{font-family:monospace;font-size:12px}}.f{{margin:2px 0}}
+table.g{{border-collapse:collapse}}table.g td,table.g th{{border:1px solid #ddd;vertical-align:top;padding:4px}}
+.ex{{margin-bottom:8px;max-width:330px}}.ex b{{background:#fde68a}}{BOARD_CSS}</style></head>
 <body>{BOARD_DEFS}{MOVE_HEAD}<div id="net"></div><div id="card"><h3>Concepts: {html.escape(name)}</h3>
 <p><select id="view"><option value="diff">G_diff: where S's map differs from W's</option><option value="S">G_S: the 2400+ model</option>
 <option value="W">G_W: the 1000-1300 model</option></select></p>
@@ -2479,6 +2576,14 @@ function show(view) {{
 }}
 document.getElementById("view").onchange = ev => show(ev.target.value);
 show("diff");
+const line = x => x.sans.map((m, i) => {{
+  const w = x.white ? i % 2 === 0 : i % 2 === 1, n = x.start + Math.floor((i + (x.white ? 0 : 1)) / 2);
+  const t = (w ? `${{n}}.` : (i === 0 ? `${{n}}...` : "")) + (x.top.includes(i) ? `<b>${{m}}</b>` : m);
+  return t; }}).join(" ");
+const cell = xs => xs.map(x => `<div class="ex">${{board(x.fen, x.first, "sm")}}<div class="ln">${{line(x)}}</div>
+  <a target="_blank" href="${{x.link}}">step through on Lichess</a> &middot; ${{x.band}} game, score ${{x.score.toFixed(3)}}${{x.how ? ` &middot; ${{x.how}}` : ""}}</div>`).join("") || "-";
+const grid = c => `<table class="g"><tr><th></th><th>clearly present</th><th>clearly absent</th></tr>` + ["S", "W"].map(k =>
+  `<tr><th>${{k}}'s rollouts</th><td>${{cell(c[k].present)}}</td><td>${{cell(c[k].absent)}}</td></tr>`).join("") + "</table>";
 net.on("click", ev => {{
   if (!ev.nodes.length) return;
   const p = D.plans[ev.nodes[0]], e = p.executed;
@@ -2488,12 +2593,21 @@ net.on("click", ev => {{
     selection ${{p.select_margin.toFixed(3)}}, replication ${{p.replicate_margin.toFixed(3)}} (random concepts' 95th percentile
     ${{p.replicate_null95.toFixed(3)}}); ${{(100 * p.replicate_share).toFixed(0)}}% of replication roots favour ${{p.side}}</div>
     <div>executed by S's rollout and not W's on ${{e.S_not_W}} roots, the reverse on ${{e.W_not_S}}</div>`;
-  h += "<h4>latents (combined over the whole rollout)</h4>" + p.features.map(f => `<div class="f">${{f.text}}
-    (${{f.when}}, weight ${{f.weight.toFixed(2)}})</div>`).join("");
-  for (const x of (p.examples || [])) h += `<h4>${{x.band}} root: ${{p.side}}'s rollout carries it out, the other doesn't</h4>
-    ${{board(x.fen, x.lines[p.side].first)}}<div class="ln">S would play ${{x.s_top}}, W ${{x.w_top}}<br>
-    <b>S's rollout</b>: ${{x.lines.S.sans.join(" ")}}<br><b>W's rollout</b>: ${{x.lines.W.sans.join(" ")}}</div>`;
+  const X = D.examples[p.id];
+  if (X) {{
+    h += `<h4>rollouts (replication roots): where it is clearly present and clearly absent</h4>${{grid(X.real)}}
+      <p><button id="blind">blind check: this concept against a random one</button></p><div id="blindout"></div>`;
+  }}
+  h += `<details><summary>latents (labels are loose correlates)</summary>` + p.features.map(f => `<div class="f">latent ${{f.latent}}
+    (weight ${{f.weight.toFixed(2)}}): ${{f.text}}</div>`).join("") + "</details>";
   document.getElementById("card").innerHTML = h;
+  if (X) document.getElementById("blind").onclick = () => {{
+    const realFirst = Math.random() < 0.5, A = realFirst ? X.real : X.random, B = realFirst ? X.random : X.real;
+    document.getElementById("blindout").innerHTML = `<h4>A</h4>${{grid(A)}}<h4>B</h4>${{grid(B)}}
+      <p><button id="reveal">reveal</button> <span id="answer"></span></p>`;
+    document.getElementById("reveal").onclick = () => {{
+      document.getElementById("answer").textContent = `the concept is ${{realFirst ? "A" : "B"}}; the other is a random concept`; }};
+  }};
 }});
 </script></body></html>""", encoding="utf-8")
 
@@ -2580,7 +2694,9 @@ def main():
     g.add_argument("--nu", type=float, default=0.2, help="soft margin: the share of roots allowed inside it (fit and filter)")
     g.add_argument("--dedupe", type=float, default=0.5, help="cosine at which templates merge")
     g.add_argument("--null-templates", type=int, default=50, help="rate-matched random templates per template")
-    g.add_argument("--max-plans", type=int, default=300, help="plans in the plan graph at most")
+    g.add_argument("--max-plans", type=int, default=300, help="concepts in the graphs at most")
+    g.add_argument("--examples", type=int, default=5, help="rollouts per cell of a concept's 2x2 (present/absent x S/W)")
+    g.add_argument("--show-examples", type=int, default=60, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
     steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
                  encode=encode_stage, nodes=nodes, graph=graph, plans=plans)
