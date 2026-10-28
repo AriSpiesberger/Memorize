@@ -252,7 +252,7 @@ def compare(a):
     print(f"wrote {res / 'compare.md'}")
 
 
-def load_cc(cc_run, cc, strong, dev):
+def load_cc(cc_run, cc, strong, dev, name=None):
     """The crosscoder, its (model, layer) sources and scales, which model is S (its name contains
     `strong`) and which W, and each latent's relative decoder norm toward S."""
     cc_run = Path(cc_run)
@@ -272,7 +272,7 @@ def load_cc(cc_run, cc, strong, dev):
     with torch.no_grad():
         nm = coder.norms()
         r = (nm[:, col[s]] / nm.sum(1).clamp_min(1e-8)).cpu().numpy()
-    name = f"{cc_run.name}-{cc_dir.name.removeprefix('cc-')}"
+    name = name or f"{cc_run.name}-{cc_dir.name.removeprefix('cc-')}"        # --name: the same folder dirs() uses
     return SimpleNamespace(run=cc_run, dir=cc_dir, info=info, ck=ck, sources=sources, coder=coder,
                            scales=ck["scales"].to(dev), s=s, w=1 - s, col=col, layer=dict(sources), r=r,
                            out=RUNS / name, res=RESULTS / name)
@@ -378,7 +378,7 @@ def kl_top1(ref, other):
 @torch.no_grad()
 def health(a):
     dev = ev.device(a.device)
-    cc = load_cc(a.cc_run, a.cc, a.strong, dev)
+    cc = load_cc(a.cc_run, a.cc, a.strong, dev, a.name)
     names, L, d = cc.info["names"], cc.ck["latents"], cc.ck["d"]
     arrs = load_sources(cc.run, cc.sources)
     rows = np.load(cc.run / "rows.npy")
@@ -763,7 +763,7 @@ def enough(Y, M, fit, test, n=30):
 @torch.no_grad()
 def recall(a):
     dev = ev.device(a.device)
-    cc = load_cc(a.cc_run, a.cc, a.strong, dev)
+    cc = load_cc(a.cc_run, a.cc, a.strong, dev, a.name)
     rng = np.random.default_rng(a.seed)
     rows = np.load(cc.run / "rows.npy")
     fpath = next((p for p in [cc.dir / "facts.npz", *sorted(cc.run.glob("cc-*/facts.npz"))] if p.exists()), None)
@@ -955,7 +955,7 @@ def dirs(a):
 def roots_stage(a):
     """The roots and both models' policies there -> <run>/roots.json."""
     dev = ev.device(a.device)
-    cc = load_cc(a.cc_run, a.cc, a.strong, dev)
+    cc = load_cc(a.cc_run, a.cc, a.strong, dev, a.name)
     cc.out.mkdir(parents=True, exist_ok=True)
     models = {m: ev.load(cc.info["models"][m], dev)[0] for m in (0, 1)}
     Sm, Wm = models[cc.s], models[cc.w]
@@ -1031,7 +1031,7 @@ def play_stage(a):
     dev = ev.device(a.device)
     out, _ = dirs(a)
     R = json.loads((out / "roots.json").read_text(encoding="utf-8"))
-    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu", a.name)
     models = {m: ev.load(cc.info["models"][m], dev)[0] for m in (0, 1)}
     Sm, Wm = models[cc.s], models[cc.w]
     rng = np.random.default_rng([a.seed, a.part])
@@ -1170,7 +1170,7 @@ def encode_stage(a):
     """Both models' states at every position, the crosscoder codes, the Stockfish results merged
     -> <run>/codes.npz, evals.npy, facts.npy, meta.json."""
     dev = ev.device(a.device)
-    cc = load_cc(a.cc_run, a.cc, a.strong, dev)
+    cc = load_cc(a.cc_run, a.cc, a.strong, dev, a.name)
     Ld = json.loads((cc.out / "lines.json").read_text(encoding="utf-8"))
     roots, L, bands = Ld["roots"], Ld["lines"], Ld["bands"]
     seqs, ends, keys, need, jobs, line_start = positions(Ld)
@@ -1414,7 +1414,7 @@ def nodes(a):
     if excl.exists():
         r, status = np.load(excl)["r"], np.load(excl)["status"]
     else:
-        r, status = load_cc(a.cc_run, a.cc, a.strong, "cpu").r, np.zeros(nlat, np.int8)
+        r, status = load_cc(a.cc_run, a.cc, a.strong, "cpu", a.name).r, np.zeros(nlat, np.int8)
     ex = explanations(meta)
     n_fit = max(int(fit_r.sum()), 1)
     lat_nodes = []
@@ -2600,7 +2600,7 @@ def plans(a):
 
     # each concept as a direction in each model's own activation space (for steering): u_m = sum_j v_j d_j^m, with v
     # undone of the latents' scaling and the crosscoder's input scale
-    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu", a.name)
     dec = cc.coder.W_dec.detach().numpy()                                   # (latents, sources, d)
     sc = cc.scales.cpu().numpy()
     U = {m: np.zeros((len(templates), dec.shape[2]), np.float32) for m in (cc.s, cc.w)}
@@ -3127,7 +3127,7 @@ def latent_page(path, name, rec, r, most=5, share=0.1):
 def pages(a):
     """Rebuild the latent-graph pages (plans-<tag>-latents.html) from every plans*.json of the run."""
     out, _ = dirs(a)
-    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu", a.name)
     for p in sorted(out.glob("plans*.json")):
         rec = json.loads(p.read_text(encoding="utf-8"))
         latent_page(out / f"{p.stem}-latents.html", f"{out.name} {p.stem}", rec, cc.r)
