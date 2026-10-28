@@ -2930,35 +2930,35 @@ netW.on("click", click(netW));
 </script></body></html>"""
 
 
-LATENT_PAGE_3D = r"""<!doctype html><html><head><meta charset="utf-8"><title>Latent graphs 3D: __NAME__</title>
+LATENT_PAGE_3D = r"""<!doctype html><html><head><meta charset="utf-8"><title>Latent graph 3D: __NAME__</title>
 <script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
 <style>html,body{margin:0;height:100%;overflow:hidden}
 body{color:#e2e8f5;font:13px/1.45 system-ui,sans-serif;background:radial-gradient(ellipse at 50% 40%,#16203a 0%,#0b1022 45%,#04060d 100%)}
-#wrap{display:flex;height:100%}.half{position:relative;flex:1 1 0;min-width:0;overflow:hidden}.half+.half{border-left:1px solid rgba(148,163,209,.14)}
-.lab{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);z-index:4;font-size:15px;font-weight:600;letter-spacing:.06em;
-color:#c7d2fe;text-shadow:0 0 14px rgba(165,180,252,.55);pointer-events:none}
-#bar{position:fixed;top:14px;left:14px;z-index:5;padding:12px 16px;max-width:620px;border-radius:12px;background:rgba(12,17,32,.62);
+#g{position:fixed;inset:0}
+#bar{position:fixed;top:14px;left:14px;z-index:5;padding:12px 16px;max-width:600px;border-radius:12px;background:rgba(12,17,32,.62);
 backdrop-filter:blur(10px);border:1px solid rgba(148,163,209,.18);box-shadow:0 8px 30px rgba(0,0,0,.35)}
 #bar button{background:rgba(30,40,68,.8);color:#e2e8f5;border:1px solid rgba(148,163,209,.3);border-radius:6px;padding:3px 9px;font:inherit;cursor:pointer}
-#bar button:hover{border-color:#a5b4fc}.title{font-size:16px;font-weight:600;letter-spacing:.03em;margin-right:12px}
+#bar button:hover{border-color:#a5b4fc}#bar button.off{opacity:.45}.title{font-size:16px;font-weight:600;letter-spacing:.03em;margin-right:12px}
 .key{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 5px 0 12px;vertical-align:-1px;box-shadow:0 0 8px currentColor}
+.bar2{display:inline-block;width:22px;height:3px;border-radius:2px;margin:0 5px 0 12px;vertical-align:2px;box-shadow:0 0 8px currentColor}
 #hint{color:#8b97b8;margin-top:8px;font-size:12px}
-#tip{position:fixed;display:none;max-width:700px;max-height:88vh;overflow-y:auto;background:#fbfaf6;color:#1d2230;border-radius:10px;
+#tip{position:fixed;display:none;max-width:760px;max-height:88vh;overflow-y:auto;background:#fbfaf6;color:#1d2230;border-radius:10px;
 padding:10px 12px;box-shadow:0 10px 40px rgba(0,0,0,.55);z-index:10}#tip.pinned{outline:2px solid #a5b4fc}
 .ln{font-family:monospace;font-size:12px}table.g{border-collapse:collapse}table.g td,table.g th{border:1px solid #ddd;vertical-align:top;padding:4px}
-.ex{margin-bottom:8px;max-width:310px}.ex b{background:#fde68a}#tip button{cursor:pointer}__BOARD_CSS__</style></head>
+.ex{max-width:330px}.ex b{background:#fde68a}#tip button{cursor:pointer}__BOARD_CSS__</style></head>
 <body>__BOARD_DEFS____MOVE_HEAD__
-<div id="bar"><span class="title">Latent graphs</span><span style="color:#94a3c7">__NAME__</span><br>
+<div id="bar"><span class="title">Latent graph</span><span style="color:#94a3c7">__NAME__</span><br>
+<span class="bar2" style="background:#fb7185;color:#fb7185"></span>concept of the 2400+ model
+<span class="bar2" style="background:#38bdf8;color:#38bdf8"></span>of the 1000-1300 model
+&nbsp; <button id="sS">2400+</button> <button id="sW">1000-1300</button> <button id="sig">significant only</button><br>
 <span class="key" style="background:#38bdf8;color:#38bdf8"></span>latent leans to 1000-1300
 <span class="key" style="background:#c4b5fd;color:#c4b5fd"></span>shared
 <span class="key" style="background:#fb7185;color:#fb7185"></span>leans to 2400+
 &nbsp; <button id="rot">pause rotation</button> <button id="fit">re-centre</button>
-<div id="hint">the same crosscoder latents in both graphs, in the same places &middot; each concept is a chain of its latents in its own
-colour, particles flowing in the order they fire in that model's rollouts carrying it out &middot; bright: that model carries the concept
-out significantly more &middot; hover a link to light the concept up in both, click to pin its card and rollouts, drag to orbit (both
-cameras move together), scroll to zoom</div></div>
-<div id="wrap"><div class="half" id="gW"><div class="lab">1000-1300 model</div></div><div class="half" id="gS"><div class="lab">2400+ model</div></div></div>
-<div id="tip"></div>
+<div id="hint">nodes: crosscoder latents &middot; each concept is one chain through its latents, belonging to the model it separates
+toward, in the order they fire in that model's rollouts carrying it out (particles flow that way) &middot; bright and thick: that model
+carries it out significantly more &middot; click a chain for starting positions where that model's rollouts do and don't carry it out</div></div>
+<div id="g"></div><div id="tip"></div>
 <script>__BOARD_JS__
 const D = __DATA__;
 const C = {}; for (const c of D.concepts) C[c.id] = c;
@@ -2969,109 +2969,110 @@ function glow(r) {
   const c = STOPS[k].map((a, i) => Math.round(a + (STOPS[k + 1][i] - a) * f));
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
-const hue = id => (id * 137.508) % 360;
+const NM = {S: "2400+", W: "1000-1300"};
 const DIM_NODE = "#1a2138", DIM_LINK = "rgba(60,72,110,0.10)";
+const show = {S: true, W: true}; let sigOnly = false;
 let hlConcept = null, hlNode = null, pinned = false, last = {clientX: innerWidth / 2, clientY: innerHeight / 2};
 addEventListener("mousemove", e => { last = e; }, {passive: true});
-function data(who) {
-  const nodes = D.latents.map(l => ({id: l.id, val: 1 + 4 * Math.sqrt(l.weight), c: glow(l.r)}));
-  const links = [];
+function linkColor(c, a) {            // the owning model's colour, a little varied per concept so chains stay apart
+  const j = ((c.id * 0.618) % 1) - 0.5;
+  return c.side === "S" ? `hsla(${350 + 14 * j},${c.sig ? 92 : 50}%,${c.sig ? 66 : 50}%,${a})`
+                        : `hsla(${199 + 14 * j},${c.sig ? 92 : 50}%,${c.sig ? 62 : 48}%,${a})`;
+}
+function build() {
+  const links = [], used = new Set();
   for (const c of D.concepts) {
-    const rate = who === "S" ? c.rate_S : c.rate_W, more = c.sig && (who === "S" ? c.rate_S > c.rate_W : c.rate_W > c.rate_S);
-    const ch = c.chains && c.chains[who];
+    if (!show[c.side] || (sigOnly && !c.sig)) continue;
+    const rate = c.side === "S" ? c.rate_S : c.rate_W, ch = c.chains && c.chains[c.side];
     const ls = ch ? ch.links.map(l => [l.a, l.b, l.before]) : c.pairs.map(([a, b]) => [a, b, null]);
-    for (const [a, b, before] of ls) links.push({source: a, target: b, concept: c.id, rate, more, before,
-      color: `hsla(${hue(c.id)},${more ? 90 : 55}%,${more ? 64 : 46}%,${more ? 0.95 : 0.55})`,
-      curv: 0.08 + 0.22 * ((c.id * 0.618) % 1)});
+    for (const [a, b, before] of ls) {
+      used.add(a); used.add(b);
+      links.push({source: a, target: b, concept: c.id, rate, before, sig: c.sig, color: linkColor(c, c.sig ? 0.95 : 0.5),
+                  curv: 0.06 + 0.2 * ((c.id * 0.618) % 1)});
+    }
   }
+  const nodes = D.latents.filter(l => used.has(l.id)).map(l => ({id: l.id, val: 1 + 4 * Math.sqrt(l.weight), c: glow(l.r)}));
   return {nodes, links};
 }
 const inConcept = (n, id) => C[id].latents.some(x => x.latent === n.id);
-function make(el, who) {
-  return ForceGraph3D({controlType: "orbit"})(el)
-    .width(el.clientWidth).height(el.clientHeight).backgroundColor("rgba(0,0,0,0)").showNavInfo(false)
-    .nodeLabel(() => "").nodeOpacity(1).nodeResolution(12).nodeRelSize(3)
-    .nodeColor(n => hlConcept !== null ? (inConcept(n, hlConcept) ? n.c : DIM_NODE)
-                    : hlNode !== null ? (n.id === hlNode || L[hlNode].concepts.some(id => inConcept(n, id)) ? n.c : DIM_NODE) : n.c)
-    .linkCurvature(l => l.curv).linkWidth(l => l.more ? 0.9 : 0).linkOpacity(0.6)
-    .linkColor(l => (hlConcept !== null && l.concept !== hlConcept) || (hlNode !== null && !L[hlNode].concepts.includes(l.concept)) ? DIM_LINK : l.color)
-    .linkDirectionalArrowLength(l => l.before === null ? 0 : 3.2).linkDirectionalArrowRelPos(0.92)
-    .linkDirectionalArrowColor(l => l.color)
-    .linkDirectionalParticles(l => l.before === null ? 0 : (l.more ? 3 : 1)).linkDirectionalParticleWidth(1.7)
-    .linkDirectionalParticleResolution(6).linkDirectionalParticleSpeed(l => 0.002 + 0.008 * l.rate)
-    .linkDirectionalParticleColor(l => l.color).linkHoverPrecision(3)
-    .warmupTicks(140).cooldownTicks(200).d3VelocityDecay(0.35)
-    .onLinkHover(l => later(() => { if (pinned) return; light(l ? l.concept : null, null); if (l) tipConcept(l.concept, false); else hide(); }))
-    .onNodeHover(n => later(() => { if (pinned) return; light(null, n ? n.id : null); if (n) tipLatent(n.id); else hide(); }))
-    .onLinkClick(l => { pinned = true; light(l.concept, null); tipConcept(l.concept, true); })
-    .onNodeClick(n => { pinned = true; light(null, n.id); tipLatent(n.id); fly(n); })
-    .onBackgroundClick(() => { pinned = false; hide(); light(null, null); });
-}
+const el = document.getElementById("g");
+const G = ForceGraph3D({controlType: "orbit"})(el)
+  .backgroundColor("rgba(0,0,0,0)").showNavInfo(false)
+  .nodeLabel(() => "").nodeOpacity(1).nodeResolution(12).nodeRelSize(3)
+  .nodeColor(n => hlConcept !== null ? (inConcept(n, hlConcept) ? n.c : DIM_NODE)
+                  : hlNode !== null ? (n.id === hlNode || L[hlNode].concepts.some(id => inConcept(n, id)) ? n.c : DIM_NODE) : n.c)
+  .linkCurvature(l => l.curv).linkWidth(l => l.sig ? 0.4 + 1.6 * l.rate : 0).linkOpacity(0.6)
+  .linkColor(l => (hlConcept !== null && l.concept !== hlConcept) || (hlNode !== null && !L[hlNode].concepts.includes(l.concept)) ? DIM_LINK : l.color)
+  .linkDirectionalArrowLength(l => l.before === null ? 0 : 3.2).linkDirectionalArrowRelPos(0.92).linkDirectionalArrowColor(l => l.color)
+  .linkDirectionalParticles(l => l.before === null ? 0 : (l.sig ? 3 : 1)).linkDirectionalParticleWidth(1.7)
+  .linkDirectionalParticleResolution(6).linkDirectionalParticleSpeed(l => 0.002 + 0.008 * l.rate)
+  .linkDirectionalParticleColor(l => l.color).linkHoverPrecision(3)
+  .warmupTicks(140).cooldownTicks(200).d3VelocityDecay(0.35)
+  .onLinkHover(l => later(() => { if (pinned) return; light(l ? l.concept : null, null); if (l) tipConcept(l.concept, false); else hide(); }))
+  .onNodeHover(n => later(() => { if (pinned) return; light(null, n ? n.id : null); if (n) tipLatent(n.id); else hide(); }))
+  .onLinkClick(l => { pinned = true; light(l.concept, null); tipConcept(l.concept, true); })
+  .onNodeClick(n => { pinned = true; light(null, n.id); tipLatent(n.id); fly(n); })
+  .onBackgroundClick(() => { pinned = false; hide(); light(null, null); });
+G.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+G.graphData(build());
+let fitted = false;
+G.onEngineStop(() => { if (!fitted) { fitted = true; G.zoomToFit(900, 60); } });
 let pending = 0;
 function later(f) { cancelAnimationFrame(pending); pending = requestAnimationFrame(f); }
-const GW = make(document.getElementById("gW"), "W");
-GW.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
-GW.graphData(data("W"));
-let GS = null, syncing = false;
-function copyCam(from, to) {
-  if (syncing || !to) return;
-  syncing = true;
-  to.camera().position.copy(from.camera().position); to.camera().quaternion.copy(from.camera().quaternion);
-  to.controls().target.copy(from.controls().target); to.controls().update();
-  syncing = false;
-}
-GW.onEngineStop(() => {
-  if (GS) return;
-  const pos = {}; for (const n of GW.graphData().nodes) pos[n.id] = n;
-  const d = data("S");
-  for (const n of d.nodes) { const p = pos[n.id]; n.fx = p.x; n.fy = p.y; n.fz = p.z; }
-  GS = make(document.getElementById("gS"), "S");
-  GS.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
-  GS.graphData(d);
-  GS.controls().autoRotate = false;
-  GW.controls().addEventListener("change", () => copyCam(GW, GS));
-  GS.controls().addEventListener("change", () => copyCam(GS, GW));
-  GW.zoomToFit(900, 40);
-  setTimeout(() => copyCam(GW, GS), 950);
-});
-function light(concept, node) {
-  hlConcept = concept; hlNode = node;
-  for (const G of [GW, GS]) if (G) G.nodeColor(G.nodeColor()).linkColor(G.linkColor());
-}
+function light(concept, node) { hlConcept = concept; hlNode = node; G.nodeColor(G.nodeColor()).linkColor(G.linkColor()); }
 function fly(n) {
-  const d = 70, k = 1 + d / Math.max(1, Math.hypot(n.x, n.y, n.z));
-  GW.cameraPosition({x: n.x * k, y: n.y * k, z: n.z * k}, n, 1200);
+  const k = 1 + 70 / Math.max(1, Math.hypot(n.x, n.y, n.z));
+  G.cameraPosition({x: n.x * k, y: n.y * k, z: n.z * k}, n, 1200);
 }
+function rebuild() {                   // keep the latents where they are when the filters change
+  const old = {}; for (const n of G.graphData().nodes) old[n.id] = n;
+  const d = build();
+  for (const n of d.nodes) { const o = old[n.id]; if (o) { n.x = o.x; n.y = o.y; n.z = o.z; } }
+  G.graphData(d);
+}
+for (const k of ["S", "W"]) document.getElementById("s" + k).onclick = e => { show[k] = !show[k]; e.target.classList.toggle("off", !show[k]); rebuild(); };
+document.getElementById("sig").onclick = e => { sigOnly = !sigOnly; e.target.classList.toggle("off", !sigOnly); rebuild(); };
+document.getElementById("sig").classList.add("off");
 const tip = document.getElementById("tip");
 function place() {
   tip.style.display = "block";
-  const x = Math.min(last.clientX + 16, innerWidth - tip.offsetWidth - 10), y = Math.min(last.clientY + 16, innerHeight - tip.offsetHeight - 10);
-  tip.style.left = Math.max(10, x) + "px"; tip.style.top = Math.max(10, y) + "px";
+  if (pinned) { tip.style.left = Math.max(10, innerWidth - tip.offsetWidth - 14) + "px"; tip.style.top = "14px"; }
+  else {
+    const x = Math.min(last.clientX + 16, innerWidth - tip.offsetWidth - 10), y = Math.min(last.clientY + 16, innerHeight - tip.offsetHeight - 10);
+    tip.style.left = Math.max(10, x) + "px"; tip.style.top = Math.max(10, y) + "px";
+  }
   tip.classList.toggle("pinned", pinned);
 }
 function hide() { tip.style.display = "none"; }
 const line = x => x.sans.map((m, i) => {
   const w = x.white ? i % 2 === 0 : i % 2 === 1, n = x.start + Math.floor((i + (x.white ? 0 : 1)) / 2);
   return (w ? `${n}.` : (i === 0 ? `${n}...` : "")) + (x.top.includes(i) ? `<b>${m}</b>` : m); }).join(" ");
-const cell = xs => xs.map(x => `<div class="ex">${board(x.fen, x.first, "sm")}<div class="ln">${line(x)}</div>
-  <a target="_blank" href="${x.link}">step through on Lichess</a> &middot; ${x.band} game${x.how ? ` &middot; ${x.how}` : ""}</div>`).join("") || "-";
-const grid = g => `<table class="g"><tr><th></th><th>clearly present</th><th>clearly absent</th></tr>` + [["S", "2400+"], ["W", "1000-1300"]].map(([k, nm]) =>
-  `<tr><th>${nm}</th><td>${cell(g[k].present)}</td><td>${cell(g[k].absent)}</td></tr>`).join("") + "</table>";
+const roll = x => `<div class="ex"><div class="ln">${line(x)}</div><a target="_blank" href="${x.link}">step through on Lichess</a></div>`;
+// one row per starting position: the same model's rollouts from it that carry the concept out and that don't
+function rows(g, who) {
+  const P = g[who].present, A = g[who].absent;
+  if (!P.length) return `<p>no starting position with both kinds of rollout among this model's samples</p>`;
+  return `<table class="g"><tr><th>starting position</th><th>a rollout carrying it out</th><th>a rollout from the same position that doesn't</th></tr>` +
+    P.map((p, i) => `<tr><td>${board(p.fen, null, "sm")}<div style="color:#667">${p.band} game</div></td><td>${roll(p)}</td><td>${A[i] ? roll(A[i]) : "-"}</td></tr>`).join("") + "</table>";
+}
 function tipConcept(id, full) {
-  const c = C[id], X = D.examples[id];
-  let h = `<b>concept ${c.id}</b> (${c.side === "S" ? "2400+'s" : "1000-1300's"}) &middot; carried out by ${(100 * c.rate_S).toFixed(0)}% of 2400+'s rollouts,
-    ${(100 * c.rate_W).toFixed(0)}% of 1000-1300's ${c.sig ? `(q ${c.q.toPrecision(2)})` : "(no significant difference)"}`;
-  for (const [k, nm] of [["W", "1000-1300"], ["S", "2400+"]]) if (c.chains && c.chains[k])
-    h += `<div>${nm}: ` + c.chains[k].chain.map(x => `${x.latent}`).join(" &rarr; ") + " &nbsp; <span style='color:#667'>(" +
-      c.chains[k].links.map(l => `${(100 * l.before).toFixed(0)}%`).join(", ") + " of rollouts in that order)</span></div>";
+  const c = C[id], X = D.examples[id], who = c.side, other = who === "S" ? "W" : "S";
+  let h = `<b>concept ${c.id}</b>: the ${NM[who]} model's &middot; carried out by ${(100 * (who === "S" ? c.rate_S : c.rate_W)).toFixed(0)}% of its
+    rollouts against ${(100 * (who === "S" ? c.rate_W : c.rate_S)).toFixed(0)}% of the ${NM[other]} model's
+    ${c.sig ? `(q ${c.q.toPrecision(2)})` : "(no significant difference)"}`;
+  const ch = c.chains && c.chains[who];
+  if (ch) h += `<div>order in its rollouts: ` + ch.chain.map(x => x.latent).join(" &rarr; ") + " &nbsp; <span style='color:#667'>(" +
+    ch.links.map(l => `${(100 * l.before).toFixed(0)}%`).join(", ") + " of rollouts in that order)</span></div>";
   if (!full) h += `<div style="color:#667">click to pin it and see its rollouts</div>`;
-  else if (X) h += `<h4 style="margin:8px 0 4px">rollouts: clearly present and clearly absent</h4>${grid(X.real)}
-    <p><button id="blind">blind check against a random concept</button></p><div id="blindout"></div>`;
+  else if (X) h += `<h4 style="margin:8px 0 4px">the ${NM[who]} model, same starting position, with and without the concept</h4>${rows(X.real, who)}
+    <p><button id="blind">blind check against a random concept</button> <button id="close">close</button></p><div id="blindout"></div>`;
   tip.innerHTML = h; place();
+  const cl = document.getElementById("close");
+  if (cl) cl.onclick = () => { pinned = false; hide(); light(null, null); };
   const bt = document.getElementById("blind");
   if (bt) bt.onclick = () => {
     const realFirst = Math.random() < 0.5, A = realFirst ? X.real : X.random, B = realFirst ? X.random : X.real;
-    document.getElementById("blindout").innerHTML = `<h4>A</h4>${grid(A)}<h4>B</h4>${grid(B)}<p><button id="reveal">reveal</button> <span id="answer"></span></p>`;
+    document.getElementById("blindout").innerHTML = `<h4>A</h4>${rows(A, who)}<h4>B</h4>${rows(B, who)}<p><button id="reveal">reveal</button> <span id="answer"></span></p>`;
     document.getElementById("reveal").onclick = () => { document.getElementById("answer").textContent =
       `the concept is ${realFirst ? "A" : "B"}; the other is a random concept`; };
   };
@@ -3079,16 +3080,15 @@ function tipConcept(id, full) {
 function tipLatent(id) {
   const l = L[id];
   tip.innerHTML = `<b>latent ${l.id}</b> &middot; decoder ${(100 * l.r).toFixed(0)}% toward 2400+<div>in concepts: ` +
-    l.concepts.map(c => `${c} (${C[c].side === "S" ? "2400+" : "1000-1300"}'s)`).join(", ") + "</div>";
+    l.concepts.map(c => `${c} (${NM[C[c].side]}'s)`).join(", ") + "</div>";
   place();
 }
 let spin = true;
-GW.controls().autoRotate = true; GW.controls().autoRotateSpeed = 0.4;
-document.getElementById("rot").onclick = e => { spin = !spin; GW.controls().autoRotate = spin; e.target.textContent = spin ? "pause rotation" : "rotate"; };
-document.getElementById("fit").onclick = () => { GW.zoomToFit(900, 40); setTimeout(() => copyCam(GW, GS), 950); };
-(function tick() { if (spin && GS) copyCam(GW, GS); requestAnimationFrame(tick); })();
-addEventListener("resize", () => { for (const [G, id] of [[GW, "gW"], [GS, "gS"]]) if (G) { const el = document.getElementById(id); G.width(el.clientWidth).height(el.clientHeight); } });
-document.addEventListener("visibilitychange", () => { for (const G of [GW, GS]) if (G) document.hidden ? G.pauseAnimation() : G.resumeAnimation(); });
+G.controls().autoRotate = true; G.controls().autoRotateSpeed = 0.4;
+document.getElementById("rot").onclick = e => { spin = !spin; G.controls().autoRotate = spin; e.target.textContent = spin ? "pause rotation" : "rotate"; };
+document.getElementById("fit").onclick = () => G.zoomToFit(900, 60);
+addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
+document.addEventListener("visibilitychange", () => document.hidden ? G.pauseAnimation() : G.resumeAnimation());
 </script></body></html>"""
 
 
