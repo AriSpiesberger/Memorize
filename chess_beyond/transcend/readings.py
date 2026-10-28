@@ -8,7 +8,11 @@ S's reading differ from W's more than where they agree?
 2. readings   each model's own reading of every latent from the crosscoder encoder, before the shared nonlinearity:
               r^m = (x_m - b_dec_m) W_enc^m, its block of the pre-activation sum_m r^m + b_enc (x_m: the model's state
               at the position, scaled as the crosscoder was trained). Also the latents' activations f (after the shared
-              ReLU and threshold), for which latents are active.
+              ReLU and threshold), for which latents are active. Checked first: r^S + r^W + b_enc reproduces the
+              encoder's own pre-activation (a wrong bias, block or transpose stops the run). Readings are
+              pre-activations, so they can be negative; "active" always means the joint code (f > 0), never a reading's
+              sign. Encoder columns differ in scale between the models, so d = r^S - r^W carries a constant offset per
+              latent: only the contrast disagree vs agree counts, where the offset cancels.
 3. look       per latent, the mean of r^S - r^W over the disagree positions against the agree ones: the --show latents
               with the largest difference (and its t statistic), either way.
 4. LP         Schut's soft-margin max-min LP on half the disagree positions (split by game), v >= 0, sum(v) <= 1,
@@ -84,7 +88,16 @@ def read(a):
         d = x.shape[-1]
         W, bd = cc.coder.W_enc, cc.coder.b_dec
         r = {m: ((x[:, i] - bd[i]) @ W[i * d:(i + 1) * d]).cpu().numpy() for i, (m, _) in enumerate(cc.sources)}
-        f = cc.coder.encode(x)[0].cpu().numpy()
+        f_, pre, _ = cc.coder.encode(x)
+        f = f_.cpu().numpy()
+        # the readings must add up to the crosscoder's own pre-activation: a wrong bias, block or transpose shows here
+        recon = r[0] + r[1] + cc.coder.b_enc.cpu().numpy()
+        err = np.abs(recon - pre.cpu().numpy())
+        scale = np.abs(pre.cpu().numpy()).mean()
+        print(f"sanity: r^S + r^W + b_enc against the encoder's pre-activation: max |error| {err.max():.2e}, mean "
+              f"{err.mean():.2e} (mean |pre-activation| {scale:.3f})", flush=True)
+        if err.max() > 1e-3 * max(scale, 1e-6) * 100:
+            sys.exit("the readings don't reproduce the pre-activation: stopping")
     out = dict(rS=r[cc.s].astype(np.float32), rW=r[cc.w].astype(np.float32), f=f.astype(np.float32),
                topS=np.array(top[cc.s]), topW=np.array(top[cc.w]), fen=np.array([b.fen() for b in boards]),
                band=np.array([r_["band"] for r_, _ in P]), game=np.array([str(r_["game"]) for r_, _ in P]))
