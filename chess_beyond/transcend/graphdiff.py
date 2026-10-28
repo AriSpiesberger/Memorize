@@ -64,36 +64,41 @@ lines   Roots: held-out positions of both bands (data/pgn_probe/population.jsonl
         (each prompt's cache shared by all its legal moves); a move is drawn from p^(1/--temperature),
         renormalised. From each root, two rollouts of --plies plies:
             "S"   S plays both sides
-            "W"   W plays the root's side to move and S replies (the same opponent in both, so only the
-                  player differs)
+            "W"   W plays both sides
+        (both models are pure imitation learners: each writes every move of the game, both colours, so a
+        rollout is one model imitating a whole game from the root, with no player and no opponent)
         Every position is read by both models and encoded with the crosscoder (and its FVU there: the
         crosscoder never saw rollouts); board facts (predicates.py, position facts) for the anchor nodes.
         --depth > 0 adds Stockfish's evaluation of every position (only for the report's line-end
         evaluations and, with graph --engine-split, a positional/tactical split; nothing is filtered by it).
         -> <run>/roots.json, play-*.json, lines.json, judge-*.npz, codes.npz, evals.npy, facts.npy, meta.json
-plans   Plan templates: V = (V_0 .. V_T), a sparse non-negative weight per (ply, latent),
-        activations scaled by each latent's mean where it fires, latents firing on --min-rate..--max-rate.
-        Per root, d_t = c_S,t - c_W,t: S's rollout's latents at ply t minus W's. Roots are split by game
-        three ways: fit (not held out), selection and replication (the held-out games, halved).
-          1. fit       Schut et al.'s max-min LP, V >= 0, once per side (S's plans on d, W's on -d):
-                         max m  s.t.  sum_t V_t . d_i,t >= m for the roots i,  sum V <= 1
-                       per cluster of --cluster-size similar roots (cosine k-means on the root position's
-                       latents), soft margin: a share --nu of the roots may fall inside it. Dual simplex
-                       (scipy's HiGHS): a vertex, so sparse. (--fit root: one root each, single features.)
-          2. merge     templates matching at cosine >= --dedupe join one group (the members' mean).
-          3. margin    the filter: on the selection roots, the template's soft margin (the share --nu
-                       quantile of its score over the roots, what the LP maximised) must be > 0 and above
-                       the 95th percentile of --null-templates random templates with its plies, signs and
-                       weights and latents of the same firing-rate decile; then the same on the
-                       replication roots. Reported: how often random templates' margin is > 0.
-          4. graph     plans as nodes, on the replication roots: a rollout executes a plan starting at a
-                       ply when the template shifted there scores at least halfway between its mean on S's
-                       and on W's selection rollouts. Follows: lift at lags 2, 4, 6 between start plies,
-                       G_S vs G_W, bootstrap + BH (as for latents); competes: executed together less than
-                       chance (lag-0 lift with its interval below 1); replaces: S's rollout executes B
-                       where W's executes A (and not the reverse), lift over chance.
-        -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the plan graph and a
-           card per plan: its template ply by ply, and roots where its side's rollout carries it out)
+plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the crosscoder's latent space: the
+        crosscoder gives both models one standardised dictionary, so S's and W's rollouts are compared on the
+        same features (never on the models' own activations, which live in different spaces). A concept is a
+        non-negative vector v over the latents (activations scaled by each latent's mean where it fires,
+        latents firing on --min-rate..--max-rate), applied to every ply of a rollout and summed (--sum-plies all;
+        own/split are options), so it can occur at any ply. Per root, d = S's rollout's summed latents minus W's
+        (plies after the root, which both share). Roots are split by game three ways: fit (not held out),
+        selection and replication (the held-out games, halved).
+          1. fit       the max-min LP, once per side (S's concepts on d, W's on -d):
+                         max m  s.t.  v . d_i >= m for the roots i,  sum v <= 1,  v >= 0
+                       per cluster of --cluster-size roots whose rollouts diverge alike (cosine k-means on the
+                       fit roots' d); soft margin: a share --nu of the roots may fall inside it. Dual simplex
+                       (scipy's HiGHS): a vertex, so sparse.
+          2. merge     concepts matching at cosine >= --dedupe join one group (the members' mean).
+          3. margin    the filter: on the selection roots, the concept's soft margin (the share --nu quantile
+                       of v . d over the roots, what the LP maximised) must be > 0 and above the 95th percentile
+                       of --null-templates random concepts with its weights and latents of the same firing-rate
+                       decile (never its own); then the same on the replication roots. Reported: how often random
+                       concepts' margin is > 0.
+          4. graph     concepts as nodes, on the replication roots: active at a ply when v . (that ply's latents)
+                       reaches halfway between its mean on S's and on W's selection rollouts. Follows: lift at lags
+                       2, 4, 6, G_S vs G_W, bootstrap + BH (as for latents); competes: active together less than
+                       chance (lag-0 lift with its interval below 1); replaces: S's rollout carries out B where
+                       W's carries out A (a rollout carries a concept out when its summed score reaches the halfway
+                       mark), lift over chance.
+        -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the concept graph and a
+           card per concept: its latents, and roots where its side's rollout carries it out)
 nodes   Latents, from the rollouts alone. Per root and latent, d = its activation summed over S's
         rollout minus over W's (plies 1..); a root counts for a latent when d != 0. Exact sign test on
         >= --min-pairs fit roots (BH at --fdr-nodes over the latents firing on --min-rate..--max-rate),
@@ -103,16 +108,16 @@ nodes   Latents, from the rollouts alone. Per root and latent, d = its activatio
         true on 1-99% of positions are anchor nodes. -> <run>/nodes.json
 graph   G_S from the "S" rollouts, G_W from the "W" rollouts, same nodes, same roots (--split fit; held for
         the replication). A node is active at a ply when its activation is above its 90th percentile
-        over all line positions (for a latent firing on < 10% of them: when it fires). Edges start only
-        at plies where the studied player is to move (0, 2, 4, ...): plan edges at lags 2, 4, 6, response
-        edges at lags 1, 3. Over (root, ply) pairs, n of them, n_A with A at t, n_B with B at t + k:
+        over all line positions (for a latent firing on < 10% of them: when it fires). Edges from every ply
+        (the models write both colours' moves, so no ply is special) at lags 1, 2, 3, 4, 6. Over (root, ply)
+        pairs, n of them, n_A with A at t, n_B with B at t + k:
             lift_k(A -> B) = (n_AB + a) / (n_A n_B / n + a)        (P(B | A) / P(B), shrunk to 1 by a = --prior)
         delta = log lift_S - log lift_W; roots resampled (--boot Poisson bootstraps, one draw for both
         graphs), z = delta / its bootstrap sd, two-sided normal p, Benjamini-Hochberg at --fdr over
         every edge with n_AB >= --min-count in either graph (no self edges). S-only: significant, S's
         lift >= --lift with its 95% interval above 1, W's interval covering 1; W-only the reverse;
         reweighted: the other significant ones.
-        Motifs: chains A -> B -> C (-> D) of lag-2 plan edges that pass (lift >= --lift, interval above
+        Motifs: chains A -> B -> C (-> D) of lag-2 edges that pass (lift >= --lift, interval above
         1) in either graph. Per root, completions (A at t, B at t + 2, C at t + 4, ...) in its S rollout
         and its W rollout; the effect is the log ratio of the totals (+1 each), the test an exact paired
         one on roots (McNemar: roots where it completes in S's rollout and not W's against the reverse),
@@ -122,7 +127,7 @@ graph   G_S from the "S" rollouts, G_W from the "W" rollouts, same nodes, same r
         elsewhere". S-only latent nodes: their strongest lag-2 neighbours among shared nodes in G_S,
         and whether W's rollouts reach them.
         -> results/transcend/graphdiff/<run>/report.md (gates, nodes, diff, motifs),
-           edges-<set>-<split>.csv, motifs-<set>-<split>.csv; <run>/motifs-<split>.html (the top --show
+           edges-<set>-<split>.csv (the significant edges), motifs-<set>-<split>.csv; <run>/motifs-<split>.html (the top --show
            motifs, each with roots where it completes in the S rollout and not the W rollout).
 
 All thresholds are starting values: set them once from the nulls, then freeze them before reading the diff.
@@ -927,7 +932,7 @@ def roots_stage(a):
 
 def play_stage(a):
     """S's and W's rollouts from the roots with index % --parts == --part -> <run>/play-<part>-of-<parts>.json.
-    "S": S plays both sides; "W": W plays the root's side to move and S replies (the same opponent in both)."""
+    "S": S writes every move (both colours), "W": W writes every move: each model imitating the game from the root."""
     dev = ev.device(a.device)
     out, _ = dirs(a)
     R = json.loads((out / "roots.json").read_text(encoding="utf-8"))
@@ -949,7 +954,7 @@ def play_stage(a):
     for ply in range(1, a.plies):
         live = [l for l in L if len(l["moves"]) == ply and not l["board"].is_game_over()]
         for m, model in ((cc.s, Sm), (cc.w, Wm)):
-            group = [l for l in live if (cc.w if l["kind"] == "W" and ply % 2 == 0 else cc.s) == m]
+            group = [l for l in live if (cc.w if l["kind"] == "W" else cc.s) == m]
             if group:
                 lg, lp, _ = policy(model, [l["board"] for l in group], dev, [l["prompt"] for l in group], batch=a.batch)
                 for l, mv, p in zip(group, lg, lp):
@@ -1204,7 +1209,7 @@ def end_eval(evals, z, q):
     return evals[z["line_start"][q + 1] - 1]
 
 
-def pair_signs(z, pairs, start, nlat):
+def pair_signs(z, pairs, start, nlat, own=False):
     """Per (pair, latent) with a nonzero difference: pair, latent, d = sum over the plies after the lines
     part (> start: before that they are the same positions) of the first line's activation minus the second's."""
     ls, ip = z["line_start"], z["indptr"]
@@ -1212,9 +1217,10 @@ def pair_signs(z, pairs, start, nlat):
     for p, (c, k) in enumerate(pairs):
         for q, sgn in ((c, 1.0), (k, -1.0)):
             e0, e1 = ip[min(ls[q] + 1 + start[p], ls[q + 1])], ip[ls[q + 1]]
-            P.append(np.full(e1 - e0, p))
-            J.append(z["lat"][e0:e1])
-            V.append(sgn * z["val"][e0:e1].astype(np.float32))
+            m = (z["pos_t"][z["row"][e0:e1]] % 2 == 0) if own else np.ones(e1 - e0, bool)   # own: its side's moves only
+            P.append(np.full(m.sum(), p))
+            J.append(z["lat"][e0:e1][m])
+            V.append(sgn * z["val"][e0:e1][m].astype(np.float32))
     key = np.concatenate(P).astype(np.int64) * nlat + np.concatenate(J)
     u, inv = np.unique(key, return_inverse=True)
     d = np.bincount(inv, weights=np.concatenate(V))
@@ -1286,7 +1292,7 @@ def nodes(a):
     fit_pos = fit_root[pos_root]
     rate = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat) / max(fit_pos.sum(), 1)
     active = (rate >= a.min_rate) & (rate <= a.max_rate)
-    pp, lat, d = pair_signs(z, pairs, np.zeros(len(pairs), dtype=np.int64), nlat)
+    pp, lat, d = pair_signs(z, pairs, np.zeros(len(pairs), dtype=np.int64), nlat, own=a.sum_plies == "own")
     fit_pair = fit_pair_r[pp]
     f2, f3, st = sign_tests(lat, d, np.ones(len(d)), fit_pair, active, a, nlat)
     rng = np.random.default_rng(a.seed)
@@ -1332,7 +1338,7 @@ def nodes(a):
                   null_held_out_mean=float(null[:, 1].mean()), null_held_out_max=int(null[:, 1].max()), null_runs=a.null)
     rec = dict(funnel=funnel, roots=dict(all=len(rr), fit=int(fit_pair_r.sum()), held=int((~fit_pair_r).sum())),
                settings={k: getattr(a, k) for k in ("min_rate", "max_rate", "min_pairs", "min_pairs_held", "fdr_nodes",
-                                                    "max_nodes", "null", "seed")},
+                                                    "max_nodes", "null", "seed", "sum_plies")},
                tags={t: sum(n["tag"] == t for n in lat_nodes) for t in ("S-only", "W-only", "shared", "leaning S", "leaning W")},
                latents=lat_nodes, anchors=anchors)
     (out / "nodes.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
@@ -1344,7 +1350,8 @@ def nodes_text(rec):
     f, s = rec["funnel"], rec["settings"]
     out = ["## Latents: S's rollouts against W's", "",
            f"{rec['roots']['all']} roots ({rec['roots']['fit']} fit, {rec['roots']['held']} held out). Per root and latent, "
-           "d = its activation summed over S's rollout minus over W's; a root counts for a latent when d != 0.", "",
+           f"d = its activation summed over S's rollout minus over W's (plies: {s['sum_plies']}); a root counts for a latent "
+           "when d != 0.", "",
            "| filter | latents | with S and W flipped at random (mean of %d) |" % f["null_runs"], "|---|---|---|",
            f"| all | {f['latents']} | |",
            f"| active on {s['min_rate']:.0%}-{s['max_rate']:.0%} of positions | {f['active']} | {f['active']} |",
@@ -1385,10 +1392,11 @@ def bh(p, q):
 
 def lag_counts(A, k, w):
     """A (R, T+1, N) activity (0 where a line has ended), w (B, R) root weights: weighted counts over
-    (root, t), t even, t + k <= T -> n (B,), n_A (B, N), n_B (B, N), n_AB (B, N, N)."""
+    (root, t), t + k <= T (every ply: the models write both colours' moves) -> n (B,), n_A (B, N), n_B (B, N),
+    n_AB (B, N, N)."""
     T = A.shape[1] - 1
     n = nA = nB = nAB = 0
-    for t in range(0, T - k + 1, 2):
+    for t in range(0, T - k + 1):
         m = A[:, t + k, -1]                                          # the last column: the position exists
         X, Y = A[:, t] * m[:, None], A[:, t + k]
         n = n + w @ m
@@ -1438,7 +1446,7 @@ def categorise(E, nodes, a):
         test = (np.maximum(e["nS"], e["nW"]) >= a.min_count) & ~np.eye(N, dtype=bool)
         for i, j in zip(*np.nonzero(test)):
             D, sd = e["lS"][i, j] - e["lW"][i, j], e["sd_D"][i, j]
-            rows.append(dict(lag=int(k), family="plan" if k % 2 == 0 else "response", src=int(i), dst=int(j),
+            rows.append(dict(lag=int(k), family="even" if k % 2 == 0 else "odd", src=int(i), dst=int(j),
                              n_S=float(e["nS"][i, j]), n_W=float(e["nW"][i, j]),
                              lift_S=float(np.exp(e["lS"][i, j])), lift_W=float(np.exp(e["lW"][i, j])),
                              lS=float(e["lS"][i, j]), lW=float(e["lW"][i, j]), sd_S=float(e["sd_lS"][i, j]),
@@ -1480,7 +1488,7 @@ def chains(E2, a):
 
 
 def completions(A, motifs, dev, chunk=4096):
-    """(R, M) completions per root (the chain's nodes active at t, t + 2, ..., t even) and (R, M) starts
+    """(R, M) completions per root (the chain's nodes active at t, t + 2, ..., any t) and (R, M) starts
     (its first node active at a t with room for the rest)."""
     T = A.shape[1] - 1
     K = torch.zeros((A.shape[0], len(motifs)), device=dev)
@@ -1490,7 +1498,7 @@ def completions(A, motifs, dev, chunk=4096):
         for n in sorted({len(c) for c in part}):
             cols = [c0 + q for q, c in enumerate(part) if len(c) == n]
             ids = torch.tensor([motifs[q] for q in cols], device=dev)
-            for t in range(0, T - 2 * (n - 1) + 1, 2):
+            for t in range(0, T - 2 * (n - 1) + 1):
                 prod = A[:, t, ids[:, 0]]
                 St[:, cols] += prod
                 for j in range(1, n):
@@ -1604,7 +1612,7 @@ def graph(a):
             w = csv.writer(f)
             w.writerow(["lag", "family", "category", "src", "dst", "lift_S", "lift_W", "delta", "z", "p", "q", "n_S", "n_W",
                         "src_label", "dst_label"])
-            for r in sorted(rows, key=lambda r: r["p"]):
+            for r in sorted((r for r in rows if r["category"] != "shared"), key=lambda r: r["p"]):   # significant only
                 w.writerow([r["lag"], r["family"], r["category"], r["src"], r["dst"], f"{r['lift_S']:.3f}", f"{r['lift_W']:.3f}",
                             f"{r['delta']:.3f}", f"{r['z']:.2f}", f"{r['p']:.3g}", f"{r['q']:.3g}", r["n_S"], r["n_W"],
                             nodes[r["src"]]["label"], nodes[r["dst"]]["label"]])
@@ -1663,8 +1671,8 @@ def graph_text(sname, a, nroots, rows, motifs, ms, nodes, att):
     lab = lambda c: nodes[c]["label"]
     out = [f"## {sname.capitalize()} roots ({nroots})", "", "### Edges",
            "", f"Tested: {len(rows)} edges with >= {a.min_count} co-occurrences in either graph; significant at FDR {a.fdr}:",
-           "", "| family | lags | S-only | W-only | reweighted | not significant |", "|---|---|---|---|---|---|"]
-    for fam, lags in (("plan", PLAN), ("response", RESPONSE)):
+           "", "| lags | | S-only | W-only | reweighted | not significant |", "|---|---|---|---|---|---|"]
+    for fam, lags in (("even", PLAN), ("odd", RESPONSE)):
         rs = [r for r in rows if r["family"] == fam]
         cnt = {c: sum(r["category"] == c for r in rs) for c in ("S-only", "W-only", "reweighted", "shared")}
         out.append(f"| {fam} | {', '.join(map(str, lags))} | {cnt['S-only']} | {cnt['W-only']} | {cnt['reweighted']} | {cnt['shared']} |")
@@ -1676,7 +1684,7 @@ def graph_text(sname, a, nroots, rows, motifs, ms, nodes, att):
                     for r in rs]
     sig = np.flatnonzero(ms["sig"])
     out += ["", "### Motifs", "",
-            f"{len(motifs)} candidate chains of lag-2 plan edges, {int(ms['tested'].sum())} with >= {a.min_discordant} roots "
+            f"{len(motifs)} candidate chains of lag-2 edges, {int(ms['tested'].sum())} with >= {a.min_discordant} roots "
             f"where they complete in one line and not the other (tested, exact paired test); {len(sig)} differ at FDR {a.fdr} "
             f"({int((ms['lr'][sig] > 0).sum())} more in S's lines, {int((ms['lr'][sig] < 0).sum())} more in W's). "
             "follow = completions per time the first node fires with room for the chain."]
@@ -1947,80 +1955,82 @@ def plans(a):
     meta, Ld, z, evals, facts = load_run(out)
     roots, L, T, nlat = Ld["roots"], Ld["lines"], meta["plies"], meta["latents"]
     ex = explanations(meta)
-    # three splits by game: fit the templates, select them, replicate them
+    # three splits by game: fit the concepts, select them, replicate them
     split = np.array([0 if not r["held"] else 1 + zlib.crc32(f"{r['band']}/{r['game']}/select".encode()) % 2 for r in roots])
     pos_root = np.array([L[q]["root"] for q in z["pos_line"]])
     fit_pos = split[pos_root] == 0
     rate = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat) / max(fit_pos.sum(), 1)
     keep = (rate >= a.min_rate) & (rate <= a.max_rate)
     scale = scales_of(z, nlat)
-    C = line_matrix(z, keep, scale, T, nlat)
-    ncols = C.shape[1]
+    C = line_matrix(z, keep, scale, T, nlat)                       # (lines, (T + 1) * latents), per ply
+    nf = 2 if a.sum_plies == "split" else 1
+    F = nf * nlat
+    # each rollout summed over its plies after the root (the root is the same position in both): --plies own (default)
+    # only where its own side is to move (2, 4, ...), so the opponent's positions can't count toward a side's concept;
+    # split: own plies (columns 0..nlat-1) and the opponent's (nlat..) as separate latents; all: every ply
+    t_, j_ = np.repeat(np.arange(T + 1), nlat), np.tile(np.arange(nlat), T + 1)
+    on = (t_ >= 1) & ((t_ % 2 == 0) if a.sum_plies == "own" else True)
+    Pm = sparse.csr_matrix((np.ones(on.sum()), (np.flatnonzero(on), (t_[on] % 2) * nlat * (nf - 1) + j_[on])), shape=(C.shape[1], F))
+    X = (C @ Pm).tocsr()
     by = {(l["root"], l["kind"]): q for q, l in enumerate(L)}
     rr = np.array([ri for ri in range(len(roots)) if (ri, "S") in by and (ri, "W") in by])
-    pairs = [(by[(ri, "S")], by[(ri, "W")]) for ri in rr]
-    D = pair_matrix(C, pairs, np.zeros(len(pairs), dtype=np.int64), nlat)    # S's rollout minus W's, plies 1..
+    lS, lW = [by[(ri, "S")] for ri in rr], [by[(ri, "W")] for ri in rr]
+    D = (X[lS] - X[lW]).tocsr()                                    # per root: S's rollout minus W's
     psplit = split[rr]
-    print(f"plan templates: {len(rr)} roots with an S and a W rollout ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}); "
-          f"{keep.sum()} candidate latents (firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions)", flush=True)
+    print(f"concepts: {len(rr)} roots with an S and a W rollout ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}); "
+          f"{keep.sum()} candidate latents (firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions)"
+          f"; plies summed: {a.sum_plies}", flush=True)
 
-    # 1. fit: the max-min LP per cluster of similar roots (and per root with --fit root/both), V >= 0, in both
-    # directions: S's plans on d (latents S's rollouts have more of), W's plans on -d
+    # 1. fit: Schut et al.'s max-min LP, v >= 0 over the latents, per cluster of roots whose rollouts diverge alike
+    # (cosine k-means on the fit roots' differences), once per side: S's concepts on d = S - W, W's on -d
     fit_rows = np.flatnonzero(psplit == 0)
-    jobs = []
-
-    def job(key, rows, sign, nu):
-        Dr = D[rows] * sign
-        cols = np.unique(Dr.indices)
-        return (key, Dr[:, cols].tocsc().tocsr(), cols, nu, False) if len(cols) else None
-
     clusters = {}
-    if a.fit in ("cluster", "both") and len(fit_rows):
-        X = torch.from_numpy(C[[pairs[p][0] for p in fit_rows]][:, :nlat].toarray()).float().to(dev)   # the root position
-        lab = kmeans(X, max(1, round(len(fit_rows) / a.cluster_size)), a.seed)
+    if len(fit_rows):
+        lab = kmeans(torch.from_numpy(D[fit_rows].toarray()).float().to(dev), max(1, round(len(fit_rows) / a.cluster_size)), a.seed)
         for p, k in zip(fit_rows, lab):
             clusters.setdefault(int(k), []).append(int(p))
+    jobs = []
     for sign in (1, -1):
-        jobs += [j for k, rows in clusters.items() for j in [job(("cluster", k, sign), rows, sign, a.nu)] if j is not None]
-        if a.fit in ("root", "both"):
-            jobs += [j for p in fit_rows for j in [job(("root", int(rr[p]), sign), [p], sign, 0.0)] if j is not None]
-    print(f"  fitting {len(jobs)} LPs ({len(clusters)} clusters x S's and W's plans"
-          f"{', and single roots' if a.fit != 'cluster' else ''}), {a.workers} workers", flush=True)
+        for k, rows in clusters.items():
+            Dr = D[rows] * sign
+            cols = np.unique(Dr.indices)
+            if len(cols):
+                jobs.append((("cluster", k, sign), Dr[:, cols].tocsc().tocsr(), cols, a.nu, False))
+    print(f"  fitting {len(jobs)} LPs ({len(clusters)} clusters x S's and W's concepts), {a.workers} workers", flush=True)
     temps, t0 = [], time.time()
     with Pool(a.workers) as pool:
         for d_, (key, r) in enumerate(pool.imap_unordered(maxmin, jobs, chunksize=4), 1):
             if r is not None and r[2] > 1e-9 and len(r[0]):
                 temps.append(dict(key=key, sign=key[2], cols=r[0], w=r[1], m=r[2], sep=r[3]))
-            if d_ % 200 == 0 or d_ == len(jobs):
-                print(f"\r  {d_}/{len(jobs)} LPs, {len(temps)} templates with a positive margin, {time.time() - t0:.0f}s",
+            if d_ % 50 == 0 or d_ == len(jobs):
+                print(f"\r  {d_}/{len(jobs)} LPs, {len(temps)} concepts with a positive margin, {time.time() - t0:.0f}s",
                       end="", flush=True)
     print()
-    # 2. merge similar templates, within each direction
+    # 2. merge similar concepts, within each side
     templates, sign, groups = [], [], []
     for s_ in (1, -1):
         mine = [t for t in temps if t["sign"] == s_]
-        for cols, w, members in dedupe(mine, ncols, a.dedupe):
+        for cols, w, members in dedupe(mine, F, a.dedupe):
             templates.append((cols, w))
             sign.append(s_)
             groups.append([mine[i] for i in members])
     sign = np.array(sign)
-    print(f"  {len(temps)} templates -> {len(templates)} after merging at cosine >= {a.dedupe} "
-          f"({(sign > 0).sum()} S plans, {(sign < 0).sum()} W plans)", flush=True)
+    print(f"  {len(temps)} concepts -> {len(templates)} after merging at cosine >= {a.dedupe} "
+          f"({(sign > 0).sum()} S's, {(sign < 0).sum()} W's)", flush=True)
     if not templates:
-        sys.exit("no template has a positive margin: larger clusters (--cluster-size) or a larger --nu")
+        sys.exit("no concept has a positive margin: larger clusters (--cluster-size) or a larger --nu")
 
-    # 3. the margin filter, on roots from other games: the template's soft margin (the share --nu quantile of
-    # sign * score over the roots, what the LP maximised) must stay above 0 and beat 95% of --null-templates random
-    # templates with its plies, signs and weights and latents of the same firing-rate decile; then the same again
-    # on a third set of games (replicate)
-    Wm = weights_matrix(templates, ncols)
+    # 3. the margin filter, on roots from other games: the soft margin (the share --nu quantile of sign * v . d over
+    # the roots, what the LP maximised) must be > 0 and above the 95th percentile of --null-templates random concepts
+    # with its weights and latents of the same firing-rate decile; then the same on a third set of games
+    Wm = weights_matrix(templates, F)
     cand = np.flatnonzero(keep)
     rb = np.zeros(nlat, dtype=np.int64)
     rb[cand] = np.searchsorted(np.quantile(rate[cand], np.linspace(0, 1, 11)[1:-1]), rate[cand])
     bins = {b: cand[rb[cand] == b] for b in np.unique(rb[cand])}
     rng = np.random.default_rng(a.seed)
     nulls = null_templates(templates, rb, bins, rng, a.null_templates, nlat)
-    Wn = weights_matrix(nulls, ncols)
+    Wn = weights_matrix(nulls, F)
     nsign = np.repeat(sign, a.null_templates)
     stats = {}
     for nm, s_ in (("select", 1), ("replicate", 2)):
@@ -2033,47 +2043,54 @@ def plans(a):
     selected = stats["select"]["passed"]
     replicated = selected & stats["replicate"]["passed"]
     print(f"  margin filter: {selected.sum()} keep a positive soft margin on {stats['select']['roots']} selection roots and beat "
-          f"their random templates (random templates' margin > 0: {stats['select']['null_pos']:.1%}); {replicated.sum()} again "
-          f"on {stats['replicate']['roots']} replication roots ({(sign[replicated] > 0).sum()} S plans, {(sign[replicated] < 0).sum()} W plans)",
+          f"their random concepts (random concepts' margin > 0: {stats['select']['null_pos']:.1%}); {replicated.sum()} again "
+          f"on {stats['replicate']['roots']} replication roots ({(sign[replicated] > 0).sum()} S's, {(sign[replicated] < 0).sum()} W's)",
           flush=True)
 
-    # execution threshold, for the plan graph: halfway between the template's mean score on S's and on W's
-    # selection rollouts; executed = the rollout reaches it
-    sel_rows = np.flatnonzero(psplit == 1)
-    ES_sel = np.asarray((C[[pairs[p][0] for p in sel_rows]] @ Wm).mean(0)).ravel()
-    EW_sel = np.asarray((C[[pairs[p][1] for p in sel_rows]] @ Wm).mean(0)).ravel()
-    tau = (ES_sel + EW_sel) / 2
-    rep_rows = np.flatnonzero(psplit == 2)
+    # a rollout carries a concept out when its summed score reaches halfway between the mean on S's and on W's
+    # selection rollouts; per ply, the concept is active where that ply's score reaches the per-ply halfway mark
+    sel_rows, rep_rows = np.flatnonzero(psplit == 1), np.flatnonzero(psplit == 2)
+    ES_sel, EW_sel = X[[lS[p] for p in sel_rows]] @ Wm, X[[lW[p] for p in sel_rows]] @ Wm
+    tau = (np.asarray(ES_sel.mean(0)).ravel() + np.asarray(EW_sel.mean(0)).ravel()) / 2
     droots = rr[rep_rows]
     band = np.array([roots[ri]["band"] for ri in droots])
-    gi = np.flatnonzero(replicated)
-    sS, sW = [pairs[p][0] for p in rep_rows], [pairs[p][1] for p in rep_rows]
-    ES, EW = np.asarray((C[sS] @ Wm).todense()), np.asarray((C[sW] @ Wm).todense())
-    xS, xW = ES >= tau, EW >= tau
+    sS, sW = [lS[p] for p in rep_rows], [lW[p] for p in rep_rows]
+    xS = np.asarray((X[sS] @ Wm).todense()) >= tau
+    xW = np.asarray((X[sW] @ Wm).todense()) >= tau
     b, c, _ = mcnemar(xS, xW)
 
-    # 4. the plan graph on the replication roots: plans as nodes; follows (lags 2, 4, 6 between the plies they start
-    # at), competes (rarely executed together, lag 0), replaces (S executes B where W executes A)
+    # 4. the concept graph on the replication roots: concepts as nodes, active at a ply (above); follows (lags 2, 4,
+    # 6), competes (rarely active together, lag 0), replaces (S's rollout carries out B where W's carries out A)
+    gi = np.flatnonzero(replicated)
     order = gi[np.argsort(-stats["replicate"]["margin"][gi])][:a.max_plans]
     P = [templates[g] for g in order]
-    tmin = np.array([int(cols.min() // nlat) for cols, _ in P], dtype=np.int64)
-    tmax = np.array([int(cols.max() // nlat) for cols, _ in P], dtype=np.int64)
+
+    def ply_scores(lines, Wsub):
+        """(rollouts, T + 1, concepts): v . (the ply's latents), on the plies --plies counts (with split, the ply's
+        side picks its half of v)."""
+        out_ = np.zeros((len(lines), T + 1, Wsub.shape[1]), np.float32)
+        Cl = C[lines]
+        for t in range(1, T + 1):
+            if a.sum_plies == "own" and t % 2:
+                continue
+            half = (t % 2) * nlat * (nf - 1)
+            out_[:, t] = np.asarray((Cl[:, t * nlat:(t + 1) * nlat] @ Wsub[half:half + nlat]).todense())
+        return out_
+
+    Wp = weights_matrix(P, F)
+    counted = [t for t in range(1, T + 1) if not (a.sum_plies == "own" and t % 2)]
+    sel_ply = np.concatenate([ply_scores([lS[p] for p in sel_rows], Wp)[:, counted],
+                              ply_scores([lW[p] for p in sel_rows], Wp)[:, counted]], 0)
+    half_ = sel_ply.shape[0] // 2
+    tau_ply = (sel_ply[:half_].mean((0, 1)) + sel_ply[half_:].mean((0, 1))) / 2 if len(P) else np.zeros(0)
     R_ = len(sS)
     AS, AW = np.zeros((R_, T + 1, len(P) + 1), np.float32), np.zeros((R_, T + 1, len(P) + 1), np.float32)
     for A_, ls in ((AS, sS), (AW, sW)):
         for r, q in enumerate(ls):
             A_[r, :z["line_start"][q + 1] - z["line_start"][q], -1] = 1
-    for o in range(-T - (T % 2), T + 1, 2):
-        Wo = weights_matrix(P, ncols, o, nlat)
-        valid = [g for g in range(len(P)) if 0 <= tmin[g] + o and tmax[g] + o <= T]
-        if Wo.nnz == 0 or not valid:
-            continue
-        for A_, ls in ((AS, sS), (AW, sW)):
-            Eo = np.asarray((C[ls] @ Wo).todense())
-            for g in valid:
-                bucket = tmin[g] + o - (tmin[g] + o) % 2
-                A_[:, bucket, g] = np.maximum(A_[:, bucket, g], (Eo[:, g] >= tau[order[g]]) * A_[:, bucket, -1])
-    pnodes = [dict(kind="plan", id=int(g), label=f"plan {int(g)}") for g in order]
+        if len(P):
+            A_[:, counted, :-1] = (ply_scores(ls, Wp)[:, counted] >= tau_ply[None, None]) * A_[:, counted, -1:]
+    pnodes = [dict(kind="plan", id=int(g), label=f"concept {int(g)}") for g in order]
     plan_rows, competes, replaces = [], [], []
     if len(P) >= 2 and R_ >= a.min_roots:
         tS, tW = torch.from_numpy(AS).to(dev), torch.from_numpy(AW).to(dev)
@@ -2088,8 +2105,8 @@ def plans(a):
                 for who, l_, sd_, n_ in (("S", e0["lS"], e0["sd_lS"], e0["aS"]), ("W", e0["lW"], e0["sd_lW"], e0["aW"])):
                     if min(n_[i], n_[j]) >= a.min_count and l_[i, j] + 1.96 * sd_[i, j] < 0:
                         competes.append(dict(a=int(order[i]), b=int(order[j]), lines=who, lift=float(np.exp(l_[i, j]))))
-        anyS, anyW = AS[:, :, :-1].max(1) > 0, AW[:, :, :-1].max(1) > 0
-        onlyW, onlyS = (anyW & ~anyS).astype(np.float64), (anyS & ~anyW).astype(np.float64)
+        onlyW = (xW[:, order] & ~xS[:, order]).astype(np.float64)
+        onlyS = (xS[:, order] & ~xW[:, order]).astype(np.float64)
         nAB = onlyW.T @ onlyS
         lift = (nAB + a.prior) / (np.outer(onlyW.sum(0), onlyS.sum(0)) / max(R_, 1) + a.prior)
         for i, j in zip(*np.nonzero((nAB >= a.min_count) & ~np.eye(len(P), dtype=bool))):
@@ -2101,8 +2118,8 @@ def plans(a):
     recs = []
     for g, (cols, w) in enumerate(templates):
         members = groups[g]
-        r = dict(id=g, side="S" if sign[g] > 0 else "W", features=describe_plan(cols, w, nlat, ex), n_features=int(len(cols)),
-                 plies=sorted({int(x) for x in cols // nlat}), fits=len(members), fit_margin=float(np.mean([t["m"] for t in members])),
+        r = dict(id=g, side="S" if sign[g] > 0 else "W", features=describe_concept(cols, w, nlat, a.sum_plies, ex), n_features=int(len(cols)),
+                 fits=len(members), fit_margin=float(np.mean([t["m"] for t in members])),
                  fit_share=float(np.mean([t["sep"] for t in members])),
                  **{f"{nm}_{k}": float(st[k][g]) for nm, st in stats.items() for k in ("margin", "share", "null95")},
                  selected=bool(selected[g]), replicated=bool(replicated[g]), tau=float(tau[g]),
@@ -2113,7 +2130,7 @@ def plans(a):
             want = (xS[:, g] & ~xW[:, g]) if sign[g] > 0 else (xW[:, g] & ~xS[:, g])
             r["examples"] = [example(Ld, by, evals, z, int(ri)) for ri in droots[want][:3]]
         recs.append(r)
-    rec = dict(settings={k: getattr(a, k) for k in ("fit", "cluster_size", "nu", "dedupe", "min_rate", "max_rate",
+    rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies",
                                                     "null_templates", "max_plans")},
                funnel=dict(roots=len(rr), fit_roots=int((psplit == 0).sum()), select_roots=stats["select"]["roots"],
                            replicate_roots=stats["replicate"]["roots"], lps=len(jobs), templates=len(temps), merged=len(templates),
@@ -2131,6 +2148,17 @@ def plans(a):
     print(f"wrote {res / 'plans.md'}, {out / 'plans.json'} and {out / 'plans.html'}")
 
 
+def describe_concept(cols, w, nlat, plies, ex, most=16):
+    """A concept in words: its heaviest latents, and on whose move they count."""
+    out = []
+    for h, j, v in sorted(zip(cols // nlat, cols % nlat, w), key=lambda x: -abs(x[2]))[:most]:
+        e = ex.get(int(j))
+        when = {"own": "own move", "all": "any ply"}.get(plies) or ("own move" if h == 0 else "opponent's move")
+        out.append(dict(latent=int(j), weight=float(v), when=when,
+                        text=e["explanation"] if e and e.get("status") in ("explained", "weak") else f"latent {j}"))
+    return out
+
+
 def example(Ld, by, evals, z, ri):
     root = Ld["roots"][ri]
     item = dict(fen=root["fen"], band=root["band"], s_top=root["s_top"], w_top=root["w_top"], lines={})
@@ -2143,8 +2171,7 @@ def example(Ld, by, evals, z, ri):
 
 def plan_words(r, most=6):
     top = sorted(r["features"], key=lambda f: -abs(f["weight"]))[:most]
-    return "; ".join(f"ply {f['ply']}: {'+' if f['weight'] > 0 else '-'}{f['text']} ({abs(f['weight']):.2f})"
-                     for f in sorted(top, key=lambda f: f["ply"]))
+    return "; ".join(f"{f['text']} ({f['weight']:.2f})" for f in top)
 
 
 def plans_text(rec, a):
@@ -2230,11 +2257,11 @@ net.on("click", ev => {{
     selection ${{p.select_margin.toFixed(3)}}, replication ${{p.replicate_margin.toFixed(3)}} (random templates' 95th percentile
     ${{p.replicate_null95.toFixed(3)}}); ${{(100 * p.replicate_share).toFixed(0)}}% of replication roots favour ${{p.side}}</div>
     <div>executed by S's rollout and not W's on ${{e.S_not_W}} roots, the reverse on ${{e.W_not_S}}</div>`;
-  h += "<h4>template</h4>" + p.features.map(f => `<div class="f">ply ${{f.ply}} (${{f.ply % 2 ? "opponent" : "player"}} to move):
-    <b>${{f.role}}</b> ${{f.text}} (${{Math.abs(f.weight).toFixed(2)}})</div>`).join("");
+  h += "<h4>concept: latents, summed over the rollout</h4>" + p.features.map(f => `<div class="f">${{f.text}}
+    (${{f.when}}, weight ${{f.weight.toFixed(2)}})</div>`).join("");
   for (const x of (p.examples || [])) h += `<h4>${{x.band}} root: ${{p.side}}'s rollout carries it out, the other doesn't</h4>
     ${{board(x.fen, x.lines[p.side].first)}}<div class="ln">S would play ${{x.s_top}}, W ${{x.w_top}}<br>
-    <b>S's rollout</b>: ${{x.lines.S.sans.join(" ")}}<br><b>W's rollout</b> (S replying): ${{x.lines.W.sans.join(" ")}}</div>`;
+    <b>S's rollout</b>: ${{x.lines.S.sans.join(" ")}}<br><b>W's rollout</b>: ${{x.lines.W.sans.join(" ")}}</div>`;
   document.getElementById("card").innerHTML = h;
 }});
 </script></body></html>""", encoding="utf-8")
@@ -2302,9 +2329,10 @@ def main():
     g.add_argument("--max-motifs", type=int, default=20_000, help="motif candidates at most")
     g.add_argument("--show", type=int, default=20, help="motifs (and plans) listed per direction")
     g = ap.add_argument_group("plans")
-    g.add_argument("--fit", choices=["root", "cluster", "both"], default="cluster",
-                   help="fit templates per cluster of roots (default), per root (one constraint: single features), or both")
-    g.add_argument("--cluster-size", type=int, default=20, help="roots per cluster (k-means on the root position's latents)")
+    g.add_argument("--sum-plies", choices=["all", "own", "split"], default="all",
+                   help="plies summed per rollout: all (default: the models write both colours' moves, so every ply is "
+                        "the model's), own (only the root's side to move) or split (the two as separate latents)")
+    g.add_argument("--cluster-size", type=int, default=20, help="roots per cluster (k-means on the roots' S - W differences)")
     g.add_argument("--nu", type=float, default=0.2, help="soft margin: the share of roots allowed inside it (fit and filter)")
     g.add_argument("--dedupe", type=float, default=0.5, help="cosine at which templates merge")
     g.add_argument("--null-templates", type=int, default=50, help="rate-matched random templates per template")
