@@ -6,15 +6,15 @@ S only: S plays every move of every rollout (W's activations are read too, becau
 1. position   one middlegame position from a held-out game with at least two reasonable moves: the first candidate (in a
               seeded random order) where S gives >= 2 moves >= --reasonable and none more than --max-top.
 2. temperature --rollouts rollouts of --plies plies at each of --temps; per T the number of distinct lines and the share of
-              the most common one; the lowest T with >= --min-distinct distinct lines and no line above --max-line is used.
+              the most common one, and the median ply at which a line leaves it; the lowest T with >= --min-distinct distinct lines and no line above --max-line is used.
 3. encode     every distinct line through the crosscoder; a line is, per latent, the share of its plies where it fires;
-              each line weighted by how often it was sampled (a repeated line is not independent evidence); latents
-              firing in 5-95% of the rollouts (weighted) kept.
+              each line weighted by how often it was sampled (a repeated line is not independent evidence); candidate
+              latents: those whose fraction varies across the lines (weighted sd >= --min-sd).
 4. concepts   weighted correlations of every pair of latents over the distinct lines; null: each latent's values
               shuffled across the distinct lines independently (the weights stay with the lines), --shuffles times, the
               largest correlation each time, the threshold the 95th percentile of those maxima (family-wise); average
-              linkage (distance 1 - r) cut there; every group of >= 3 latents a candidate concept. A rollout carries a
-              concept when at least half the group's latents fire in it.
+              linkage (distance 1 - r) cut there; every group of >= 3 latents a candidate concept. A line carries a
+              concept when at least half the group's latents are above their own weighted median fraction in it.
 5. board      splits read off the board (the first move; which piece goes to which square; castling, by side; pawn
               breaks, pawn captures and pushes to the fifth rank or beyond; trades, a capture recaptured on the same
               square, and the queens coming off): per concept, the share of carrying and of other rollouts in each split,
@@ -97,6 +97,17 @@ def rollouts(a, root, legal, lp, Sm, dev, T, seed):
     return [tuple(l["sans"]) for l in L], [tuple(l["moves"]) for l in L]
 
 
+def split_ply(D):
+    """The ply (1-based) at which each distinct line first leaves the most common one -> list (one per other line)."""
+    top = D[0]["sans"]
+    out = []
+    for d in D[1:]:
+        s_ = d["sans"]
+        i = next((i for i, (x, y) in enumerate(zip(s_, top)) if x != y), min(len(s_), len(top)))
+        out.append(i + 1)
+    return out
+
+
 def distinct(sans, ucis):
     """The distinct lines, most common first -> [dict(sans, moves, n)]."""
     cnt = Counter(zip(sans, ucis))
@@ -161,27 +172,44 @@ def groups_of(R, thr):
     return [np.flatnonzero(lab == c) for c in np.unique(lab) if (lab == c).sum() >= 3]
 
 
-def carrying(X, g):
-    """A line carries a concept when at least half the group's latents fire in it."""
-    return (X[:, g] > 0).mean(1) >= 0.5
+def wmedian(X, w):
+    """Each column's weighted median over the rows."""
+    o = np.argsort(X, 0)
+    cw = np.cumsum(w[o], 0)
+    k = (cw < 0.5).sum(0)
+    return np.take_along_axis(X, o, 0)[np.minimum(k, len(X) - 1), np.arange(X.shape[1])]
+
+
+def above(X, g, med):
+    """Per line, the share of the group's latents above their own weighted median fraction."""
+    return (X[:, g] > med[g][None, :]).mean(1)
+
+
+def carrying(X, g, med):
+    """A line carries a concept when at least half the group's latents are above their own weighted median fraction
+    (with 16 plies nearly every latent fires somewhere in nearly every line, so "fires at all" has no contrast)."""
+    return above(X, g, med) >= 0.5
 
 
 def concepts(X, w, a, rng, tag):
-    """Steps 3-4 on one batch's distinct lines -> kept latents, threshold, [dict(latents, share, r)]."""
+    """Steps 3-4 on one batch's distinct lines -> kept latents, threshold, [dict(latents, share, r)], medians. Candidate
+    latents: those whose fraction of plies varies across the lines (weighted sd >= --min-sd)."""
     t0 = time.time()
-    share = w @ (X > 0)
-    kk = np.flatnonzero((share >= a.min_share) & (share <= a.max_share))
+    mu = w @ X
+    sd = np.sqrt(w @ (X - mu) ** 2)
+    kk = np.flatnonzero(sd >= a.min_sd)
     Xk = X[:, kk]
+    med = wmedian(X, w)
     thr = shuffle_threshold(Xk, w, a.shuffles, rng)
     R = wcorr(Xk, w)
     out = []
     for g in groups_of(R, thr):
-        out.append(dict(latents=kk[g].tolist(), share=float(w @ carrying(Xk, g)),
+        out.append(dict(latents=kk[g].tolist(), share=float(w @ carrying(X, kk[g], med)),
                         r=float(R[np.ix_(g, g)][np.triu_indices(len(g), 1)].mean())))
     out.sort(key=lambda c: -c["r"])
-    print(f"  {tag}: {len(kk)} latents firing in {a.min_share:.0%}-{a.max_share:.0%} of rollouts; threshold r > {thr:.3f} "
+    print(f"  {tag}: {len(kk)} latents whose fraction of plies varies (weighted sd >= {a.min_sd}); threshold r > {thr:.3f} "
           f"(family-wise); {len(out)} concepts of >= 3 latents ({time.time() - t0:.0f}s)", flush=True)
-    return kk, thr, out
+    return kk, thr, out, med
 
 
 def board_splits(D, root):
@@ -267,8 +295,8 @@ def main():
     ap.add_argument("--temps", default="0.2,0.4,0.6", help="temperatures to choose from, lowest first")
     ap.add_argument("--min-distinct", type=int, default=20, help="distinct lines the chosen temperature needs ...")
     ap.add_argument("--max-line", type=float, default=0.5, help="... with no single line above this share")
-    ap.add_argument("--min-share", type=float, default=0.05, help="latents firing in at least this share of rollouts ...")
-    ap.add_argument("--max-share", type=float, default=0.95, help="... and at most this share")
+    ap.add_argument("--min-sd", type=float, default=0.05, help="candidate latents: weighted sd of their fraction of plies "
+                    "across the lines at least this")
     ap.add_argument("--shuffles", type=int, default=100)
     ap.add_argument("--jaccard", type=float, default=0.3, help="latent overlap at which a concept counts as found again")
     ap.add_argument("--batch", type=int, default=48)
@@ -301,9 +329,11 @@ def main():
             sans, ucis = rollouts(a, root, legal, lp0, Sm, dev, T, [a.seed, int(T * 1000), 1])
             D = distinct(sans, ucis)
             ok = len(D) >= a.min_distinct and D[0]["n"] / a.rollouts <= a.max_line
-            temps.append(dict(T=T, distinct=len(D), top=D[0]["n"] / a.rollouts, ok=ok))
-            print(f"T {T}: {len(D)} distinct lines of {a.rollouts}, the most common {D[0]['n'] / a.rollouts:.0%} "
-                  f"({time.time() - t0:.0f}s)", flush=True)
+            sp = split_ply(D)
+            temps.append(dict(T=T, distinct=len(D), top=D[0]["n"] / a.rollouts, ok=ok,
+                              split=float(np.median(sp)) if sp else float("nan")))
+            print(f"T {T}: {len(D)} distinct lines of {a.rollouts}, the most common {D[0]['n'] / a.rollouts:.0%}, "
+                  f"median ply at which a line leaves it {temps[-1]['split']:.0f} ({time.time() - t0:.0f}s)", flush=True)
             if ok and chosen is None:
                 chosen = (T, D)
         if chosen is None:
@@ -327,16 +357,18 @@ def main():
            f"Position `{root['fen']}` ({root['band']} game {root['game']}); S's top moves "
            + ", ".join(f"{s} {q:.0%}" for s, q in root["top"]) + f". {a.rollouts} rollouts of S, {a.plies} plies, S plays both "
            "colours; a line is, per latent, the share of its plies where the latent fires; distinct lines weighted by how often "
-           "each was sampled.", "", "## Temperature", "", "| T | distinct lines | most common line | used |", "|---|---|---|---|"]
-    out += [f"| {t['T']} | {t['distinct']} | {t['top']:.0%} | {'yes' if t['T'] == T else ''} |" for t in C["temps"]]
+           "each was sampled.", "", "## Temperature", "",
+           "| T | distinct lines | most common line | median ply where a line leaves the most common one | used |", "|---|---|---|---|---|"]
+    out += [f"| {t['T']} | {t['distinct']} | {t['top']:.0%} | {t.get('split', float('nan')):.0f} | {'yes' if t['T'] == T else ''} |"
+            for t in C["temps"]]
     out += ["", f"T = {T}: the lowest with >= {a.min_distinct} distinct lines and no line above {a.max_line:.0%}.", ""]
     found = []
     for k, (D, X) in enumerate(zip(C["batches"], Xs), 1):
         w = np.array([d["n"] for d in D], float)
         w /= w.sum()
-        kk, thr, cs = concepts(X, w, a, rng, f"batch {k}")
-        found.append((D, X, w, kk, thr, cs))
-    (D1, X1, w1, kk1, thr1, c1), (D2, X2, w2, kk2, thr2, c2) = found
+        kk, thr, cs, med = concepts(X, w, a, rng, f"batch {k}")
+        found.append((D, X, w, kk, thr, cs, med))
+    (D1, X1, w1, kk1, thr1, c1, med1), (D2, X2, w2, kk2, thr2, c2, _) = found
     for i, c in enumerate(c1):                                         # step 6: in the second batch?
         c["name"] = str(i + 1)
         s1 = set(c["latents"])
@@ -345,7 +377,7 @@ def main():
         c["replicated"] = jac >= a.jaccard
     splits = board_splits(D1, root)                                    # step 5
     for c in c1:
-        fire = carrying(X1, np.array(c["latents"]))
+        fire = carrying(X1, np.array(c["latents"]), med1)
         ph = sorted(((wphi(fire, m, w1), nm) for nm, m in splits.items()), key=lambda x: -abs(x[0]))
         c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ m[fire] / max(w1[fire].sum(), 1e-12)),
                             other=float(w1[~fire] @ m[~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
@@ -363,8 +395,8 @@ def main():
     out += ["", f"{len(splits)} board splits tested (each in 5-95% of the rollouts).", ""]
     for c in rk:                                                       # step 7
         g = np.array(c["latents"])
-        fire = carrying(X1, g)
-        dens = (X1[:, g] > 0).mean(1)
+        fire = carrying(X1, g, med1)
+        dens = above(X1, g, med1)
         yes = [i for i in np.argsort(-dens) if fire[i]][:3]
         no = [i for i in np.argsort(dens) if not fire[i]][:3]
         out += [f"### Concept {c['name']}: latents {', '.join(map(str, c['latents']))}; carried by {c['share']:.0%} of the rollouts", ""]
