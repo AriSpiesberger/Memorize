@@ -79,9 +79,9 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
         crosscoder gives both models one standardised dictionary, so S's and W's rollouts are compared on the
         same features (never on the models' own activations, which live in different spaces). A concept is a
         non-negative vector v over the latents (activations scaled by each latent's mean where it fires,
-        latents firing on --min-rate..--max-rate), applied to every ply of a rollout and averaged over its plies
-        (--sum-plies all; own/split are options; averaged, not summed, so a rollout that ends early isn't
-        smaller), so it can occur at any ply. Per root, d = the mean over S's rollouts minus over W's (plies after
+        latents firing on --min-rate..--max-rate), applied to every ply of a rollout and combined per latent
+        (--aggregate mean, the default, so a rollout that ends early isn't smaller; or sum, or max: did it happen
+        at all), over every ply (--sum-plies all; own/split are options), so it can occur at any ply. Per root, d = the mean over S's rollouts minus over W's (plies after
         the root, which they all share). One departure from Schut, who requires v . z+_t >= v . z-_t at every
         step: here the rollout's total has to separate, so a concept may sit in a few plies. Roots are split by
         game three ways: fit (not held out), selection and replication (the held-out games, halved).
@@ -101,14 +101,19 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
           control      with S2 rollouts: each concept's margin on S - S2 on the same roots (a concept that also
                        separates S from S is noise, and dropped), and the whole of 1-3 run on S - S2 (how many
                        concepts sampling noise alone produces).
-          4. graph     concepts as nodes, on the replication roots: active at a ply when v . (that ply's latents)
-                       reaches halfway between its mean on S's and on W's selection rollouts. Follows: lift at lags
-                       2, 4, 6, G_S vs G_W, bootstrap + BH (as for latents); competes: active together less than
-                       chance (lag-0 lift with its interval below 1); replaces: S's rollout carries out B where
-                       W's carries out A (a rollout carries a concept out when its summed score reaches the halfway
-                       mark), lift over chance.
-        -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the concept graph and a
-           card per concept: its latents, and roots where its side's rollout carries it out)
+          4. graphs    three, over the same concepts (all that passed, S's and W's), on the replication roots,
+                       ply-free: a rollout executes a concept when its aggregated score reaches the threshold
+                       (halfway between the concept's mean on S's and on W's selection roots).
+                         G_S, G_W   nodes sized by how often that model's rollouts execute each concept; edges:
+                                    lift of A and B executed in the same rollout over chance, bootstrap over roots,
+                                    BH at --fdr, kept at lift >= --lift (go together) or <= 1/--lift (alternatives)
+                         G_diff     nodes: execution rate S minus W, McNemar over roots, BH; edges: log-lift in
+                                    G_S minus in G_W, bootstrap over roots, BH at --fdr
+                         control    G_diff from S against S2: should come out nearly empty
+          5. directions  each concept in each model's own activation space, u_m = sum_j v_j d_j^m (the latents'
+                       decoder directions, v undone of the scaling): for steering. -> <run>/concept_directions.npz
+        -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the three graphs and a
+           card per concept: its latents, and roots where its side's rollout carries it out), concept_directions.npz
 nodes   Latents, from the rollouts alone. Per root and latent, d = its activation averaged over S's
         rollouts minus over W's (plies after the root); a root counts for a latent when d != 0. Exact sign test on
         >= --min-pairs fit roots (BH at --fdr-nodes over the latents firing on --min-rate..--max-rate),
@@ -1301,7 +1306,8 @@ def nodes(a):
     fit_pos = fit_root[pos_root]
     rate = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat) / max(fit_pos.sum(), 1)
     active = (rate >= a.min_rate) & (rate <= a.max_rate)
-    X, _, _ = rollout_sums(z, np.ones(nlat, bool), scales_of(z, nlat), T, nlat, "all" if a.sum_plies == "split" else a.sum_plies)
+    X, _, _ = rollout_sums(z, np.ones(nlat, bool), scales_of(z, nlat), T, nlat, "all" if a.sum_plies == "split" else a.sum_plies,
+                           a.aggregate)
     mean = {}
     for kind in ("S", "W") + (("S2",) if control else ()):
         rows = [(q, g) for g, ri in enumerate(rr) for q in by[(ri, kind)]]
@@ -1972,9 +1978,10 @@ def per_root(X, groups, n):
     return (M @ X).tocsr()
 
 
-def rollout_sums(z, keep, scale, T, nlat, plies):
-    """(lines, F) sparse: each rollout's scaled latents averaged over the plies it counts (after the root, which both
-    models share; --sum-plies all, own or split), so a rollout that ends early isn't smaller; and C, the same per ply."""
+def rollout_sums(z, keep, scale, T, nlat, plies, agg="mean"):
+    """(lines, F) sparse: each rollout's scaled latents over the plies it counts (after the root, which both models
+    share; --sum-plies all, own or split), combined per latent by --aggregate: mean (default: a rollout that ends early
+    isn't smaller), sum, or max (did it happen at all, anywhere in the line); and C, the same per ply."""
     from scipy import sparse
     C = line_matrix(z, keep, scale, T, nlat)
     nf = 2 if plies == "split" else 1
@@ -1982,9 +1989,20 @@ def rollout_sums(z, keep, scale, T, nlat, plies):
     on = (t_ >= 1) & ((t_ % 2 == 0) if plies == "own" else True)
     Pm = sparse.csr_matrix((np.ones(on.sum()), (np.flatnonzero(on), (t_[on] % 2) * nlat * (nf - 1) + j_[on])),
                            shape=(C.shape[1], nf * nlat))
-    n = np.diff(z["line_start"]) - 1                                    # plies after the root
-    n = n // 2 if plies == "own" else n
-    X = sparse.diags(1.0 / np.maximum(n, 1)) @ (C @ Pm)
+    if agg == "max":
+        X = None
+        for t in range(1, T + 1):
+            if plies == "own" and t % 2:
+                continue
+            blk = C[:, t * nlat:(t + 1) * nlat].tocoo()
+            blk = sparse.csr_matrix((blk.data, (blk.row, blk.col + (t % 2) * nlat * (nf - 1))), shape=(C.shape[0], nf * nlat))
+            X = blk if X is None else X.maximum(blk)
+        return X.tocsr(), C, nf
+    X = C @ Pm
+    if agg == "mean":
+        n = np.diff(z["line_start"]) - 1                                # plies after the root
+        n = n // 2 if plies == "own" else n
+        X = sparse.diags(1.0 / np.maximum(n, 1)) @ X
     return X.tocsr(), C, nf
 
 
@@ -2087,7 +2105,8 @@ def plans(a):
     fit_pos = split[pos_root] == 0
     rate = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat) / max(fit_pos.sum(), 1)
     keep = (rate >= a.min_rate) & (rate <= a.max_rate)
-    X, C, nf = rollout_sums(z, keep, scales_of(z, nlat), T, nlat, a.sum_plies)
+    scale_ = scales_of(z, nlat)
+    X, C, nf = rollout_sums(z, keep, scale_, T, nlat, a.sum_plies, a.aggregate)
     F = nf * nlat
     by = rollouts_by(L)
     control = all((ri, "S2") in by for ri in range(len(roots)) if (ri, "S") in by)
@@ -2149,57 +2168,76 @@ def plans(a):
     xW = np.asarray((mean["W"][rep_rows] @ Wm).todense()) >= tau
     b, c, _ = mcnemar(xS, xW)
 
-    # the concept graph on the replication roots: concepts as nodes, active at a ply (above); follows (lags 2, 4, 6),
-    # competes (rarely active together, lag 0), replaces (S's rollouts carry out B where W's carry out A); rollouts
-    # in pairs (S's k-th with W's k-th), bootstrapped by root
+    # three graphs over the same concepts (every one that passed the margin filter, S's and W's together), on the
+    # replication roots, ply-free: a rollout executes a concept when its aggregated score reaches tau
+    #   G_S, G_W  nodes sized by how often that model's rollouts execute each concept; edges: lift of executing A and B
+    #             in the same rollout over chance, kept when clearly away from 1 (above: go together; below: alternatives)
+    #   G_diff    nodes: execution in S's rollouts against W's (McNemar over roots); edges: log-lift in G_S minus in G_W
+    #   control   G_diff from S against S2: should come out nearly empty
     keep_g = replicated & ~ctrl_both
     gi = np.flatnonzero(keep_g)
     order = gi[np.argsort(-stats["replicate"]["margin"][gi])][:a.max_plans]
-    P = [templates[g] for g in order]
-    Wp = weights_matrix(P, F)
-    counted = [t for t in range(1, T + 1) if not (a.sum_plies == "own" and t % 2)]
+    Wo, tau_o = Wm[:, order], tau[order]
+    kinds = ("S", "W") + (("S2",) if control else ())
+    nk = {ri: min(len(by[(ri, k)]) for k in kinds) for ri in droots}
+    rows = {k: [by[(ri, k)][j] for ri in droots for j in range(nk[ri])] for k in kinds}
+    grp = np.array([g for g, ri in enumerate(droots) for _ in range(nk[ri])])
+    ex_ = {k: np.asarray((X[rows[k]] @ Wo).todense()) >= tau_o for k in kinds}             # (rollouts, concepts)
+    graphs = dict(nodes=[], S=[], W=[], diff=[], control=None)
+    if len(order) >= 2 and len(droots) >= a.min_roots:
+        bn, cn, pn = mcnemar(xS[:, order], xW[:, order])
+        qn, sn = bh(pn, a.fdr)
+        for k, g in enumerate(order):
+            graphs["nodes"].append(dict(id=int(g), side="S" if sign[g] > 0 else "W", rate_S=float(ex_["S"][:, k].mean()),
+                                        rate_W=float(ex_["W"][:, k].mean()), S_not_W=int(bn[k]), W_not_S=int(cn[k]),
+                                        q=float(qn[k]), sig=bool(sn[k])))
+        T_ = lambda e: torch.from_numpy(np.concatenate([e.astype(np.float32), np.ones((len(e), 1), np.float32)], 1)[:, None]).to(dev)
+        iu = np.triu_indices(len(order), 1)
 
-    def ply_scores(lines):
-        s_ = np.zeros((len(lines), T + 1, len(P)), np.float32)
-        Cl = C[lines]
-        for t in counted:
-            half = (t % 2) * nlat * (nf - 1)
-            s_[:, t] = np.asarray((Cl[:, t * nlat:(t + 1) * nlat] @ Wp[half:half + nlat]).todense())
-        return s_
+        def edges(E0, which):
+            """Significant pairs: of one graph's log-lift ("S", "W"), or of their difference ("diff")."""
+            l, sd, n = ((E0["lS"], E0["sd_lS"], E0["nS"]) if which == "S" else (E0["lW"], E0["sd_lW"], E0["nW"]) if which == "W"
+                        else (E0["lS"] - E0["lW"], E0["sd_D"], np.maximum(E0["nS"], E0["nW"])))
+            l, sd, n = l[:len(order), :len(order)][iu], sd[:len(order), :len(order)][iu], n[:len(order), :len(order)][iu]
+            t = n >= a.min_count
+            p = np.array([math.erfc(abs(v) / math.sqrt(2)) for v in l[t] / np.maximum(sd[t], 1e-9)])
+            q, s_ = bh(p, a.fdr)
+            out_ = []
+            for (i, j, li, ni), qi, si in zip(np.array([iu[0][t], iu[1][t], l[t], n[t]]).T, q, s_):
+                if si and (which == "diff" or abs(li) >= math.log(a.lift)):
+                    out_.append(dict(a=int(order[int(i)]), b=int(order[int(j)]), n=int(ni), q=float(qi),
+                                     **({"delta": float(li), "lift_S": float(np.exp(E0["lS"][int(i), int(j)])),
+                                         "lift_W": float(np.exp(E0["lW"][int(i), int(j)]))} if which == "diff" else {"lift": float(np.exp(li))})))
+            return out_, int(t.sum())
 
-    pr = [(by[(ri, "S")][k], by[(ri, "W")][k], g) for g, ri in enumerate(droots)
-          for k in range(min(len(by[(ri, "S")]), len(by[(ri, "W")])))]
-    sel_lines = [q for ri in rr[sel_rows] for kind in ("S", "W") for q in by[(ri, kind)]]
-    plan_rows, competes, replaces = [], [], []
-    if len(P) >= 2 and len(droots) >= a.min_roots:
-        sp = ply_scores(sel_lines)[:, counted]
-        tau_ply = sp.reshape(-1, len(P)).mean(0)
-        AS, AW = np.zeros((len(pr), T + 1, len(P) + 1), np.float32), np.zeros((len(pr), T + 1, len(P) + 1), np.float32)
-        for A_, ls in ((AS, [p[0] for p in pr]), (AW, [p[1] for p in pr])):
-            for r, q in enumerate(ls):
-                A_[r, :z["line_start"][q + 1] - z["line_start"][q], -1] = 1
-            A_[:, counted, :-1] = (ply_scores(ls)[:, counted] >= tau_ply[None, None]) * A_[:, counted, -1:]
-        tS, tW = torch.from_numpy(AS).to(dev), torch.from_numpy(AW).to(dev)
-        E = diff_edges(tS, tW, [k for k in (0, 2, 4, 6) if k <= T], a, dev, groups=np.array([p[2] for p in pr]))
-        for e in E.values():
-            for k_ in e:
-                e[k_] = e[k_][:len(P)] if e[k_].ndim == 1 else e[k_][:len(P), :len(P)]
-        pnodes = [dict(kind="plan", id=int(g), label=f"concept {int(g)}") for g in order]
-        plan_rows = categorise({k: v for k, v in E.items() if k > 0}, pnodes, a)
-        e0 = E[0]
-        for i in range(len(P)):
-            for j in range(i + 1, len(P)):
-                for who, l_, sd_, n_ in (("S", e0["lS"], e0["sd_lS"], e0["aS"]), ("W", e0["lW"], e0["sd_lW"], e0["aW"])):
-                    if min(n_[i], n_[j]) >= a.min_count and l_[i, j] + 1.96 * sd_[i, j] < 0:
-                        competes.append(dict(a=int(order[i]), b=int(order[j]), lines=who, lift=float(np.exp(l_[i, j]))))
-        onlyW = (xW[:, order] & ~xS[:, order]).astype(np.float64)
-        onlyS = (xS[:, order] & ~xW[:, order]).astype(np.float64)
-        nAB = onlyW.T @ onlyS
-        lift = (nAB + a.prior) / (np.outer(onlyW.sum(0), onlyS.sum(0)) / max(len(droots), 1) + a.prior)
-        for i, j in zip(*np.nonzero((nAB >= a.min_count) & ~np.eye(len(P), dtype=bool))):
-            replaces.append(dict(w_plan=int(order[i]), s_plan=int(order[j]), roots=int(nAB[i, j]), lift=float(lift[i, j])))
-        replaces.sort(key=lambda r: -r["lift"])
-        competes.sort(key=lambda r: r["lift"])
+        E0 = diff_edges(T_(ex_["S"]), T_(ex_["W"]), [0], a, dev, groups=grp)[0]
+        (graphs["S"], tested), (graphs["W"], _), (graphs["diff"], _) = edges(E0, "S"), edges(E0, "W"), edges(E0, "diff")
+        graphs["tested"] = tested
+        if control:
+            Ec = diff_edges(T_(ex_["S"]), T_(ex_["S2"]), [0], a, dev, groups=grp)[0]
+            xS2 = np.asarray((mean["S2"][rep_rows] @ Wm).todense()) >= tau
+            _, _, pc = mcnemar(xS[:, order], xS2[:, order])
+            graphs["control"] = dict(nodes=int(bh(pc, a.fdr)[1].sum()), edges=len(edges(Ec, "diff")[0]))
+        print(f"  graphs on {len(droots)} replication roots ({len(grp)} rollouts each side), {len(order)} concepts: "
+              f"{len(graphs['S'])} edges in G_S, {len(graphs['W'])} in G_W, {len(graphs['diff'])} in G_diff, "
+              f"{sum(n['sig'] for n in graphs['nodes'])} concepts executed differently"
+              + (f"; control (S against S): {graphs['control']['nodes']} concepts, {graphs['control']['edges']} G_diff edges"
+                 if graphs["control"] else ""), flush=True)
+
+    # each concept as a direction in each model's own activation space (for steering): u_m = sum_j v_j d_j^m, with v
+    # undone of the latents' scaling and the crosscoder's input scale
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    dec = cc.coder.W_dec.detach().numpy()                                   # (latents, sources, d)
+    sc = cc.scales.cpu().numpy()
+    U = {m: np.zeros((len(templates), dec.shape[2]), np.float32) for m in (cc.s, cc.w)}
+    for g, (cols, w) in enumerate(templates):
+        j = cols % nlat
+        vj = np.bincount(j, weights=w / scale_[j], minlength=nlat)
+        for m in (cc.s, cc.w):
+            U[m][g] = vj @ dec[:, cc.col[m]] / sc[cc.col[m]]
+    np.savez(out / "concept_directions.npz", ids=np.arange(len(templates)), S=U[cc.s], W=U[cc.w],
+             replicated=replicated, control=ctrl_both, S_model=cc.info["models"][cc.s], W_model=cc.info["models"][cc.w],
+             layer=np.array([cc.layer[cc.s], cc.layer[cc.w]]))
 
     recs = []
     for g, (cols, w) in enumerate(templates):
@@ -2217,7 +2255,7 @@ def plans(a):
             want = (xS[:, g] & ~xW[:, g]) if sign[g] > 0 else (xW[:, g] & ~xS[:, g])
             r["examples"] = [example(Ld, by, evals, z, int(ri)) for ri in droots[want][:3]]
         recs.append(r)
-    rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "local",
+    rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate", "local",
                                                     "null_templates", "max_plans")},
                funnel=dict(roots=len(rr), rollouts=k_, identical=int(zero.sum()), fit_roots=int((psplit == 0).sum()),
                            select_roots=stats["select"]["roots"], replicate_roots=stats["replicate"]["roots"],
@@ -2226,15 +2264,13 @@ def plans(a):
                            replicated_S=int((sign[replicated] > 0).sum()), replicated_W=int((sign[replicated] < 0).sum()),
                            null_select=stats["select"]["null_pos"], null_replicate=stats["replicate"]["null_pos"],
                            control=ctrl_run, also_control=int((replicated & ctrl_both).sum()), kept=int(keep_g.sum())),
-               plans=recs, graph=dict(nodes=[int(g) for g in order], follows=[dict(r, src=int(order[r["src"]]), dst=int(order[r["dst"]]))
-                                                                             for r in plan_rows if r["category"] != "shared"],
-                                     competes=competes[:200], replaces=replaces[:200]))
+               plans=recs, graph=graphs)
     (out / "plans.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
     res.mkdir(parents=True, exist_ok=True)
     (res / "plans.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
     plans_page(out / "plans.html", out.name, rec)
     print(plans_text(rec, a))
-    print(f"wrote {res / 'plans.md'}, {out / 'plans.json'} and {out / 'plans.html'}")
+    print(f"wrote {res / 'plans.md'}, {out / 'plans.json'}, {out / 'plans.html'} and {out / 'concept_directions.npz'}")
 
 
 def describe_concept(cols, w, nlat, plies, ex, most=16):
@@ -2303,59 +2339,89 @@ def plans_text(rec, a):
         out.append("")
     g = rec["graph"]
     lab = {r["id"]: r for r in rec["plans"]}
-    if g["follows"]:
-        out += ["## Plan graph: which plans follow which (S-only and W-only edges)", "", "| lag | from | to | lift S | lift W | category |",
-                "|---|---|---|---|---|---|"]
-        for r in sorted(g["follows"], key=lambda r: -abs(r["delta"]))[:a.show]:
-            out.append(f"| {r['lag']} | {r['src']}: {plan_words(lab[r['src']], 2)} | {r['dst']}: {plan_words(lab[r['dst']], 2)} | "
-                       f"{r['lift_S']:.2f} | {r['lift_W']:.2f} | {r['category']} |")
-        out.append("")
-    if g["replaces"]:
-        out += ["## Replacements: S executes the second plan where W executes the first (same root)", "",
-                "| W's plan | S's plan | roots | lift |", "|---|---|---|---|"]
-        out += [f"| {r['w_plan']}: {plan_words(lab[r['w_plan']], 2)} | {r['s_plan']}: {plan_words(lab[r['s_plan']], 2)} | {r['roots']} | "
-                f"{r['lift']:.2f} |" for r in g["replaces"][:a.show]]
-        out.append("")
-    if g["competes"]:
-        out += ["## Competing plans (rarely executed in the same line)", "", "| plan | plan | lines | lift |", "|---|---|---|---|"]
-        out += [f"| {r['a']}: {plan_words(lab[r['a']], 2)} | {r['b']}: {plan_words(lab[r['b']], 2)} | {r['lines']} | {r['lift']:.2f} |"
-                for r in g["competes"][:a.show]]
+    name = lambda i: f"{i} ({lab[i]['side']}'s): {plan_words(lab[i], 2)}"
+    if g["nodes"]:
+        c = g.get("control")
+        out += ["## Concept graphs (replication roots, ply-free: a rollout executes a concept when its score reaches the threshold)", "",
+                f"{len(g['nodes'])} concepts; {g.get('tested', 0)} pairs with >= {a.min_count} co-executions tested, BH at {a.fdr}.", "",
+                "| graph | edges | control: S against S |", "|---|---|---|",
+                f"| G_S: concepts S's rollouts execute together (lift > 1) or as alternatives (< 1), lift >= {a.lift} or <= 1/{a.lift} | "
+                f"{len(g['S'])} | |",
+                f"| G_W: the same in W's rollouts | {len(g['W'])} | |",
+                f"| G_diff, nodes: executed more by one model (McNemar over roots) | {sum(n['sig'] for n in g['nodes'])} | "
+                f"{c['nodes'] if c else '-'} |",
+                f"| G_diff, edges: log-lift in G_S minus in G_W (bootstrap over roots) | {len(g['diff'])} | {c['edges'] if c else '-'} |", ""]
+        if c and (c["edges"] > 0.2 * max(len(g["diff"]), 1) or c["nodes"] > 0.2 * max(sum(n["sig"] for n in g["nodes"]), 1)):
+            out += ["**Warning**: G_diff from two samples of S is not nearly empty: the threshold or the test is too loose.", ""]
+        nd = sorted((n for n in g["nodes"] if n["sig"]), key=lambda n: n["q"])[:a.show]
+        if nd:
+            out += ["Concepts executed more by one model:", "", "| concept | rate in S's / W's rollouts | roots S not W / W not S | q |",
+                    "|---|---|---|---|"]
+            out += [f"| {name(n['id'])} | {n['rate_S']:.0%} / {n['rate_W']:.0%} | {n['S_not_W']} / {n['W_not_S']} | {n['q']:.2g} |" for n in nd]
+            out.append("")
+        if g["diff"]:
+            out += ["G_diff edges, strongest first (a pairing stronger in S's play: delta > 0; in W's: delta < 0):", "",
+                    "| concept | concept | lift S | lift W | delta | q |", "|---|---|---|---|---|---|"]
+            out += [f"| {name(r['a'])} | {name(r['b'])} | {r['lift_S']:.2f} | {r['lift_W']:.2f} | {r['delta']:+.2f} | {r['q']:.2g} |"
+                    for r in sorted(g["diff"], key=lambda r: -abs(r["delta"]))[:a.show]]
+            out.append("")
+        for who in ("S", "W"):
+            if g[who]:
+                out += [f"G_{who} edges, strongest first:", "", "| concept | concept | lift | co-executions | q |", "|---|---|---|---|---|"]
+                out += [f"| {name(r['a'])} | {name(r['b'])} | {r['lift']:.2f} | {r['n']} | {r['q']:.2g} |"
+                        for r in sorted(g[who], key=lambda r: -abs(math.log(r["lift"])))[:a.show]]
+                out.append("")
     return "\n".join(out)
 
 
 def plans_page(path, name, rec):
-    """plans.html: the plan graph (vis-network) and a card per plan in it, with roots where S executes it and W doesn't."""
-    keep = set(rec["graph"]["nodes"])
+    """plans.html: the three concept graphs (vis-network, one view at a time) and a card per concept, with roots where its
+    side's rollouts carry it out and the other's don't."""
+    keep = {n["id"] for n in rec["graph"]["nodes"]}
     data = dict(plans={r["id"]: r for r in rec["plans"] if r["id"] in keep}, graph=rec["graph"])
     js = json.dumps(data, default=float).replace("</", "<\\/")
     path.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Plans: {html.escape(name)}</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>body{{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}}#net{{flex:1;border-right:1px solid #ccc}}
 #card{{width:560px;overflow:auto;padding:12px}}.ln{{font-family:monospace;font-size:12px}}.f{{margin:2px 0}}{BOARD_CSS}</style></head>
-<body>{BOARD_DEFS}{MOVE_HEAD}<div id="net"></div><div id="card"><h3>Plans: {html.escape(name)}</h3>
-<p>Nodes: plans that passed the margin filter on two sets of new games (green: S's rollouts carry them out, orange: W's). Arrows: one plan follows another
-(green S-only, orange W-only); dashed blue: S executes the arrow's head where W executes its tail; red: rarely in the same line.
-Click a plan.</p></div>
+<body>{BOARD_DEFS}{MOVE_HEAD}<div id="net"></div><div id="card"><h3>Concepts: {html.escape(name)}</h3>
+<p><select id="view"><option value="diff">G_diff: where S's map differs from W's</option><option value="S">G_S: the 2400+ model</option>
+<option value="W">G_W: the 1000-1300 model</option></select></p>
+<p>Nodes: concepts that passed the margin filter on two sets of new games (green: S's, orange: W's). In G_S and G_W a node's size is how often
+that model's rollouts execute it; edges: executed in the same rollout more than chance (blue) or less, as alternatives (red, dashed).
+In G_diff a node's size is the difference in execution rate, coloured by which model executes it more (grey: no significant difference);
+edges: a pairing stronger in S's play (green) or in W's (orange). Click a concept.</p></div>
 <script>{BOARD_JS}
 const D = {js};
 const col = p => p.side === "S" ? "#2e8b57" : "#e08a1e";
-const nodes = new vis.DataSet(Object.values(D.plans).map(p => ({{id: p.id, label: String(p.id), color: col(p), shape: "dot",
-  size: 8 + 2 * Math.sqrt(p.fits)}})));
-const E = [];
-for (const e of D.graph.follows) if (e.src in D.plans && e.dst in D.plans)
-  E.push({{from: e.src, to: e.dst, arrows: "to", color: e.category === "S-only" ? "#2e8b57" : e.category === "W-only" ? "#e08a1e" : "#999"}});
-for (const e of D.graph.replaces.slice(0, 60)) if (e.w_plan in D.plans && e.s_plan in D.plans)
-  E.push({{from: e.w_plan, to: e.s_plan, arrows: "to", dashes: true, color: "#4a6fd6"}});
-for (const e of D.graph.competes.slice(0, 60)) if (e.a in D.plans && e.b in D.plans) E.push({{from: e.a, to: e.b, color: "#d64a4a"}});
-const net = new vis.Network(document.getElementById("net"), {{nodes, edges: new vis.DataSet(E)}}, {{physics: {{stabilization: true}}}});
+const node = {{}}; for (const n of D.graph.nodes) node[n.id] = n;
+const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
+const net = new vis.Network(document.getElementById("net"), {{nodes, edges}}, {{physics: {{stabilization: true}}}});
+function show(view) {{
+  nodes.clear(); edges.clear();
+  nodes.add(D.graph.nodes.map(n => {{
+    const r = view === "W" ? n.rate_W : view === "S" ? n.rate_S : Math.abs(n.rate_S - n.rate_W);
+    const c = view === "diff" ? (n.sig ? (n.rate_S > n.rate_W ? "#2e8b57" : "#e08a1e") : "#ccc") : col(D.plans[n.id]);
+    return {{id: n.id, label: String(n.id), color: c, shape: "dot", size: 6 + 40 * Math.sqrt(r)}};
+  }}));
+  const es = D.graph[view] || [];
+  edges.add(es.map((e, k) => view === "diff"
+    ? {{id: k, from: e.a, to: e.b, width: 1 + 2 * Math.abs(e.delta), color: e.delta > 0 ? "#2e8b57" : "#e08a1e"}}
+    : {{id: k, from: e.a, to: e.b, width: 1 + 2 * Math.abs(Math.log(e.lift)), color: e.lift > 1 ? "#4a6fd6" : "#d64a4a",
+        dashes: e.lift < 1}}));
+}}
+document.getElementById("view").onchange = ev => show(ev.target.value);
+show("diff");
 net.on("click", ev => {{
   if (!ev.nodes.length) return;
   const p = D.plans[ev.nodes[0]], e = p.executed;
-  let h = `<h3>plan ${{p.id}} (${{p.side}}'s)</h3><div>merged from ${{p.fits}} fits; soft margin: fit ${{p.fit_margin.toFixed(3)}},
-    selection ${{p.select_margin.toFixed(3)}}, replication ${{p.replicate_margin.toFixed(3)}} (random templates' 95th percentile
+  const n = node[p.id];
+  let h = `<h3>concept ${{p.id}} (${{p.side}}'s)</h3><div>executed by ${{(100 * n.rate_S).toFixed(0)}}% of S's rollouts,
+    ${{(100 * n.rate_W).toFixed(0)}}% of W's</div><div>merged from ${{p.fits}} fits; soft margin: fit ${{p.fit_margin.toFixed(3)}},
+    selection ${{p.select_margin.toFixed(3)}}, replication ${{p.replicate_margin.toFixed(3)}} (random concepts' 95th percentile
     ${{p.replicate_null95.toFixed(3)}}); ${{(100 * p.replicate_share).toFixed(0)}}% of replication roots favour ${{p.side}}</div>
     <div>executed by S's rollout and not W's on ${{e.S_not_W}} roots, the reverse on ${{e.W_not_S}}</div>`;
-  h += "<h4>concept: latents, summed over the rollout</h4>" + p.features.map(f => `<div class="f">${{f.text}}
+  h += "<h4>latents (combined over the whole rollout)</h4>" + p.features.map(f => `<div class="f">${{f.text}}
     (${{f.when}}, weight ${{f.weight.toFixed(2)}})</div>`).join("");
   for (const x of (p.examples || [])) h += `<h4>${{x.band}} root: ${{p.side}}'s rollout carries it out, the other doesn't</h4>
     ${{board(x.fen, x.lines[p.side].first)}}<div class="ln">S would play ${{x.s_top}}, W ${{x.w_top}}<br>
@@ -2437,6 +2503,8 @@ def main():
     g.add_argument("--cluster-size", type=int, default=100, help="roots per cluster (k-means on the roots' S - W differences)")
     g.add_argument("--min-concept-roots", type=int, default=15,
                    help="held-out roots a concept must be scored on (its clusters' roots with --local) to pass")
+    g.add_argument("--aggregate", choices=["mean", "sum", "max"], default="mean",
+                   help="how a rollout's plies combine, per latent: mean (default), sum, or max (did it happen at all)")
     g.add_argument("--local", action=argparse.BooleanOptionalAction, default=True,
                    help="score each concept on its own clusters' held-out roots (nearest centroid), not all of them")
     g.add_argument("--nu", type=float, default=0.2, help="soft margin: the share of roots allowed inside it (fit and filter)")
