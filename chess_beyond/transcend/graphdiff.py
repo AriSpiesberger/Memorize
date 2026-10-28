@@ -126,10 +126,10 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                                     (BH), the same corrected for each concept's reliability (its execution in the
                                     first and second half of a root's rollouts; disattenuated), and within roots (the
                                     variation among a root's own rollouts, pooled); for S, W, S2 and SH
-          examples     per concept (the --show-examples strongest), a 2x2 of replication rollouts: S's and W's, where it
-                       is clearly present (top 10% of its score, one per game, strongest first) and clearly absent
-                       (bottom 10%: another sample of the same model from the same root when there is one, else the
-                       most similar root by the root position's latents); each with the root board, the rollout in
+          examples     per concept (the --show-examples strongest), pairs of replication rollouts from the same root:
+                       one model's where it is clearly present (top 10% of both models' scores, one per game, strongest
+                       first) and the other model's from that root where it is absent (its lowest, in the bottom
+                       quarter), for S carrying it out against W and W against S; each with the root board, the rollout in
                        SAN with its two highest-scoring plies marked (for reading only) and a Lichess link. The same
                        2x2 for a rate-matched random concept, for a blind check on the page.
           5. directions  each concept in each model's own activation space, u_m = sum_j v_j d_j^m (the latents'
@@ -2202,22 +2202,23 @@ def lichess_line(root, sans):
 
 
 def concept_cells(score, member, grp, kinds_rows, root_vec, droots, Ld, ply_score, n):
-    """The 2x2 for one concept (or a random one): per model, n rollouts where it is clearly present (top 10% of
-    its score among the rollouts it is scored on, one per game, strongest first) and, for each, one where it is
-    absent: another sample of the same model from the same root, its lowest-scoring one, which must lie in the
-    bottom quarter of the concept's scores. Roots without such a rollout are skipped, so present and absent always
-    start from the same position."""
+    """The examples for one concept (or a random one), across the models: per model, n rollouts of that model where
+    the concept is clearly present (top 10% of both models' scores on it, one per game, strongest first) and, for
+    each, the other model's rollout from the same root with the lowest score, which must lie in the bottom quarter.
+    Roots without one are skipped, so each pair starts from the same position and differs only in which model played."""
     roots, L = Ld["roots"], Ld["lines"]
     out = {}
+    cand = np.flatnonzero(member)
+    pooled = np.concatenate([s[cand] for s in score.values()]) if len(cand) else np.zeros(0)
     for kind, s in score.items():
-        cand = np.flatnonzero(member)
+        other = "W" if kind == "S" else "S"
+        so = score[other]
         if len(cand) < 20:
             out[kind] = dict(present=[], absent=[])
             continue
-        hi_cut = np.quantile(s[cand], 0.9)
-        hi = cand[s[cand] >= hi_cut]
+        hi = cand[s[cand] >= np.quantile(pooled, 0.9)]
         hi = hi[np.argsort(-s[hi])]
-        lo = cand[s[cand] <= np.quantile(s[cand], 0.25)]
+        lo = cand[so[cand] <= np.quantile(pooled, 0.25)]
         pres, absn, games = [], [], set()
         for i in hi:
             ri = droots[grp[i]]
@@ -2227,14 +2228,14 @@ def concept_cells(score, member, grp, kinds_rows, root_vec, droots, Ld, ply_scor
             same = [j for j in lo if grp[j] == grp[i]]
             if not same:
                 continue
-            j, how = min(same, key=lambda j: s[j]), "same root"
+            j = min(same, key=lambda j: so[j])
             games.add(gk)
-            for idx, dst, extra in ((i, pres, {}), (j, absn, {"how": how})):
-                q = kinds_rows[kind][idx]
+            for idx, dst, k_, extra in ((i, pres, kind, {}), (j, absn, other, {"how": f"{other} from the same root"})):
+                q = kinds_rows[k_][idx]
                 l, r = L[q], roots[droots[grp[idx]]]
                 ps = ply_score(q)
                 top = sorted(np.argsort(-ps)[:2].tolist()) if ps.max() > 0 else []
-                dst.append(dict(fen=r["fen"], band=r["band"], sans=l["sans"], first=l["moves"][0], score=float(s[idx]),
+                dst.append(dict(fen=r["fen"], band=r["band"], sans=l["sans"], first=l["moves"][0], score=float(score[k_][idx]),
                                 start=int(chess.Board(r["fen"]).fullmove_number), white=r["fen"].split()[1] == "w",
                                 top=top, link=lichess_line(r, l["sans"]), **extra))
             if len(pres) >= n:
@@ -2816,7 +2817,7 @@ const line = x => x.sans.map((m, i) => {{
   return t; }}).join(" ");
 const cell = xs => xs.map(x => `<div class="ex">${{board(x.fen, x.first, "sm")}}<div class="ln">${{line(x)}}</div>
   <a target="_blank" href="${{x.link}}">step through on Lichess</a> &middot; ${{x.band}} game, score ${{x.score.toFixed(3)}}${{x.how ? ` &middot; ${{x.how}}` : ""}}</div>`).join("") || "-";
-const grid = c => `<table class="g"><tr><th></th><th>clearly present</th><th>clearly absent</th></tr>` + ["S", "W"].map(k =>
+const grid = c => `<table class="g"><tr><th>carried out by</th><th>this model, clearly present</th><th>the other model, same position, absent</th></tr>` + ["S", "W"].map(k =>
   `<tr><th>${{k}}'s rollouts</th><td>${{cell(c[k].present)}}</td><td>${{cell(c[k].absent)}}</td></tr>`).join("") + "</table>";
 net.on("click", ev => {{
   if (!ev.nodes.length) return;
@@ -2898,7 +2899,7 @@ const line = x => x.sans.map((m, i) => {
   return (w ? `${n}.` : (i === 0 ? `${n}...` : "")) + (x.top.includes(i) ? `<b>${m}</b>` : m); }).join(" ");
 const cell = xs => xs.map(x => `<div class="ex">${board(x.fen, x.first, "sm")}<div class="ln">${line(x)}</div>
   <a target="_blank" href="${x.link}">step through on Lichess</a> &middot; ${x.band} game, score ${x.score.toFixed(3)}${x.how ? ` &middot; ${x.how}` : ""}</div>`).join("") || "-";
-const grid = g => `<table class="g"><tr><th></th><th>clearly present</th><th>clearly absent</th></tr>` + ["S", "W"].map(k =>
+const grid = g => `<table class="g"><tr><th>carried out by</th><th>this model, clearly present</th><th>the other model, same position, absent</th></tr>` + ["S", "W"].map(k =>
   `<tr><th>${k}'s rollouts</th><td>${cell(g[k].present)}</td><td>${cell(g[k].absent)}</td></tr>`).join("") + "</table>";
 function concept(id) {
   const c = C[id], X = D.examples[id];
@@ -2957,7 +2958,7 @@ padding:10px 12px;box-shadow:0 10px 40px rgba(0,0,0,.55);z-index:10}#tip.pinned{
 &nbsp; <button id="rot">pause rotation</button> <button id="fit">re-centre</button>
 <div id="hint">nodes: crosscoder latents &middot; each concept is one chain through its latents, belonging to the model it separates
 toward, in the order they fire in that model's rollouts carrying it out (particles flow that way) &middot; bright and thick: that model
-carries it out significantly more &middot; click a chain for starting positions where that model's rollouts do and don't carry it out</div></div>
+carries it out significantly more &middot; click a chain for starting positions where its model carries it out and the other model, from the same position, doesn't</div></div>
 <div id="g"></div><div id="tip"></div>
 <script>__BOARD_JS__
 const D = __DATA__;
@@ -3051,8 +3052,8 @@ const roll = x => `<div class="ex"><div class="ln">${line(x)}</div><a target="_b
 // one row per starting position: the same model's rollouts from it that carry the concept out and that don't
 function rows(g, who) {
   const P = g[who].present, A = g[who].absent;
-  if (!P.length) return `<p>no starting position with both kinds of rollout among this model's samples</p>`;
-  return `<table class="g"><tr><th>starting position</th><th>a rollout carrying it out</th><th>a rollout from the same position that doesn't</th></tr>` +
+  if (!P.length) return `<p>no starting position where one model carries it out and the other doesn't</p>`;
+  return `<table class="g"><tr><th>starting position</th><th>the ${NM[who]} model carrying it out</th><th>the ${NM[who === "S" ? "W" : "S"]} model from the same position, not carrying it out</th></tr>` +
     P.map((p, i) => `<tr><td>${board(p.fen, null, "sm")}<div style="color:#667">${p.band} game</div></td><td>${roll(p)}</td><td>${A[i] ? roll(A[i]) : "-"}</td></tr>`).join("") + "</table>";
 }
 function tipConcept(id, full) {
@@ -3064,7 +3065,7 @@ function tipConcept(id, full) {
   if (ch) h += `<div>order in its rollouts: ` + ch.chain.map(x => x.latent).join(" &rarr; ") + " &nbsp; <span style='color:#667'>(" +
     ch.links.map(l => `${(100 * l.before).toFixed(0)}%`).join(", ") + " of rollouts in that order)</span></div>";
   if (!full) h += `<div style="color:#667">click to pin it and see its rollouts</div>`;
-  else if (X) h += `<h4 style="margin:8px 0 4px">the ${NM[who]} model, same starting position, with and without the concept</h4>${rows(X.real, who)}
+  else if (X) h += `<h4 style="margin:8px 0 4px">same starting position: the ${NM[who]} model carries it out, the ${NM[other]} model doesn't</h4>${rows(X.real, who)}
     <p><button id="blind">blind check against a random concept</button> <button id="close">close</button></p><div id="blindout"></div>`;
   tip.innerHTML = h; place();
   const cl = document.getElementById("close");
