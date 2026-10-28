@@ -22,7 +22,8 @@ S only: S plays every move of every rollout (W's activations are read too, becau
    branch     with --branch-plies k (default 4), steps 4's groups are found after the branch effect is removed: each
               latent's fraction minus its weighted mean over the lines sharing the first k moves, so a group co-fires for
               reasons other than a shared prefix. Routes: per concept the distinct move sequences carrying it, cut before
-              its latents start firing (half of them at one ply); >= --min-routes effective routes: a candidate plan.
+              its latents start firing (half of them at one ply), and the distinct boards at that point, each against
+              --null-sets random line sets of the same size and onset plies: below the 5th percentile, a branch.
 6. replicate  a second, independent --rollouts at the same T, steps 3-4 again; concepts matched by shared latents (Jaccard).
 7. read       per replicated concept: its latents, the share of rollouts carrying it, its best split, and 3 distinct lines
               carrying it and 3 not, in SAN, the plies where its latents fire in [brackets].
@@ -244,24 +245,62 @@ def onset(P, q, g, plies):
     return t
 
 
-def spread(D, w, fire, P, g, plies):
-    """How many routes carry a concept: per carrying line the moves before its latents start firing (onset), the
-    distinct such prefixes, their effective number (1 / sum of squared weight shares), and the median onset ply."""
-    pre, ws, ons = {}, [], []
+def boards_of(D, root, plies):
+    """Per distinct line, the board (pieces and side to move) after each ply 0..len -> [[str]]."""
+    out = []
+    for d in D:
+        b = chess.Board(root["fen"])
+        fs = [b.board_fen() + (" w" if b.turn else " b")]
+        for u in d["moves"]:
+            b.push(chess.Move.from_uci(u))
+            fs.append(b.board_fen() + (" w" if b.turn else " b"))
+        out.append(fs)
+    return out
+
+
+def effective(keys, ws):
+    """The effective number of distinct keys: 1 / sum of squared weight shares."""
+    tot = {}
+    for k, x in zip(keys, ws):
+        tot[k] = tot.get(k, 0.0) + x
+    v = np.array(list(tot.values()))
+    v /= v.sum()
+    return float(1 / (v ** 2).sum()), len(tot)
+
+
+def spread(D, w, fire, P, g, plies, fens, rng, n_null):
+    """How varied the lines carrying a concept are, where its latents start firing (onset: the first ply with half of
+    them firing): the move sequences before the onset (routes) and the boards at it (transpositions count once), each
+    as an effective number, against a null of n_null random line sets of the same size (drawn by sampling weight)
+    given the carrying lines' onset plies. Below the null's 5th percentile: a branch."""
+    q_, t_ = [], []
     for q in np.flatnonzero(fire):
         t = onset(P, q, g, plies)
-        if t is None:
-            continue
-        k = tuple(D[q]["sans"][:t - 1])
-        pre[k] = pre.get(k, 0.0) + w[q]
-        ons.append((t, w[q]))
-    if not pre:
-        return dict(routes=0, effective=0.0, onset=None)
-    v = np.array(list(pre.values()))
-    v /= v.sum()
-    o = sorted(ons)
+        if t is not None and t <= len(D[q]["sans"]):
+            q_.append(q)
+            t_.append(t)
+    if len(q_) < 2:
+        return dict(routes=len(q_), effective=float(len(q_)), boards=len(q_), boards_eff=float(len(q_)), onset=t_[0] if t_ else None,
+                    null5=float("nan"), null5_boards=float("nan"), branch=True, branch_boards=True)
+    route = lambda q, t: tuple(D[q]["sans"][:t - 1])
+    board = lambda q, t: fens[q][t]
+    er, nr = effective([route(q, t) for q, t in zip(q_, t_)], w[q_])
+    eb, nb_ = effective([board(q, t) for q, t in zip(q_, t_)], w[q_])
+    ok = np.flatnonzero(np.array([len(d["sans"]) for d in D]) >= max(t_))
+    pool = ok if len(ok) >= len(q_) else np.arange(len(D))
+    pw = w[pool] / w[pool].sum()
+    nr_, nb2 = [], []
+    for _ in range(n_null):
+        qs = rng.choice(pool, len(q_), replace=False, p=pw)
+        ts = rng.permutation(t_)
+        ts = [min(t, len(D[q]["sans"])) for q, t in zip(qs, ts)]
+        nr_.append(effective([route(q, t) for q, t in zip(qs, ts)], w[qs])[0])
+        nb2.append(effective([board(q, t) for q, t in zip(qs, ts)], w[qs])[0])
+    n5, nb5 = float(np.quantile(nr_, 0.05)), float(np.quantile(nb2, 0.05))
+    o = sorted(zip(t_, w[q_]))
     cw = np.cumsum([x[1] for x in o])
-    return dict(routes=len(pre), effective=float(1 / (v ** 2).sum()), onset=int(o[int(np.searchsorted(cw, cw[-1] / 2))][0]))
+    return dict(routes=nr, effective=er, boards=nb_, boards_eff=eb, onset=int(o[int(np.searchsorted(cw, cw[-1] / 2))][0]),
+                null5=n5, null5_boards=nb5, branch=er < n5, branch_boards=eb < nb5)
 
 
 def board_splits(D, root):
@@ -353,7 +392,7 @@ def main():
     ap.add_argument("--jaccard", type=float, default=0.3, help="latent overlap at which a concept counts as found again")
     ap.add_argument("--branch-plies", type=int, default=4, help="the branch effect: a line's first this many moves (0: no "
                     "correction)")
-    ap.add_argument("--min-routes", type=float, default=2.0, help="effective routes for a candidate plan")
+    ap.add_argument("--null-sets", type=int, default=1000, help="random line sets for the routes and boards null")
     ap.add_argument("--batch", type=int, default=48)
     ap.add_argument("--max-tokens", type=int, default=300_000)
     ap.add_argument("--device", default="auto")
@@ -432,10 +471,11 @@ def main():
         c["match"] = dict(jaccard=jac, shared=len(s1 & set(d["latents"])) if d else 0, size=len(d["latents"]) if d else 0)
         c["replicated"] = jac >= a.jaccard
     splits = board_splits(D1, root)                                    # step 5
+    fens1 = boards_of(D1, root, a.plies)
     for c in c1:
         fire = carrying(X1, np.array(c["latents"]), med1)
-        c["spread"] = spread(D1, w1, fire, Ps[0], np.array(c["latents"]), a.plies)
-        c["plan"] = c["spread"]["effective"] >= a.min_routes
+        c["spread"] = spread(D1, w1, fire, Ps[0], np.array(c["latents"]), a.plies, fens1, rng, a.null_sets)
+        c["plan"] = not c["spread"]["branch"] and not c["spread"]["branch_boards"]
         ph = sorted(((wphi(fire, m, w1), nm) for nm, m in splits.items()), key=lambda x: -abs(x[0]))
         c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ splits[nm][fire] / max(w1[fire].sum(), 1e-12)),
                             other=float(w1[~fire] @ splits[nm][~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
@@ -447,19 +487,20 @@ def main():
              f"(the first {a.branch_plies} moves; {nb} branches in batch 1), so a group co-fires for reasons other than a shared "
              "prefix; a line carries a concept when half its latents are above their own weighted median of that residual. "
              if lab1 is not None else "No branch correction (--branch-plies 0). ")
-            + f"{len(c1)} concepts in batch 1, {len(rk)} found again in batch 2 (Jaccard of latents >= {a.jaccard}). Routes: the "
-            "distinct move sequences carrying a concept, each cut before its latents start firing (half of them at one ply); "
-            f"effective number weighted by how often each was sampled; >= {a.min_routes} effective routes: a candidate plan, "
-            "fewer: a branch.", "",
-            "| concept | latents | mean r | carrying | in batch 2 (Jaccard, shared) | routes (effective) | onset ply | | best board split (phi): carrying / other |",
-            "|---|---|---|---|---|---|---|---|---|"]
+            + f"{len(c1)} concepts in batch 1, {len(rk)} found again in batch 2 (Jaccard of latents >= {a.jaccard}). Onset: the "
+            "first ply where half a concept's latents fire. Routes: the move sequences before the onset; boards: the positions "
+            "at it (transpositions count once); each an effective number (weighted by how often a line was sampled), against "
+            f"{a.null_sets} random line sets of the same size given the same onset plies: below the null's 5th percentile on "
+            "routes or on boards, a branch; otherwise a candidate (the same latents on genuinely different lines and boards).", "",
+            "| concept | latents | mean r | carrying | in batch 2 (Jaccard, shared) | onset ply | routes: effective (null 5%) | boards: effective (null 5%) | | best board split (phi): carrying / other |",
+            "|---|---|---|---|---|---|---|---|---|---|"]
     for c in c1:
         bs = c["splits"][0] if c["splits"] else None
         sp = c["spread"]
         out.append(f"| {c['name']} | {', '.join(map(str, c['latents']))} | {c['r']:.2f} | {c['share']:.0%} | "
                    f"{'yes' if c['replicated'] else 'no'} ({c['match']['jaccard']:.2f}, {c['match']['shared']}) | "
-                   f"{sp['routes']} ({sp['effective']:.1f}) | {sp['onset'] if sp['onset'] else '-'} | "
-                   f"{'candidate plan' if c['plan'] else 'branch'} | "
+                   f"{sp['onset'] if sp['onset'] else '-'} | {sp['effective']:.1f} ({sp['null5']:.1f}) | "
+                   f"{sp['boards_eff']:.1f} ({sp['null5_boards']:.1f}) | {'candidate' if c['plan'] else 'branch'} | "
                    + (f"{bs['split']} ({bs['phi']:+.2f}): {bs['carrying']:.0%} / {bs['other']:.0%}" if bs else "-") + " |")
     out += ["", f"{len(splits)} board splits tested (each in 5-95% of the rollouts).", ""]
     for c in sorted(rk, key=lambda c: not c["plan"]):                 # step 7, candidate plans first
@@ -469,9 +510,10 @@ def main():
         yes = [i for i in np.argsort(-dens) if fire[i]][:3]
         no = [i for i in np.argsort(dens) if not fire[i]][:3]
         sp = c["spread"]
-        out += [f"### Concept {c['name']} ({'candidate plan' if c['plan'] else 'branch'}): latents {', '.join(map(str, c['latents']))}; "
-                f"carried by {c['share']:.0%} of the rollouts, through {sp['routes']} routes ({sp['effective']:.1f} effective), "
-                f"its latents starting at ply {sp['onset']}", ""]
+        out += [f"### Concept {c['name']} ({'candidate' if c['plan'] else 'branch'}): latents {', '.join(map(str, c['latents']))}; "
+                f"carried by {c['share']:.0%} of the rollouts, its latents starting at ply {sp['onset']}: {sp['effective']:.1f} "
+                f"effective routes (random lines: {sp['null5']:.1f} at the 5th percentile), {sp['boards_eff']:.1f} effective boards "
+                f"({sp['null5_boards']:.1f})", ""]
         out += [f"- {s['split']}: {s['carrying']:.0%} of carrying rollouts, {s['other']:.0%} of the others (phi {s['phi']:+.2f})"
                 for s in c["splits"]]
         out.append("")
