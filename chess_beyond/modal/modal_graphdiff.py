@@ -1,5 +1,5 @@
 """The concept-graph diff (transcend/graphdiff.py) on Modal, with its slow parts spread out: the rollouts over
-several GPU containers, Stockfish over many CPU containers.
+several GPU containers, the board facts over CPU containers.
 
     export MODAL_PROFILE=arispiesberger
     modal run modal/modal_graphdiff.py::upload                 # once: the crosscoder and data from this machine
@@ -16,11 +16,12 @@ judge, encode):
                    is bound by python-chess on the CPU, so one process leaves the GPU mostly idle), each process
                    the lines of its share of the roots
   gather           the play parts -> lines.json (CPU)
-  judge            --judge-parts CPU containers of CHESS_JUDGE_CPU cores, each running Stockfish on its share
-                   of the positions (the part files survive a rerun, so a failed part is redone alone)
+  judge            --judge-parts CPU containers of CHESS_JUDGE_CPU cores: the board facts (the anchor nodes) on
+                   their share of the positions; no engine unless --extra "--depth 12" (the part files survive
+                   a rerun, so a failed part is redone alone)
   encode           one GPU container: both models' states, the crosscoder codes
-  nodes, plans     CPU (plans fits its LPs on CHESS_PLANS_CPU cores); plans needs only the encoded lines, so it
-                   runs alongside nodes and graph
+  plans, nodes     CPU (plans fits its LPs on CHESS_PLANS_CPU cores); nodes takes the latents of the plans that
+                   passed the margin filter, so it comes after plans
   graph            one GPU container (the bootstraps)
 --extra passes more flags to every stage (e.g. "--roots 8000 --plies 10"); --cc / --cc-run pick the crosscoder.
 
@@ -114,12 +115,11 @@ def cpu_stage(stage, args):
 
 
 @app.local_entrypoint()
-def main(stages: str = "health,recall,lines,nodes,graph,plans", play_parts: int = 8, judge_parts: int = 48,
+def main(stages: str = "health,recall,lines,plans,nodes,graph", play_parts: int = 8, judge_parts: int = 8,
          cc_run: str = CC_RUN, cc: str = CC, extra: str = ""):
     base = ["--cc-run", cc_run, "--cc", cc, "--population", POPULATION, *extra.split()]
     order = [s for x in stages.split(",") for s in (["roots", "play", "gather", "judge", "encode"] if x == "lines" else [x])]
     parts = play_parts * PLAY_PROCS
-    plans = None
     for stage in order:
         print(f"=== {stage}", flush=True)
         if stage == "play":
@@ -130,19 +130,10 @@ def main(stages: str = "health,recall,lines,nodes,graph,plans", play_parts: int 
             cpu_stage.remote("gather", [*base, "--parts", str(parts)])
         elif stage == "judge":
             list(judge_stage.map([[*base, "--part", str(p), "--parts", str(judge_parts)] for p in range(judge_parts)]))
-        elif stage == "plans":
-            if plans is None:
-                cpu_stage.remote("plans", base)
-        elif stage in ("nodes", "graph") and "plans" in order and plans is None:
-            plans = cpu_stage.spawn("plans", base)            # needs only the encoded lines: run it alongside
-            print("  (plans started alongside)", flush=True)
-            (cpu_stage if stage == "nodes" else gpu_stage).remote(stage, base)
-        elif stage == "nodes":
+        elif stage in ("nodes", "plans"):
             cpu_stage.remote(stage, base)
         else:
             gpu_stage.remote(stage, base)
-    if plans is not None:
-        plans.get()
 
 
 @app.local_entrypoint()
