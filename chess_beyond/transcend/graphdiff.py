@@ -3066,6 +3066,8 @@ function tipConcept(id, full) {
   if (ch) h += `<div>order in its rollouts: ` + ch.chain.map(x => x.latent).join(" &rarr; ") + " &nbsp; <span style='color:#667'>(" +
     ch.links.map(l => `${(100 * l.before).toFixed(0)}%`).join(", ") + " of rollouts in that order)</span></div>";
   if (!full) h += `<div style="color:#667">click to pin it and see its rollouts</div>`;
+  else if (!X) h += `<p style="color:#667">no rollouts saved for this concept: plans keeps them for the --show-examples strongest
+    (${Object.keys(D.examples).length} here); rerun plans to get them for every concept</p><p><button id="close">close</button></p>`;
   else if (X) h += `<h4 style="margin:8px 0 4px">same starting position: the ${NM[who]} model carries it out, the ${NM[other]} model doesn't</h4>${rows(X.real, who)}
     <p><button id="blind">blind check against a random concept</button> <button id="close">close</button></p><div id="blindout"></div>`;
   tip.innerHTML = h; place();
@@ -3228,7 +3230,7 @@ def main():
     g.add_argument("--max-plans", type=int, default=300, help="concepts in the graphs at most")
     g.add_argument("--min-corr", type=float, default=0.2, help="structure check: |disattenuated r| a pair needs")
     g.add_argument("--examples", type=int, default=5, help="rollouts per cell of a concept's 2x2 (present/absent x S/W)")
-    g.add_argument("--show-examples", type=int, default=60, help="concepts (strongest first) that get their rollouts on the page")
+    g.add_argument("--show-examples", type=int, default=300, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
     steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
                  encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare, pages=pages)
