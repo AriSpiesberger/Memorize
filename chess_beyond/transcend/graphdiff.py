@@ -129,7 +129,10 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
           5. directions  each concept in each model's own activation space, u_m = sum_j v_j d_j^m (the latents'
                        decoder directions, v undone of the scaling): for steering. -> <run>/concept_directions.npz
         -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the three graphs and a
-           card per concept: its latents, and roots where its side's rollout carries it out), concept_directions.npz
+           card per concept: its latents, and roots where its side's rollout carries it out), plans-latents.html (two
+           graphs side by side, the 1000-1300 model's and the 2400+ model's, over the same crosscoder latents; each
+           concept joins its heaviest latents, an edge as wide as that model's execution rate; `pages` rebuilds these
+           from existing plans*.json), concept_directions.npz
 nodes   Latents, from the rollouts alone. Per root and latent, d = its activation averaged over S's
         rollouts minus over W's (plies after the root); a root counts for a latent when d != 0. Exact sign test on
         >= --min-pairs fit roots (BH at --fdr-nodes over the latents firing on --min-rate..--max-rate),
@@ -2504,6 +2507,7 @@ def plans(a):
     res.mkdir(parents=True, exist_ok=True)
     (res / f"plans{sfx}.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
     plans_page(out / f"plans{sfx}.html", out.name + sfx, rec)
+    latent_page(out / f"plans{sfx}-latents.html", out.name + sfx, rec, cc.r)
     print(plans_text(rec, a))
     print(f"wrote {res / f'plans{sfx}.md'}, {out / f'plans{sfx}.json'}, {out / f'plans{sfx}.html'} and "
           f"{out / f'concept_directions{sfx}.npz'}")
@@ -2695,12 +2699,126 @@ net.on("click", ev => {{
 </script></body></html>""", encoding="utf-8")
 
 
+LATENT_PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><title>Latent graphs: __NAME__</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>body{font-family:system-ui,sans-serif;margin:0}#top{display:flex;height:68vh}.panel{flex:1;display:flex;flex-direction:column;
+border-right:1px solid #ccc}.panel h3{margin:6px 10px}.net{flex:1}#card{padding:10px 14px;border-top:1px solid #ccc}
+.ln{font-family:monospace;font-size:12px}table.g{border-collapse:collapse}table.g td,table.g th{border:1px solid #ddd;vertical-align:top;padding:4px}
+.ex{margin-bottom:8px;max-width:330px}.ex b{background:#fde68a}.c{cursor:pointer;color:#2a5bd7}__BOARD_CSS__</style></head>
+<body>__BOARD_DEFS____MOVE_HEAD__
+<div id="top"><div class="panel"><h3>1000-1300 model (W)</h3><div id="netW" class="net"></div></div>
+<div class="panel"><h3>2400+ model (S)</h3><div id="netS" class="net"></div></div></div>
+<div id="card"><b>__NAME__</b>: the same crosscoder latents in both graphs (green: the latent's decoder leans to S, orange: to W, grey: shared;
+size: its weight across the concepts). Each concept that passed the margin filter joins its heaviest latents, in its own colour, in both
+graphs; an edge's width is how often that model's rollouts execute the concept (solid where that model executes it significantly more,
+dashed otherwise). Click an edge for the concept's rollouts, a latent for the concepts that use it.</div>
+<script>__BOARD_JS__
+const D = __DATA__;
+const C = {}; for (const c of D.concepts) C[c.id] = c;
+const hue = id => (id * 137.508) % 360;
+const ncol = r => r > 0.7 ? "#2e8b57" : r < 0.3 ? "#e08a1e" : "#9aa0a6";
+const nodes = D.latents.map(l => ({id: l.id, label: String(l.id), shape: "dot", size: 6 + 30 * Math.sqrt(l.weight),
+  color: ncol(l.r), title: `latent ${l.id}: decoder ${(100 * l.r).toFixed(0)}% toward S; in ${l.concepts.length} concept(s)`}));
+function edges(who) {
+  const out = [];
+  for (const c of D.concepts) {
+    const rate = who === "S" ? c.rate_S : c.rate_W, more = c.sig && (who === "S" ? c.rate_S > c.rate_W : c.rate_W > c.rate_S);
+    for (const [a, b] of c.pairs) out.push({from: a, to: b, concept: c.id, width: 1 + 10 * rate, dashes: !more,
+      color: {color: `hsl(${hue(c.id)},70%,45%)`, opacity: more ? 0.95 : 0.45},
+      title: `concept ${c.id} (${c.side}'s): executed by ${(100 * rate).toFixed(0)}% of this model's rollouts ` +
+             `(S ${(100 * c.rate_S).toFixed(0)}%, W ${(100 * c.rate_W).toFixed(0)}%${c.sig ? `, q ${c.q.toPrecision(2)}` : ""})`});
+  }
+  return out;
+}
+const opts = {physics: {stabilization: {iterations: 400}}, edges: {smooth: false}, interaction: {hover: true}};
+const netW = new vis.Network(document.getElementById("netW"), {nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges("W"))}, opts);
+let netS = null;
+netW.once("stabilizationIterationsDone", () => {
+  netW.setOptions({physics: false});
+  const pos = netW.getPositions();
+  const fixed = nodes.map(n => Object.assign({}, n, {x: pos[n.id].x, y: pos[n.id].y}));
+  netS = new vis.Network(document.getElementById("netS"), {nodes: new vis.DataSet(fixed), edges: new vis.DataSet(edges("S"))},
+    {physics: false, edges: {smooth: false}, interaction: {hover: true}});
+  netS.on("click", click(netS));
+});
+const line = x => x.sans.map((m, i) => {
+  const w = x.white ? i % 2 === 0 : i % 2 === 1, n = x.start + Math.floor((i + (x.white ? 0 : 1)) / 2);
+  return (w ? `${n}.` : (i === 0 ? `${n}...` : "")) + (x.top.includes(i) ? `<b>${m}</b>` : m); }).join(" ");
+const cell = xs => xs.map(x => `<div class="ex">${board(x.fen, x.first, "sm")}<div class="ln">${line(x)}</div>
+  <a target="_blank" href="${x.link}">step through on Lichess</a> &middot; ${x.band} game, score ${x.score.toFixed(3)}${x.how ? ` &middot; ${x.how}` : ""}</div>`).join("") || "-";
+const grid = g => `<table class="g"><tr><th></th><th>clearly present</th><th>clearly absent</th></tr>` + ["S", "W"].map(k =>
+  `<tr><th>${k}'s rollouts</th><td>${cell(g[k].present)}</td><td>${cell(g[k].absent)}</td></tr>`).join("") + "</table>";
+function concept(id) {
+  const c = C[id], X = D.examples[id];
+  let h = `<h3>concept ${c.id} (${c.side}'s)</h3><div>executed by ${(100 * c.rate_S).toFixed(0)}% of S's rollouts, ${(100 * c.rate_W).toFixed(0)}% of W's
+    ${c.sig ? `(different: roots S not W ${c.S_not_W}, W not S ${c.W_not_S}, q ${c.q.toPrecision(2)})` : "(not significantly different)"}</div>
+    <div>latents: ${c.latents.map(l => `${l.latent} (${l.weight.toFixed(2)})`).join(", ")}</div>`;
+  if (X) h += `<h4>rollouts (replication roots)</h4>${grid(X.real)}<p><button id="blind">blind check: this concept against a random one</button></p><div id="blindout"></div>`;
+  document.getElementById("card").innerHTML = h;
+  if (X) document.getElementById("blind").onclick = () => {
+    const realFirst = Math.random() < 0.5, A = realFirst ? X.real : X.random, B = realFirst ? X.random : X.real;
+    document.getElementById("blindout").innerHTML = `<h4>A</h4>${grid(A)}<h4>B</h4>${grid(B)}<p><button id="reveal">reveal</button> <span id="answer"></span></p>`;
+    document.getElementById("reveal").onclick = () => { document.getElementById("answer").textContent =
+      `the concept is ${realFirst ? "A" : "B"}; the other is a random concept`; };
+  };
+}
+const click = net => ev => {
+  if (ev.edges.length && !ev.nodes.length) {
+    const e = net.body.data.edges.get(ev.edges[0]);
+    if (e) concept(e.concept);
+  } else if (ev.nodes.length) {
+    const l = D.latents.find(x => x.id === ev.nodes[0]);
+    document.getElementById("card").innerHTML = `<h3>latent ${l.id}</h3><div>decoder ${(100 * l.r).toFixed(0)}% toward S</div><div>concepts: ` +
+      l.concepts.map(id => `<span class="c" onclick="concept(${id})">${id} (${C[id].side}'s)</span>`).join(", ") + "</div>";
+  }
+};
+netW.on("click", click(netW));
+</script></body></html>"""
+
+
+def latent_page(path, name, rec, r, most=5, share=0.1):
+    """<plans>-latents.html: two graphs side by side, the 1000-1300 model's and the 2400+ model's, over the same nodes:
+    the crosscoder latents the passing concepts are made of. Each concept joins its heaviest latents (at most `most`,
+    each >= `share` of its largest weight) with edges in its own colour; an edge's width is how often that model's
+    rollouts execute the concept (the concept graph's execution rates)."""
+    nodes = {n["id"]: n for n in rec["graph"]["nodes"]}
+    plans_ = {p["id"]: p for p in rec["plans"]}
+    concepts, lat = [], {}
+    for cid, n in nodes.items():
+        feats = sorted(plans_[cid]["features"], key=lambda f: -abs(f["weight"]))
+        top = [f for f in feats[:most] if abs(f["weight"]) >= share * abs(feats[0]["weight"])] if feats else []
+        ids = [f["latent"] for f in top]
+        for f in top:
+            x = lat.setdefault(f["latent"], dict(id=f["latent"], r=float(r[f["latent"]]), weight=0.0, concepts=[]))
+            x["weight"] += abs(f["weight"])
+            x["concepts"].append(cid)
+        concepts.append(dict(id=cid, side=n["side"], rate_S=n["rate_S"], rate_W=n["rate_W"], sig=n["sig"], q=n["q"],
+                             S_not_W=n["S_not_W"], W_not_S=n["W_not_S"],
+                             latents=[dict(latent=f["latent"], weight=f["weight"]) for f in top],
+                             pairs=[(ids[i], ids[j]) for i in range(len(ids)) for j in range(i + 1, len(ids))]))
+    data = dict(concepts=concepts, latents=list(lat.values()), examples=rec.get("examples", {}))
+    page_ = (LATENT_PAGE.replace("__DATA__", json.dumps(data, default=float).replace("</", "<\\/"))
+             .replace("__NAME__", html.escape(name)).replace("__BOARD_CSS__", BOARD_CSS).replace("__BOARD_DEFS__", BOARD_DEFS)
+             .replace("__MOVE_HEAD__", MOVE_HEAD).replace("__BOARD_JS__", BOARD_JS))
+    path.write_text(page_, encoding="utf-8")
+
+
+def pages(a):
+    """Rebuild the latent-graph pages (plans-<tag>-latents.html) from every plans*.json of the run."""
+    out, _ = dirs(a)
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    for p in sorted(out.glob("plans*.json")):
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        latent_page(out / f"{p.stem}-latents.html", f"{out.name} {p.stem}", rec, cc.r)
+        print(f"wrote {out / f'{p.stem}-latents.html'}")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["health", "recall", "lines", "roots", "play", "gather", "judge", "encode", "nodes",
-                                        "graph", "plans", "compare", "all"])
+                                        "graph", "plans", "compare", "pages", "all"])
     ap.add_argument("--name", default=None, help="the run folder's name (default <crosscoder run>-<layer>), e.g. for a second set of rollouts")
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run (one layer per model), e.g. Lfinal or L15")
@@ -2789,7 +2907,7 @@ def main():
     g.add_argument("--show-examples", type=int, default=60, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
     steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
-                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare)
+                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare, pages=pages)
     for name in (["health", "recall", "lines", "plans", "nodes", "graph"] if a.command == "all" else [a.command]):
         print(f"\n=== {name}", flush=True)
         steps[name](a)
