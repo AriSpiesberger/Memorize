@@ -98,9 +98,14 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                        concept is scored on the held-out roots of its own clusters (each held-out root joins its
                        nearest cluster centroid by d), the random concepts on the same roots; a concept real for
                        one kind of divergence is not asked to hold everywhere. At least --min-concept-roots of them.
-          control      with S2 rollouts: each concept's margin on S - S2 on the same roots (a concept that also
-                       separates S from S is noise, and dropped), and the whole of 1-3 run on S - S2 (how many
-                       concepts sampling noise alone produces).
+          control      with S2 rollouts, first: the whole of 1-3 on S - S2, the identical pipeline (clusters,
+                       fitting, scoring) on sampling noise alone. --calibrate (default): its concepts set the bar,
+                       an S-vs-W concept's margin must beat their 95th percentile on each held-out set, so any bias of
+                       the pipeline (the circularity of scoring a concept on its own clusters' roots) is paid on both
+                       sides. Each S-vs-W concept is also scored on S - S2 on its roots: one that separates S from S
+                       too is noise, and dropped.
+          scoring      one rule everywhere: a concept's filter, threshold, execution and graph edges all use the
+                       same roots (its own clusters' with --local, all with --no-local).
           4. graphs    three, over the same concepts (all that passed, S's and W's), on the replication roots,
                        ply-free: a rollout executes a concept when its aggregated score reaches the threshold
                        (halfway between the concept's mean on S's and on W's selection roots).
@@ -1319,7 +1324,7 @@ def nodes(a):
         c2, c3, _, _ = latent_tests((mean["S"] - mean["S2"]).tocsr(), fit_r, active, a, nlat, rng)
         ctrl = dict(decision=int(c2.sum()), held_out=int(c3.sum()), both=int((f3 & c3).sum()))
     in_plans = {}
-    pj = out / "plans.json"
+    pj = out / f"plans{'-' + a.tag if a.tag else ''}.json"
     if pj.exists():
         for p in json.loads(pj.read_text(encoding="utf-8"))["plans"]:
             if p["replicated"] and not p.get("control"):
@@ -2022,12 +2027,12 @@ def local_margins(D, Wm, sign, masks, nu, chunk=2048):
     return m, share
 
 
-def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_=""):
+def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None):
     """Fit, merge and filter concepts on D (roots x features): the max-min LP per cluster of roots whose
     differences look alike, once per side (v >= 0 on D and on -D); concepts matching at cosine >= --dedupe
     merged; then the margin filter on the selection and the replication roots, each concept scored on the roots
     of its own clusters (held-out roots join their nearest cluster centroid), against rate-matched random
-    concepts scored on the same roots."""
+    concepts scored on the same roots; with calib ({split: margin}), also above that bar (set by the S-vs-S control)."""
     fit_rows = np.flatnonzero(psplit == 0)
     Xd = torch.from_numpy(D.toarray()).float().to(dev)
     lab, cent = kmeans(Xd[torch.from_numpy(fit_rows).to(dev)], max(1, round(len(fit_rows) / a.cluster_size)), a.seed)
@@ -2084,18 +2089,48 @@ def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_=""):
         mn = mn.reshape(len(templates), a.null_templates)
         n95 = np.quantile(mn, 0.95, axis=1)
         used = np.array([x.sum() for x in mk])
+        bar = (calib or {}).get(nm, -np.inf)
         stats[nm] = dict(roots=len(rows), margin=m, share=share, null95=n95, used=used,
-                         passed=(m > 0) & (m > n95) & (used >= a.min_concept_roots), null_pos=float((mn > 0).mean()))
+                         passed=(m > 0) & (m > n95) & (m > bar) & (used >= a.min_concept_roots), null_pos=float((mn > 0).mean()))
         masks[nm] = (rows, mk)
     out.update(stats=stats, selected=stats["select"]["passed"], nulls=nulls, masks=masks,
                replicated=stats["select"]["passed"] & stats["replicate"]["passed"])
     return out
 
 
+def cooc(E1, E2, M, groups, a, dev):
+    """Co-execution lifts of every pair of concepts in two sets of rollouts from the same roots (E: rollouts x
+    concepts, executed; M: where each concept is scored, so a pair counts only the rollouts where both are), with
+    Poisson-bootstrap sds over the roots. -> lS, lW, sd_lS, sd_lW, sd_D, nS, nW (co-executions)."""
+    E1, E2, M = (torch.from_numpy(np.asarray(x, np.float32)).to(dev) for x in (E1, E2, M))
+    gi = torch.from_numpy(np.asarray(groups)).to(dev)
+    G = int(np.max(groups)) + 1
+
+    def ll(w, E):
+        WE, WM = w[:, :, None] * E[None], w[:, :, None] * M[None]
+        n, nA = WM.transpose(1, 2) @ M, WE.transpose(1, 2) @ M
+        nB, nAB = WM.transpose(1, 2) @ E, WE.transpose(1, 2) @ E
+        return torch.log((nAB + a.prior) / (nA * nB / n.clamp_min(1) + a.prior)), nAB
+
+    one = torch.ones((1, len(gi)), device=dev)
+    (lS, nS), (lW, nW) = ll(one, E1), ll(one, E2)
+    acc = {x: [0, 0] for x in ("lS", "lW", "D")}
+    g = torch.Generator(device="cpu").manual_seed(a.seed)
+    for b0 in range(0, a.boot, a.boot_chunk):
+        w = torch.poisson(torch.ones((min(a.boot_chunk, a.boot - b0), G)), generator=g).to(dev)[:, gi]
+        s1, s2 = ll(w, E1)[0], ll(w, E2)[0]
+        moments(acc["lS"], s1)
+        moments(acc["lW"], s2)
+        moments(acc["D"], s1 - s2)
+    out = dict(lS=lS[0], lW=lW[0], nS=nS[0], nW=nW[0], **{f"sd_{x}": sd_of(v, a.boot) for x, v in acc.items()})
+    return {k: v.cpu().numpy() for k, v in out.items()}
+
+
 def plans(a):
     from scipy import sparse
     dev = ev.device(a.device)
     out, res = dirs(a)
+    sfx = f"-{a.tag}" if a.tag else ""
     meta, Ld, z, evals, facts = load_run(out)
     roots, L, T, nlat = Ld["roots"], Ld["lines"], meta["plies"], meta["latents"]
     ex = explanations(meta)
@@ -2121,57 +2156,82 @@ def plans(a):
     if zero.any():
         psplit = np.where(zero, -1, psplit)
     k_ = len(by[(rr[0], "S")]) if len(rr) else 0
-    print(f"concepts: {len(rr)} roots, {k_} rollouts per model each ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}"
+    print(f"concepts{sfx}: {len(rr)} roots, {k_} rollouts per model each ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}"
           f"{f', {zero.sum()} with identical rollouts left out' if zero.any() else ''}); {keep.sum()} candidate latents "
-          f"(firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions); plies: {a.sum_plies}"
-          f"{'; control: S against a second set of S rollouts' if control else ''}", flush=True)
+          f"(firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions); plies: {a.sum_plies}; aggregate: {a.aggregate}; "
+          f"scoring: {'local (own clusters)' if a.local else 'global'}{'; control: S against a second set of S rollouts' if control else ''}",
+          flush=True)
 
-    found = discover(D, psplit, keep, rate, nlat, F, a, dev)
+    # the S-vs-S control goes first: the identical pipeline (clusters, fitting, scoring) on S - S2. With --calibrate
+    # (default) its concepts set the bar: an S-vs-W concept must beat the 95th percentile of their margins, so whatever
+    # bias the pipeline has (the circularity of scoring a concept on its own clusters' roots) is paid on both sides
+    calib, cf = None, None
+    if control:
+        Dc = (mean["S"] - mean["S2"]).tocsr()
+        cf = discover(Dc, psplit, keep, rate, nlat, F, a, dev, tag_="control (S against S): ")
+        if a.calibrate and cf["templates"]:
+            calib = {}
+            for nm in ("select", "replicate"):
+                m_ = cf["stats"][nm]["margin"]
+                m_ = m_[np.isfinite(m_)]
+                calib[nm] = float(np.quantile(m_, 0.95)) if len(m_) else 0.0
+            print(f"  the bar the control sets: soft margin above {calib['select']:.4f} (selection), {calib['replicate']:.4f} "
+                  f"(replication)", flush=True)
+    found = discover(D, psplit, keep, rate, nlat, F, a, dev, calib=calib)
     templates, sign, groups, stats = found["templates"], found["sign"], found["groups"], found["stats"]
     if not templates:
         sys.exit("no concept has a positive margin: larger clusters (--cluster-size) or a larger --nu")
     selected, replicated = found["selected"], found["replicated"]
+    ctrl_run = None
+    if cf is not None:
+        st_ = cf["stats"]
+        both = (np.zeros(0, bool) if not cf["templates"] else
+                st_["select"]["passed"] & st_["replicate"]["passed"]
+                & (st_["select"]["margin"] > (calib or {}).get("select", -np.inf))
+                & (st_["replicate"]["margin"] > (calib or {}).get("replicate", -np.inf)))
+        ctrl_run = dict(templates=len(cf["templates"]), selected=int(st_["select"]["passed"].sum()) if cf["templates"] else 0,
+                        replicated=int(both.sum()), calib=calib)
     print(f"  {len(found['temps'])} concepts -> {len(templates)} after merging ({(sign > 0).sum()} S's, {(sign < 0).sum()} W's); "
-          f"margin filter{' on each concept own clusters roots' if a.local else ''}: {selected.sum()} on the selection roots "
-          f"(random concepts' margin > 0: {stats['select']['null_pos']:.1%}), {replicated.sum()} again on the replication roots "
-          f"({(sign[replicated] > 0).sum()} S's, {(sign[replicated] < 0).sum()} W's)", flush=True)
-    # the S-vs-S control: (1) each concept on S's rollouts against S's second set, on the same roots; (2) the whole
-    # discovery run on S - S' (concepts found there are noise the filters let through)
+          f"{selected.sum()} pass on the selection roots, {replicated.sum()} again on the replication roots "
+          f"({(sign[replicated] > 0).sum()} S's, {(sign[replicated] < 0).sum()} W's)"
+          + (f"; the control, through the same bar: {ctrl_run['replicated']} of {ctrl_run['templates']}" if ctrl_run else ""), flush=True)
+
+    # each S-vs-W concept on S - S2, on the same roots: one that also separates S from S is noise, and is dropped
     ctrl = {}
     Wm = weights_matrix(templates, F)
     if control:
-        Dc = (mean["S"] - mean["S2"]).tocsr()
         Wn = weights_matrix(found["nulls"], F)
         nsign = np.repeat(sign, a.null_templates)
         for nm in ("select", "replicate"):
             rows, mk = found["masks"][nm]
             m, _ = local_margins(Dc[rows], Wm, sign, mk, a.nu)
             mn, _ = local_margins(Dc[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
-            mn = mn.reshape(len(templates), a.null_templates)
-            ctrl[nm] = dict(margin=m, null95=np.quantile(mn, 0.95, axis=1), passed=(m > 0) & (m > np.quantile(mn, 0.95, axis=1)))
+            n95 = np.quantile(mn.reshape(len(templates), a.null_templates), 0.95, axis=1)
+            ctrl[nm] = dict(margin=m, null95=n95, passed=(m > 0) & (m > n95) & (m > (calib or {}).get(nm, -np.inf)))
         ctrl_both = ctrl["select"]["passed"] & ctrl["replicate"]["passed"]
-        print("  control, S against S:", flush=True)
-        cf = discover(Dc, psplit, keep, rate, nlat, F, a, dev, tag_="control: ")
-        ctrl_run = dict(templates=len(cf["templates"]), selected=int(cf["selected"].sum()), replicated=int(cf["replicated"].sum()))
-        print(f"  control: {ctrl_run['replicated']} S-vs-S concepts pass both margin filters (noise let through); "
-              f"{int((replicated & ctrl_both).sum())} of the {replicated.sum()} S-vs-W concepts also separate S from S", flush=True)
     else:
-        ctrl_both, ctrl_run = np.zeros(len(templates), bool), None
+        ctrl_both = np.zeros(len(templates), bool)
 
-    # a root carries a concept out when its rollouts' mean score reaches halfway between the mean on S's and on W's
-    # selection roots; per ply, a rollout has it active where that ply's score reaches the per-ply halfway mark
-    sel_rows, rep_rows = np.flatnonzero(psplit == 1), np.flatnonzero(psplit == 2)
-    tau = (np.asarray((mean["S"][sel_rows] @ Wm).mean(0)).ravel() + np.asarray((mean["W"][sel_rows] @ Wm).mean(0)).ravel()) / 2
+    # one scoring everywhere: a concept is scored on the roots it was filtered on (its own clusters' with --local, all
+    # with --no-local); its threshold is halfway between its mean on S's and on W's selection roots there, a root
+    # executes it when its rollouts' mean score reaches that, a rollout when its own score does
+    sel_rows, mk_sel = found["masks"]["select"]
+    rep_rows, mk_rep = found["masks"]["replicate"]
+    MS, MR = np.stack(mk_sel, 1), np.stack(mk_rep, 1)
+    dense = lambda Y: np.asarray(Y.todense()) if sparse.issparse(Y) else np.asarray(Y)
+    sS, sW = dense(mean["S"][sel_rows] @ Wm), dense(mean["W"][sel_rows] @ Wm)
+    tau = ((sS * MS).sum(0) + (sW * MS).sum(0)) / 2 / np.maximum(MS.sum(0), 1)
     droots = rr[rep_rows]
     band = np.array([roots[ri]["band"] for ri in droots])
-    xS = np.asarray((mean["S"][rep_rows] @ Wm).todense()) >= tau
-    xW = np.asarray((mean["W"][rep_rows] @ Wm).todense()) >= tau
+    xS = (dense(mean["S"][rep_rows] @ Wm) >= tau) & MR
+    xW = (dense(mean["W"][rep_rows] @ Wm) >= tau) & MR
     b, c, _ = mcnemar(xS, xW)
 
-    # three graphs over the same concepts (every one that passed the margin filter, S's and W's together), on the
-    # replication roots, ply-free: a rollout executes a concept when its aggregated score reaches tau
+    # three graphs over the same concepts (every one that passed, S's and W's together), on the replication roots,
+    # ply-free: executed as above
     #   G_S, G_W  nodes sized by how often that model's rollouts execute each concept; edges: lift of executing A and B
-    #             in the same rollout over chance, kept when clearly away from 1 (above: go together; below: alternatives)
+    #             in the same rollout over chance (over the rollouts where both are scored), kept when clearly away from
+    #             1 (above: go together; below: alternatives)
     #   G_diff    nodes: execution in S's rollouts against W's (McNemar over roots); edges: log-lift in G_S minus in G_W
     #   control   G_diff from S against S2: should come out nearly empty
     keep_g = replicated & ~ctrl_both
@@ -2182,23 +2242,24 @@ def plans(a):
     nk = {ri: min(len(by[(ri, k)]) for k in kinds) for ri in droots}
     rows = {k: [by[(ri, k)][j] for ri in droots for j in range(nk[ri])] for k in kinds}
     grp = np.array([g for g, ri in enumerate(droots) for _ in range(nk[ri])])
-    ex_ = {k: np.asarray((X[rows[k]] @ Wo).todense()) >= tau_o for k in kinds}             # (rollouts, concepts)
+    member = MR[grp][:, order] if len(grp) else np.zeros((0, len(order)), bool)
+    ex_ = {k: (dense(X[rows[k]] @ Wo) >= tau_o) & member for k in kinds}           # (rollouts, concepts)
     graphs = dict(nodes=[], S=[], W=[], diff=[], control=None)
     if len(order) >= 2 and len(droots) >= a.min_roots:
         bn, cn, pn = mcnemar(xS[:, order], xW[:, order])
         qn, sn = bh(pn, a.fdr)
+        msum = np.maximum(member.sum(0), 1)
         for k, g in enumerate(order):
-            graphs["nodes"].append(dict(id=int(g), side="S" if sign[g] > 0 else "W", rate_S=float(ex_["S"][:, k].mean()),
-                                        rate_W=float(ex_["W"][:, k].mean()), S_not_W=int(bn[k]), W_not_S=int(cn[k]),
-                                        q=float(qn[k]), sig=bool(sn[k])))
-        T_ = lambda e: torch.from_numpy(np.concatenate([e.astype(np.float32), np.ones((len(e), 1), np.float32)], 1)[:, None]).to(dev)
+            graphs["nodes"].append(dict(id=int(g), side="S" if sign[g] > 0 else "W", rate_S=float(ex_["S"][:, k].sum() / msum[k]),
+                                        rate_W=float(ex_["W"][:, k].sum() / msum[k]), S_not_W=int(bn[k]), W_not_S=int(cn[k]),
+                                        roots=int(MR[:, g].sum()), q=float(qn[k]), sig=bool(sn[k])))
         iu = np.triu_indices(len(order), 1)
 
         def edges(E0, which):
             """Significant pairs: of one graph's log-lift ("S", "W"), or of their difference ("diff")."""
             l, sd, n = ((E0["lS"], E0["sd_lS"], E0["nS"]) if which == "S" else (E0["lW"], E0["sd_lW"], E0["nW"]) if which == "W"
                         else (E0["lS"] - E0["lW"], E0["sd_D"], np.maximum(E0["nS"], E0["nW"])))
-            l, sd, n = l[:len(order), :len(order)][iu], sd[:len(order), :len(order)][iu], n[:len(order), :len(order)][iu]
+            l, sd, n = l[iu], sd[iu], n[iu]
             t = n >= a.min_count
             p = np.array([math.erfc(abs(v) / math.sqrt(2)) for v in l[t] / np.maximum(sd[t], 1e-9)])
             q, s_ = bh(p, a.fdr)
@@ -2210,12 +2271,12 @@ def plans(a):
                                          "lift_W": float(np.exp(E0["lW"][int(i), int(j)]))} if which == "diff" else {"lift": float(np.exp(li))})))
             return out_, int(t.sum())
 
-        E0 = diff_edges(T_(ex_["S"]), T_(ex_["W"]), [0], a, dev, groups=grp)[0]
+        E0 = cooc(ex_["S"], ex_["W"], member, grp, a, dev)
         (graphs["S"], tested), (graphs["W"], _), (graphs["diff"], _) = edges(E0, "S"), edges(E0, "W"), edges(E0, "diff")
         graphs["tested"] = tested
         if control:
-            Ec = diff_edges(T_(ex_["S"]), T_(ex_["S2"]), [0], a, dev, groups=grp)[0]
-            xS2 = np.asarray((mean["S2"][rep_rows] @ Wm).todense()) >= tau
+            Ec = cooc(ex_["S"], ex_["S2"], member, grp, a, dev)
+            xS2 = (dense(mean["S2"][rep_rows] @ Wm) >= tau) & MR
             _, _, pc = mcnemar(xS[:, order], xS2[:, order])
             graphs["control"] = dict(nodes=int(bh(pc, a.fdr)[1].sum()), edges=len(edges(Ec, "diff")[0]))
         print(f"  graphs on {len(droots)} replication roots ({len(grp)} rollouts each side), {len(order)} concepts: "
@@ -2235,7 +2296,7 @@ def plans(a):
         vj = np.bincount(j, weights=w / scale_[j], minlength=nlat)
         for m in (cc.s, cc.w):
             U[m][g] = vj @ dec[:, cc.col[m]] / sc[cc.col[m]]
-    np.savez(out / "concept_directions.npz", ids=np.arange(len(templates)), S=U[cc.s], W=U[cc.w],
+    np.savez(out / f"concept_directions{sfx}.npz", ids=np.arange(len(templates)), S=U[cc.s], W=U[cc.w],
              replicated=replicated, control=ctrl_both, S_model=cc.info["models"][cc.s], W_model=cc.info["models"][cc.w],
              layer=np.array([cc.layer[cc.s], cc.layer[cc.w]]))
 
@@ -2255,8 +2316,8 @@ def plans(a):
             want = (xS[:, g] & ~xW[:, g]) if sign[g] > 0 else (xW[:, g] & ~xS[:, g])
             r["examples"] = [example(Ld, by, evals, z, int(ri)) for ri in droots[want][:3]]
         recs.append(r)
-    rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate", "local",
-                                                    "null_templates", "max_plans")},
+    rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate",
+                                                    "local", "calibrate", "null_templates", "max_plans", "tag")},
                funnel=dict(roots=len(rr), rollouts=k_, identical=int(zero.sum()), fit_roots=int((psplit == 0).sum()),
                            select_roots=stats["select"]["roots"], replicate_roots=stats["replicate"]["roots"],
                            lps=found["lps"], clusters=found["clusters"], templates=len(found["temps"]), merged=len(templates),
@@ -2265,12 +2326,13 @@ def plans(a):
                            null_select=stats["select"]["null_pos"], null_replicate=stats["replicate"]["null_pos"],
                            control=ctrl_run, also_control=int((replicated & ctrl_both).sum()), kept=int(keep_g.sum())),
                plans=recs, graph=graphs)
-    (out / "plans.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
+    (out / f"plans{sfx}.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
     res.mkdir(parents=True, exist_ok=True)
-    (res / "plans.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
-    plans_page(out / "plans.html", out.name, rec)
+    (res / f"plans{sfx}.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
+    plans_page(out / f"plans{sfx}.html", out.name + sfx, rec)
     print(plans_text(rec, a))
-    print(f"wrote {res / 'plans.md'}, {out / 'plans.json'}, {out / 'plans.html'} and {out / 'concept_directions.npz'}")
+    print(f"wrote {res / f'plans{sfx}.md'}, {out / f'plans{sfx}.json'}, {out / f'plans{sfx}.html'} and "
+          f"{out / f'concept_directions{sfx}.npz'}")
 
 
 def describe_concept(cols, w, nlat, plies, ex, most=16):
@@ -2306,19 +2368,24 @@ def plans_text(rec, a):
            f"{f['roots']} roots, {f['rollouts']} rollouts per model each (a root uses their mean): {f['fit_roots']} to fit, "
            f"{f['select_roots']} to select, {f['replicate_roots']} to replicate (different games)"
            + (f"; {f['identical']} with identical S and W rollouts left out" if f.get("identical") else "") + ". "
-           "Concepts are fitted, filtered and compared on the crosscoder's latents alone, each scored "
-           + ("on the held-out roots of its own clusters (nearest centroid)." if a.local else "on all held-out roots."), "",
+           "Concepts are fitted, filtered and compared on the crosscoder's latents alone, each scored (filter, threshold, "
+           "execution and graphs alike) " + ("on the held-out roots of its own clusters (nearest centroid)." if a.local
+                                              else "on all held-out roots.")
+           + f" Latents firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions; aggregate: {a.aggregate}.", "",
            "| step | S against W | control: S against S |", "|---|---|---|",
            f"| LPs fitted ({f['clusters']} clusters of ~{a.cluster_size} roots, S's and W's concepts) | {f['lps']} | |",
            f"| concepts with a positive margin | {f['templates']} | |",
            f"| after merging similar ones | {f['merged']} | {ctl['templates'] if ctl else '-'} |",
-           f"| soft margin (share {a.nu} quantile) > 0 on selection roots, and above 95% of random concepts | {f['selected']} | "
-           f"{ctl['selected'] if ctl else '-'} |",
+           *([f"| the bar set by the control: soft margin above its concepts' 95th percentile | "
+               f"{ctl['calib']['select']:.4f} (selection), {ctl['calib']['replicate']:.4f} (replication) | |"]
+             if ctl and ctl.get("calib") else []),
+           f"| soft margin (share {a.nu} quantile) > 0 on selection roots, above 95% of random concepts"
+           f"{' and the bar' if ctl and ctl.get('calib') else ''} | {f['selected']} | {ctl['selected'] if ctl else '-'} |",
            f"| ... and again on replication roots | {f['replicated']} ({f['replicated_S']} S's, {f['replicated_W']} W's) | "
-           f"{ctl['replicated'] if ctl else '-'} |",
+           f"{ctl['replicated'] if ctl else '-'}{' (about 5% by construction: the bar is its 95th percentile)' if ctl and ctl.get('calib') else ''} |",
            f"| S-vs-W concepts that also separate S from S (dropped) | {f.get('also_control', 0)} | |",
            f"| random concepts with a margin > 0 (selection / replication) | {f['null_select']:.1%} / {f['null_replicate']:.1%} | |", ""]
-    if ctl and ctl["replicated"] and f["replicated"] and ctl["replicated"] > 0.2 * f["replicated"]:
+    if ctl and not ctl.get("calib") and ctl["replicated"] and f["replicated"] and ctl["replicated"] > 0.2 * f["replicated"]:
         out += [f"**Warning**: S against S yields {ctl['replicated']} concepts against {f['replicated']} for S against W: much of "
                 "the S-vs-W list may be sampling noise.", ""]
     rep = [r for r in rec["plans"] if r["replicated"] and not r.get("control")]
@@ -2503,6 +2570,9 @@ def main():
     g.add_argument("--cluster-size", type=int, default=100, help="roots per cluster (k-means on the roots' S - W differences)")
     g.add_argument("--min-concept-roots", type=int, default=15,
                    help="held-out roots a concept must be scored on (its clusters' roots with --local) to pass")
+    g.add_argument("--calibrate", action=argparse.BooleanOptionalAction, default=True,
+                   help="the S-vs-S control's concepts set the bar: a concept must beat the 95th percentile of their margins")
+    g.add_argument("--tag", default="", help="suffix for plans' outputs (plans-<tag>.md/json/html), to compare settings")
     g.add_argument("--aggregate", choices=["mean", "sum", "max"], default="mean",
                    help="how a rollout's plies combine, per latent: mean (default), sum, or max (did it happen at all)")
     g.add_argument("--local", action=argparse.BooleanOptionalAction, default=True,
