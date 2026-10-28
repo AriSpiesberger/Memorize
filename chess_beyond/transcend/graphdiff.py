@@ -224,16 +224,18 @@ def compare(a):
                          nodes_c=gc.get("nodes", "-"), edges=len(g["diff"]), edges_c=gc.get("edges", "-"),
                          bar=(c.get("calib") or {}).get("replicate"),
                          how=", ".join(f"{k}={v}" for k, v in st.items() if k in ("local", "crossfit", "nu", "max_rate", "aggregate",
-                                                                                  "per_cluster", "calibrate"))))
+                                                                                  "per_cluster", "calibrate", "max_roots", "use_rollouts")),
+                         roots=f["roots"], k=f["rollouts"], margin=float(np.median([p_["replicate_margin"] for p_ in r["plans"]
+                                                                                    if p_["replicated"] and not p_.get("control")] or [np.nan]))))
     rows.sort(key=lambda x: -(x["sw"] - x["ss"]))
     lines_ = ["# Settings compared", "",
               "Rule: the setting with the most concepts passing for S against W beyond those passing for S against S, with S "
               "against S clearly lower; the graph-level controls (S against S) next to every graph count.", "",
-              "| setting | concepts: S vs W | S vs S | difference | control bar (replication) | G_diff nodes (control) | "
-              "G_diff edges (control) | settings |", "|---|---|---|---|---|---|---|---|"]
+              "| setting | roots | rollouts | concepts: S vs W | S vs S | difference | control bar (replication) | median margin of "
+              "the passing concepts | G_diff nodes (control) | G_diff edges (control) | settings |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for x in rows:
-        lines_.append(f"| {x['name']} | {x['sw']} | {x['ss']} | {x['sw'] - x['ss']:+d} | "
-                      f"{'-' if x['bar'] is None else format(x['bar'], '.4f')} | {x['nodes']} ({x['nodes_c']}) | "
+        lines_.append(f"| {x['name']} | {x['roots']} | {x['k']} | {x['sw']} | {x['ss']} | {x['sw'] - x['ss']:+d} | "
+                      f"{'-' if x['bar'] is None else format(x['bar'], '.4f')} | {x['margin']:.4f} | {x['nodes']} ({x['nodes_c']}) | "
                       f"{x['edges']} ({x['edges_c']}) | {x['how']} |")
     res.mkdir(parents=True, exist_ok=True)
     (res / "compare.md").write_text("\n".join(lines_) + "\n", encoding="utf-8")
@@ -2292,8 +2294,13 @@ def plans(a):
     X, C, nf = rollout_sums(z, keep, scale_, T, nlat, a.sum_plies, a.aggregate)
     F = nf * nlat
     by = rollouts_by(L)
+    if a.use_rollouts:                                                # scaling tests: each root's first k rollouts per model
+        by = {k: v[:a.use_rollouts] for k, v in by.items()}
     control = all((ri, "S2") in by for ri in range(len(roots)) if (ri, "S") in by)
     rr = np.array([ri for ri in range(len(roots)) if (ri, "S") in by and (ri, "W") in by and (not control or (ri, "S2") in by)])
+    if a.max_roots and len(rr) > a.max_roots:                         # ... and a fixed subsample of the roots
+        rank = np.argsort([zlib.crc32(f"{roots[ri]['band']}/{roots[ri]['game']}/{ri}/sub".encode()) for ri in rr])
+        rr = np.sort(rr[rank[:a.max_roots]])
     mean = {}
     for kind in ("S", "W") + (("S2",) if control else ()):
         rows = [(q, g) for g, ri in enumerate(rr) for q in by[(ri, kind)]]
@@ -2484,7 +2491,7 @@ def plans(a):
         recs.append(r)
     rec = dict(settings={k: getattr(a, k) for k in ("cluster_size", "nu", "dedupe", "min_rate", "max_rate", "sum_plies", "aggregate",
                                                     "local", "crossfit", "calibrate", "per_cluster", "null_templates", "max_plans",
-                                                    "tag")},
+                                                    "tag", "max_roots", "use_rollouts")},
                funnel=dict(roots=len(rr), rollouts=k_, identical=int(zero.sum()), fit_roots=int((psplit == 0).sum()),
                            select_roots=stats["select"]["roots"], replicate_roots=stats["replicate"]["roots"],
                            lps=found["lps"], clusters=found["clusters"], templates=len(found["temps"]), merged=len(templates),
@@ -2552,7 +2559,7 @@ def plans_text(rec, a):
            f"| soft margin (share {a.nu} quantile) > 0 on selection roots, above 95% of random concepts"
            f"{' and the bar' if ctl and ctl.get('calib') else ''} | {f['selected']} | {ctl['selected'] if ctl else '-'} |",
            f"| ... and again on replication roots | {f['replicated']} ({f['replicated_S']} S's, {f['replicated_W']} W's) | "
-           f"{ctl['replicated'] if ctl else '-'}{' (about 5% by construction: the bar is its 95th percentile)' if ctl and ctl.get('calib') else ''} |",
+           f"{ctl['replicated'] if ctl else '-'}{' (at most about 5% by construction: the bar is its 95th percentile on each set)' if ctl and ctl.get('calib') else ''} |",
            f"| S-vs-W concepts that also separate S from S (dropped) | {f.get('also_control', 0)} | |",
            f"| random concepts with a margin > 0 (selection / replication) | {f['null_select']:.1%} / {f['null_replicate']:.1%} | |", ""]
     if ctl and not ctl.get("calib") and ctl["replicated"] and f["replicated"] and ctl["replicated"] > 0.2 * f["replicated"]:
@@ -2761,6 +2768,8 @@ def main():
     g.add_argument("--cluster-size", type=int, default=100, help="roots per cluster (k-means on the roots' S - W differences)")
     g.add_argument("--min-concept-roots", type=int, default=15,
                    help="held-out roots a concept must be scored on (its clusters' roots with --local) to pass")
+    g.add_argument("--max-roots", type=int, default=0, help="scaling tests: a fixed subsample of this many roots (0: all)")
+    g.add_argument("--use-rollouts", type=int, default=0, help="scaling tests: each root's first k rollouts per model (0: all)")
     g.add_argument("--per-cluster", type=int, default=3,
                    help="concepts per cluster per side (deflation: each fit's latents taken out before the next)")
     g.add_argument("--crossfit", action=argparse.BooleanOptionalAction, default=True,
