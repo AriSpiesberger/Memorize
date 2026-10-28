@@ -379,8 +379,8 @@ def main():
     for c in c1:
         fire = carrying(X1, np.array(c["latents"]), med1)
         ph = sorted(((wphi(fire, m, w1), nm) for nm, m in splits.items()), key=lambda x: -abs(x[0]))
-        c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ m[fire] / max(w1[fire].sum(), 1e-12)),
-                            other=float(w1[~fire] @ m[~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
+        c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ splits[nm][fire] / max(w1[fire].sum(), 1e-12)),
+                            other=float(w1[~fire] @ splits[nm][~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
     rk = [c for c in c1 if c["replicated"]]
     out += [f"## Concepts (batch 1: {len(D1)} distinct lines, {len(kk1)} latents, threshold r > {thr1:.3f}; batch 2: {len(D2)} "
             f"distinct lines, {len(kk2)} latents, threshold r > {thr2:.3f}, {len(c2)} concepts)", "",
