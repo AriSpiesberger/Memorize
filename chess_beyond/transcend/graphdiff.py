@@ -2202,7 +2202,7 @@ def planted(a):
     matching two or more planted ones are merges, matching none spurious.
 
       rollout     per latent j, Binomial(plies, p)/plies with p = the latent's base rate x a root effect (lognormal: roots
-                  differ), W's p further jittered per rollout (W plays more randomly); a planted concept raises p by
+                  differ), W's p further jittered per rollout, mean-preserving (W plays more randomly); a planted concept raises p by
                   --plant-effect (relative) for its latents, in its model's rollouts, on its roots
       scenarios   disjoint (own latents), hub (one latent shared by all), ring (each shares two latents with the next),
                   together (disjoint latents, roots of pairs overlapping 70%), continuum (one concept, its strength
@@ -2215,7 +2215,7 @@ def planted(a):
     rows_out = []
 
     def scenario(name, k):
-        rng = np.random.default_rng(a.seed + hash(name) % 1000)
+        rng = np.random.default_rng(a.seed + zlib.crc32(name.encode()) % 1000)
         own = rng.permutation(nlat)
         if name == "hub":
             hub = own[0]
@@ -2249,7 +2249,7 @@ def planted(a):
                     p[:, L] = np.clip(p[:, L] * (1 + a.plant_effect * strength[c][:, None]), 0, 0.95)
             acc = np.zeros((R, nlat))
             for _ in range(k_ro):
-                pr = p if m == 1 else np.clip(p * np.exp(rng.normal(0, a.plant_w_noise, p.shape)), 0, 0.95)
+                pr = p if m == 1 else np.clip(p * np.exp(rng.normal(-a.plant_w_noise ** 2 / 2, a.plant_w_noise, p.shape)), 0, 0.95)   # mean-preserving
                 acc += rng.binomial(T, pr) / T
             out[kind] = acc / k_ro
         return out
@@ -2286,6 +2286,12 @@ def planted(a):
         per = np.array([int((hit[:, c] & (best == c)).sum()) for c in range(k)])
         merges = int((hit.sum(1) >= 2).sum())
         spurious = int((~hit.any(1)).sum())
+        # what the found concepts are made of: the share of each one's weight on each planted concept's latents
+        Ls = [set(np.asarray(L).tolist()) for L in lat]
+        comp = np.array([[sum(abs(w) for c_, w in zip(*found["templates"][t]) if c_ in L) for L in Ls] for t in idx]) if len(idx) else np.zeros((0, k))
+        made = comp.max(1) if len(idx) else np.zeros(0)
+        frag = int((made >= 0.5).sum())
+        print(f"  {name}: weight on planted latents (best set) per found concept: {np.round(np.sort(made)[::-1], 2).tolist()}", flush=True)
         if len(idx) > 1:
             z = (sc - sc.mean(0)) / np.maximum(sc.std(0), 1e-12)
             ev_ = np.clip(np.linalg.eigvalsh(np.corrcoef(z.T))[::-1], 0, None)
@@ -2294,7 +2300,8 @@ def planted(a):
             eff = float(len(idx))
         rows_out.append(dict(scenario=name, planted=k, found=len(idx), recovered=int((per == 1).sum()), split=int((per > 1).sum()),
                              split_into=float(per[per > 1].mean()) if (per > 1).any() else 0.0, missed=int((per == 0).sum()),
-                             merges=merges, spurious=spurious, effective=eff, per=per.tolist(),
+                             merges=merges, spurious=spurious, effective=eff, per=per.tolist(), mostly_planted=frag,
+                             made_of=np.round(comp, 3).tolist(),
                              best_corr=[float(C[:, c].max()) if len(idx) else 0.0 for c in range(k)]))
         r_ = rows_out[-1]
         print(f"  {name}: {k} planted -> {len(idx)} found; recovered {r_['recovered']}, split {r_['split']} (into "
@@ -2310,10 +2317,10 @@ def planted(a):
            f"W's rates jittered per rollout (sd {a.plant_w_noise} in log); fitting as plans: --cluster-size {a.cluster_size}, "
            f"--per-cluster {a.per_cluster}, --nu {a.nu}, {'local' if a.local else 'global'} scoring, bars from S vs S' and W vs W'. "
            f"A found concept matches a planted one at score correlation > {a.plant_match} on the replication roots.", "",
-           "| scenario | planted | found | recovered | split (into) | missed | merges | spurious | effective number (scores) |",
-           "|---|---|---|---|---|---|---|---|---|"]
+           "| scenario | planted | found | recovered | split (into) | missed | merges | spurious | found with >= half their weight on one planted concept's latents | effective number (scores) |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
     out += [f"| {r['scenario']} | {r['planted']} | {r['found']} | {r['recovered']} | {r['split']} ({r['split_into']:.1f}) | {r['missed']} | "
-            f"{r['merges']} | {r['spurious']} | {r['effective']:.1f} |" for r in rows_out]
+            f"{r['merges']} | {r['spurious']} | {r['mostly_planted']} | {r['effective']:.1f} |" for r in rows_out]
     (res / f"planted{tag}.md").write_text("\n".join(out) + "\n", encoding="utf-8")
     print("\n".join(out))
     print(f"wrote {res / f'planted{tag}.md'}")
