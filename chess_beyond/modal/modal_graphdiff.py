@@ -38,7 +38,7 @@ and are cached on chess-runs (hf/); CHESS_HF_SECRET names a Modal secret with HF
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 
@@ -149,7 +149,7 @@ def main(stages: str = "health,recall,lines,nodes,graph,plans", play_parts: int 
 def upload(cc_run: str = CC_RUN, cc: str = CC):
     """Copy the crosscoder run (only the chosen layer's activations) and the data graphdiff.py reads onto the Volumes."""
     run_dir, layer = ROOT / cc_run, "L" + cc.removeprefix("cc-").removeprefix("L")
-    rel = Path(cc_run).relative_to("runs")
+    rel = PurePosixPath(Path(cc_run).as_posix()).relative_to("runs")    # Volume paths use /, also from Windows
     with runs.batch_upload(force=True) as b:
         for f in ("collect.json", "rows.npy", "squares.npz"):
             if (run_dir / f).exists():
