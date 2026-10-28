@@ -19,6 +19,10 @@ S only: S plays every move of every rollout (W's activations are read too, becau
               breaks, pawn captures and pushes to the fifth rank or beyond; trades, a capture recaptured on the same
               square, and the queens coming off): per concept, the share of carrying and of other rollouts in each split,
               and the best-matching splits (weighted phi).
+   branch     with --branch-plies k (default 4), steps 4's groups are found after the branch effect is removed: each
+              latent's fraction minus its weighted mean over the lines sharing the first k moves, so a group co-fires for
+              reasons other than a shared prefix. Routes: per concept the distinct move sequences carrying it, cut before
+              its latents start firing (half of them at one ply); >= --min-routes effective routes: a candidate plan.
 6. replicate  a second, independent --rollouts at the same T, steps 3-4 again; concepts matched by shared latents (Jaccard).
 7. read       per replicated concept: its latents, the share of rollouts carrying it, its best split, and 3 distinct lines
               carrying it and 3 not, in SAN, the plies where its latents fire in [brackets].
@@ -191,13 +195,34 @@ def carrying(X, g, med):
     return above(X, g, med) >= 0.5
 
 
-def concepts(X, w, a, rng, tag):
-    """Steps 3-4 on one batch's distinct lines -> kept latents, threshold, [dict(latents, share, r)], medians. Candidate
-    latents: those whose fraction of plies varies across the lines (weighted sd >= --min-sd)."""
+def branch_of(D, k):
+    """Each distinct line's branch: its first k moves -> labels 0..B-1."""
+    keys = {}
+    return np.array([keys.setdefault(tuple(d["sans"][:k]), len(keys)) for d in D])
+
+
+def residual(X, w, lab):
+    """X minus what the branch explains: each latent's weighted mean over its branch's lines subtracted."""
+    Z = X.astype(np.float64).copy()
+    for b in np.unique(lab):
+        m = lab == b
+        Z[m] -= (w[m] @ X[m]) / w[m].sum()
+    return Z
+
+
+def concepts(X, w, a, rng, tag, lab=None):
+    """Steps 3-4 on one batch's distinct lines -> kept latents, threshold, [dict(latents, share, r)], the matrix the
+    groups were found on (X, or with lab its residual after the branch effect), and its medians. Candidate latents:
+    those whose fraction of plies varies across the lines (weighted sd >= --min-sd), and with lab still varies within
+    branches (residual weighted sd >= --min-sd / 2)."""
     t0 = time.time()
     mu = w @ X
     sd = np.sqrt(w @ (X - mu) ** 2)
-    kk = np.flatnonzero(sd >= a.min_sd)
+    keep = sd >= a.min_sd
+    X = residual(X, w, lab) if lab is not None else X
+    if lab is not None:
+        keep &= np.sqrt(w @ X ** 2) >= a.min_sd / 2
+    kk = np.flatnonzero(keep)
     Xk = X[:, kk]
     med = wmedian(X, w)
     thr = shuffle_threshold(Xk, w, a.shuffles, rng)
@@ -207,9 +232,36 @@ def concepts(X, w, a, rng, tag):
         out.append(dict(latents=kk[g].tolist(), share=float(w @ carrying(X, kk[g], med)),
                         r=float(R[np.ix_(g, g)][np.triu_indices(len(g), 1)].mean())))
     out.sort(key=lambda c: -c["r"])
-    print(f"  {tag}: {len(kk)} latents whose fraction of plies varies (weighted sd >= {a.min_sd}); threshold r > {thr:.3f} "
-          f"(family-wise); {len(out)} concepts of >= 3 latents ({time.time() - t0:.0f}s)", flush=True)
-    return kk, thr, out, med
+    print(f"  {tag}: {len(kk)} latents whose fraction of plies varies{' (also within branches)' if lab is not None else ''}; "
+          f"threshold r > {thr:.3f} (family-wise); {len(out)} concepts of >= 3 latents ({time.time() - t0:.0f}s)", flush=True)
+    return kk, thr, out, X, med
+
+
+def onset(P, q, g, plies):
+    """The first ply (1-based) at which at least half the group's latents fire in line q, or None."""
+    pl = P[q * (plies + 1):(q + 1) * (plies + 1)][:, g].toarray() > 0
+    t = next((t for t in range(1, plies + 1) if pl[t].mean() >= 0.5), None)
+    return t
+
+
+def spread(D, w, fire, P, g, plies):
+    """How many routes carry a concept: per carrying line the moves before its latents start firing (onset), the
+    distinct such prefixes, their effective number (1 / sum of squared weight shares), and the median onset ply."""
+    pre, ws, ons = {}, [], []
+    for q in np.flatnonzero(fire):
+        t = onset(P, q, g, plies)
+        if t is None:
+            continue
+        k = tuple(D[q]["sans"][:t - 1])
+        pre[k] = pre.get(k, 0.0) + w[q]
+        ons.append((t, w[q]))
+    if not pre:
+        return dict(routes=0, effective=0.0, onset=None)
+    v = np.array(list(pre.values()))
+    v /= v.sum()
+    o = sorted(ons)
+    cw = np.cumsum([x[1] for x in o])
+    return dict(routes=len(pre), effective=float(1 / (v ** 2).sum()), onset=int(o[int(np.searchsorted(cw, cw[-1] / 2))][0]))
 
 
 def board_splits(D, root):
@@ -299,6 +351,9 @@ def main():
                     "across the lines at least this")
     ap.add_argument("--shuffles", type=int, default=100)
     ap.add_argument("--jaccard", type=float, default=0.3, help="latent overlap at which a concept counts as found again")
+    ap.add_argument("--branch-plies", type=int, default=4, help="the branch effect: a line's first this many moves (0: no "
+                    "correction)")
+    ap.add_argument("--min-routes", type=float, default=2.0, help="effective routes for a candidate plan")
     ap.add_argument("--batch", type=int, default=48)
     ap.add_argument("--max-tokens", type=int, default=300_000)
     ap.add_argument("--device", default="auto")
@@ -306,7 +361,7 @@ def main():
     ap.add_argument("--tag", default="")
     a = ap.parse_args()
     from scipy import sparse
-    tag = a.tag or f"p{a.plies}-r{a.rollouts}-s{a.seed}"
+    tag = a.tag or f"p{a.plies}-r{a.rollouts}-s{a.seed}-T{a.temps.replace(',', '_')}"
     run, res = RUNS / tag, RESULTS / tag
     run.mkdir(parents=True, exist_ok=True)
     res.mkdir(parents=True, exist_ok=True)
@@ -366,9 +421,10 @@ def main():
     for k, (D, X) in enumerate(zip(C["batches"], Xs), 1):
         w = np.array([d["n"] for d in D], float)
         w /= w.sum()
-        kk, thr, cs, med = concepts(X, w, a, rng, f"batch {k}")
-        found.append((D, X, w, kk, thr, cs, med))
-    (D1, X1, w1, kk1, thr1, c1, med1), (D2, X2, w2, kk2, thr2, c2, _) = found
+        lab = branch_of(D, a.branch_plies) if a.branch_plies > 0 else None
+        kk, thr, cs, Z, med = concepts(X, w, a, rng, f"batch {k}", lab)
+        found.append((D, Z, w, kk, thr, cs, med, lab))
+    (D1, X1, w1, kk1, thr1, c1, med1, lab1), (D2, X2, w2, kk2, thr2, c2, _, lab2) = found
     for i, c in enumerate(c1):                                         # step 6: in the second batch?
         c["name"] = str(i + 1)
         s1 = set(c["latents"])
@@ -378,36 +434,52 @@ def main():
     splits = board_splits(D1, root)                                    # step 5
     for c in c1:
         fire = carrying(X1, np.array(c["latents"]), med1)
+        c["spread"] = spread(D1, w1, fire, Ps[0], np.array(c["latents"]), a.plies)
+        c["plan"] = c["spread"]["effective"] >= a.min_routes
         ph = sorted(((wphi(fire, m, w1), nm) for nm, m in splits.items()), key=lambda x: -abs(x[0]))
         c["splits"] = [dict(split=nm, phi=v, carrying=float(w1[fire] @ splits[nm][fire] / max(w1[fire].sum(), 1e-12)),
                             other=float(w1[~fire] @ splits[nm][~fire] / max(w1[~fire].sum(), 1e-12))) for v, nm in ph[:3]]
     rk = [c for c in c1 if c["replicated"]]
+    nb = len(np.unique(lab1)) if lab1 is not None else 0
     out += [f"## Concepts (batch 1: {len(D1)} distinct lines, {len(kk1)} latents, threshold r > {thr1:.3f}; batch 2: {len(D2)} "
             f"distinct lines, {len(kk2)} latents, threshold r > {thr2:.3f}, {len(c2)} concepts)", "",
-            f"{len(c1)} concepts in batch 1, {len(rk)} found again in batch 2 (Jaccard of latents >= {a.jaccard}).", "",
-            "| concept | latents | mean r | rollouts carrying it | in batch 2 (Jaccard, shared) | best board split (phi): carrying / other |",
-            "|---|---|---|---|---|---|"]
+            (f"The branch effect removed first: each latent's fraction minus its weighted mean over the lines of the same branch "
+             f"(the first {a.branch_plies} moves; {nb} branches in batch 1), so a group co-fires for reasons other than a shared "
+             "prefix; a line carries a concept when half its latents are above their own weighted median of that residual. "
+             if lab1 is not None else "No branch correction (--branch-plies 0). ")
+            + f"{len(c1)} concepts in batch 1, {len(rk)} found again in batch 2 (Jaccard of latents >= {a.jaccard}). Routes: the "
+            "distinct move sequences carrying a concept, each cut before its latents start firing (half of them at one ply); "
+            f"effective number weighted by how often each was sampled; >= {a.min_routes} effective routes: a candidate plan, "
+            "fewer: a branch.", "",
+            "| concept | latents | mean r | carrying | in batch 2 (Jaccard, shared) | routes (effective) | onset ply | | best board split (phi): carrying / other |",
+            "|---|---|---|---|---|---|---|---|---|"]
     for c in c1:
         bs = c["splits"][0] if c["splits"] else None
+        sp = c["spread"]
         out.append(f"| {c['name']} | {', '.join(map(str, c['latents']))} | {c['r']:.2f} | {c['share']:.0%} | "
                    f"{'yes' if c['replicated'] else 'no'} ({c['match']['jaccard']:.2f}, {c['match']['shared']}) | "
+                   f"{sp['routes']} ({sp['effective']:.1f}) | {sp['onset'] if sp['onset'] else '-'} | "
+                   f"{'candidate plan' if c['plan'] else 'branch'} | "
                    + (f"{bs['split']} ({bs['phi']:+.2f}): {bs['carrying']:.0%} / {bs['other']:.0%}" if bs else "-") + " |")
     out += ["", f"{len(splits)} board splits tested (each in 5-95% of the rollouts).", ""]
-    for c in rk:                                                       # step 7
+    for c in sorted(rk, key=lambda c: not c["plan"]):                 # step 7, candidate plans first
         g = np.array(c["latents"])
         fire = carrying(X1, g, med1)
         dens = above(X1, g, med1)
         yes = [i for i in np.argsort(-dens) if fire[i]][:3]
         no = [i for i in np.argsort(dens) if not fire[i]][:3]
-        out += [f"### Concept {c['name']}: latents {', '.join(map(str, c['latents']))}; carried by {c['share']:.0%} of the rollouts", ""]
+        sp = c["spread"]
+        out += [f"### Concept {c['name']} ({'candidate plan' if c['plan'] else 'branch'}): latents {', '.join(map(str, c['latents']))}; "
+                f"carried by {c['share']:.0%} of the rollouts, through {sp['routes']} routes ({sp['effective']:.1f} effective), "
+                f"its latents starting at ply {sp['onset']}", ""]
         out += [f"- {s['split']}: {s['carrying']:.0%} of carrying rollouts, {s['other']:.0%} of the others (phi {s['phi']:+.2f})"
                 for s in c["splits"]]
         out.append("")
         for nm, ids in (("carrying it", yes), ("not carrying it", no)):
             out += [f"{nm}:", ""]
             for q in ids:
-                pl = Ps[0][q * (a.plies + 1):(q + 1) * (a.plies + 1)][:, g].toarray()
-                plies = {t for t in range(1, a.plies + 1) if pl[t].sum() > 0}
+                pl = Ps[0][q * (a.plies + 1):(q + 1) * (a.plies + 1)][:, g].toarray() > 0
+                plies = {t for t in range(1, a.plies + 1) if pl[t].mean() >= 0.5}     # half the group's latents at that ply
                 out.append(f"- {mark(D1[q]['sans'], plies, root)}  (sampled {D1[q]['n']}x; "
                            f"[Lichess]({gd.lichess_line(root, D1[q]['sans'])}))")
             out.append("")
