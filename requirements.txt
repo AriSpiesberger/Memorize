@@ -17,6 +17,7 @@ datasets>=5.0
 huggingface_hub
 numpy
 safetensors
+scipy                                          # chess_beyond/transcend/graphdiff.py (the plan LPs)
 matplotlib
 modal                                          # chess_beyond/modal/ (cloud runs)
 

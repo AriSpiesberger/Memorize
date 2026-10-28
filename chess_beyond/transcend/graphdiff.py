@@ -1,12 +1,19 @@
-"""Concept-graph diff, the pilot's first pass: chains of crosscoder concepts the 2400+ model (S) follows
-and the 1000-1300 model (W) doesn't, from the same root positions, kept only if they survive pruning.
+"""Concept-graph diff: the strategies the 2400+ model (S) follows and the 1000-1300 model (W) doesn't, from
+the same root positions, kept only if they survive pruning. Two levels: single crosscoder latents and the
+chains between them (nodes, graph), and plan templates, a sparse combination of latents per ply fitted by
+a max-min LP, with the graph of which plans follow, replace or compete with which (plans).
 
     python transcend/graphdiff.py health --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
     python transcend/graphdiff.py recall --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
     python transcend/graphdiff.py lines  --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
     python transcend/graphdiff.py nodes  --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
     python transcend/graphdiff.py graph  --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
+    python transcend/graphdiff.py plans  --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
     python transcend/graphdiff.py all    --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
+    modal run --detach modal/modal_graphdiff.py::main            # the same on Modal, the slow parts spread out
+
+lines is five stages, which Modal runs separately and in parallel (--part/--parts):
+roots (candidates, policies), play (the lines), gather (-> lines.json), judge (Stockfish), encode (codes).
 
 health  Gate 1, on the crosscoder's held-out games (crosscoder.py train's validation positions):
         - reconstruction: fraction of variance unexplained (FVU) per model;
@@ -56,16 +63,20 @@ lines   Roots: held-out positions of both bands (data/pgn_probe/population.jsonl
         (each prompt's cache shared by all its legal moves); a move is drawn from p^(1/--temperature),
         renormalised. From each root, --plies plies:
             contrast A   "S": S plays both sides;  "W": W plays the root's side to move, S replies
-            contrast B   "chosen": S's most likely move, "alt1".."alt4": its 2nd-5th; then S both sides
-        Stockfish (--depth, the same for every line) on every position: the evaluation in pawns for
-        the root's side to move (mates as +/- 15). Every position is read by both models and encoded
+            contrast B   "chosen": S's most likely move, "alt1".."alt4": its 2nd-5th (--alts), and
+                         branches off the chosen line at each of --branch-plies (2, 4): S's next most
+                         likely moves there, excluding the one the chosen line played ("b2_1", ...);
+                         all continued by S to the same last ply
+        Stockfish (--depth, the same for every line) on every position of the contrast-A lines and the
+        last position of the contrast-B ones: the evaluation in pawns for the root's side to move (mates
+        as +/- 15). Every position is read by both models and encoded
         with the crosscoder (and its FVU there: the crosscoder never saw rollouts); board facts
         (predicates.py, position facts) for the anchor nodes.
-        -> <run>/lines.json, codes.npz, evals.npy, facts.npy, meta.json
-nodes   Node filters on the fit roots, confirmed on the held-out ones. A contrast-B pair is (chosen,
-        altK) where Stockfish prefers chosen's last position by >= --margin pawns; per pair and latent,
-        d = sum over plies 1.. of (activation in chosen - in altK). A pair is informative for a latent
-        when d != 0.
+        -> <run>/roots.json, play-*.json, lines.json, judge-*.npz, codes.npz, evals.npy, facts.npy, meta.json
+nodes   Node filters on the fit roots, confirmed on the held-out ones. A contrast-B pair is (chosen, a
+        rejected line: a root alternative or a branch) where Stockfish prefers chosen's last position by
+        >= --margin pawns; per pair and latent, d = sum over the plies after the two lines part of
+        (activation in chosen - in the rejected line). A pair is informative for a latent when d != 0.
             1. active     fires on >= --min-rate of the line positions
             2. decision   >= --min-pairs informative fit pairs and an exact two-sided sign test on
                           them, Benjamini-Hochberg at --fdr-nodes over the active latents (the sign:
@@ -101,6 +112,36 @@ graph   G_S from the "S" lines, G_W from the "W" lines, same nodes, same roots (
         -> results/transcend/graphdiff/<run>/report.md (gates, funnel, diff, motifs),
            edges-<set>-<split>.csv, motifs-<set>-<split>.csv; <run>/motifs-<split>.html (the top --show
            motifs, each with prototype roots where it completes in the S line and not the W line).
+
+plans   Plan templates: V = (V_0 .. V_T), a sparse signed weight per (ply, latent) (+ pursued, - avoided),
+        activations scaled by each latent's mean where it fires, latents firing on --min-rate..--max-rate.
+        Roots are split by game three ways: fit (not held out), selection and diff (the held-out games,
+        halved).
+          1. fit       Schut et al.'s max-min LP over the contrast-B pairs:
+                         max m  s.t.  sum_t V_t . (c+_t - c-_t) >= m for every pair,  sum |V| <= 1
+                       per fit root with >= --min-fit-pairs pairs (hard margin; the branches give it the
+                       constraints for more than one feature), and per cluster of --cluster-size similar
+                       roots (cosine k-means on the root position's latents; soft margin, a share --nu of
+                       pairs may fall inside it). Dual simplex (scipy's HiGHS): a vertex, so sparse.
+          2. merge     templates matching at cosine >= --dedupe join one group (the members' mean).
+          3. generalise  on the selection pairs, the template's score sum_t V_t . (c+_t - c-_t) must be > 0
+                       more often than not (one-sided sign test, BH at --fdr-nodes) and its agreement must
+                       beat 95% of --null-templates random templates with its plies, signs and weights and
+                       latents of the same firing-rate decile. Reported: how often random templates pass
+                       the same p cut-off.
+          4. diff      a line executes a template when its score sum_t V_t . c_t reaches the template's
+                       threshold (halfway between its mean on chosen and on rejected selection lines).
+                       On the diff roots' contrast-A lines: McNemar (exact) on roots where S's line
+                       executes it and W's doesn't against the reverse, BH at --fdr; positional roots
+                       (and all), split by root band. Random templates through the same diff: how often
+                       they differ as much.
+          5. graph     plans as nodes, on the positional diff roots: executed starting at a ply when the
+                       template shifted there reaches its threshold. Follows: lift at lags 2, 4, 6 between
+                       start plies, G_S vs G_W, bootstrap + BH (as for latents); competes: executed
+                       together less than chance (lag-0 lift with its interval below 1); replaces: S's
+                       line executes B where W's executes A (and not the reverse), lift over chance.
+        -> results/transcend/graphdiff/<run>/plans.md; <run>/plans.json, plans.html (the plan graph and a
+           card per plan: its template ply by ply, and roots where S executes it and W doesn't)
 
 All thresholds are starting values: set them once from the nulls, then freeze them before reading the diff.
 """
@@ -143,7 +184,6 @@ from pgn_probe import parse_movetext
 
 RUNS = paths.RUNS / "transcend" / "graphdiff"
 RESULTS = paths.ROOT / "results" / "transcend" / "graphdiff"
-KINDS = ["S", "W", "chosen", "alt1", "alt2", "alt3", "alt4"]
 MATE_PAWNS = 15.0
 ANCHORS = [n for n in predicates.NAMES if not n.startswith("move_")]   # position facts: the anchor nodes
 PLAN, RESPONSE = (2, 4, 6), (1, 3)
@@ -842,7 +882,14 @@ def line_states(model, seqs, ends, layer, dev, max_tokens):
     return out
 
 
-def lines(a):
+def dirs(a):
+    """This crosscoder's run folder (runs/transcend/graphdiff/<run>) and results folder."""
+    name = f"{Path(a.cc_run).name}-{a.cc.removeprefix('cc-')}"
+    return RUNS / name, RESULTS / name
+
+
+def roots_stage(a):
+    """The roots and both models' policies there -> <run>/roots.json."""
     dev = ev.device(a.device)
     cc = load_cc(a.cc_run, a.cc, a.strong, dev)
     cc.out.mkdir(parents=True, exist_ok=True)
@@ -883,94 +930,205 @@ def lines(a):
             continue
         taken[r["band"]] += 1
         held = zlib.crc32(f"{r['band']}/{r['game']}".encode()) % 100 < a.held
-        roots.append(dict(k=k, band=r["band"], game=r["game"], ply=r["ply"], fen=b.fen(), prompt=r["prompt"], held=bool(held),
+        roots.append(dict(band=r["band"], game=r["game"], ply=r["ply"], fen=b.fen(), prompt=r["prompt"], held=bool(held),
                           s_top=b.san(legal[k][lpS[k].argmax()]), w_top=b.san(legal[k][lpW[k].argmax()]),
-                          s_p=float(np.exp(lpS[k].max())), w_p=float(np.exp(lpW[k].max()))))
+                          s_p=float(np.exp(lpS[k].max())), w_p=float(np.exp(lpW[k].max())),
+                          legal=[m.uci() for m in legal[k]], lpS=lpS[k].round(5).tolist(), lpW=lpW[k].round(5).tolist()))
     print(f"{len(roots)} roots where S and W disagree ({sum(r['held'] for r in roots)} held out by game; "
           f"{sum(lpS[k].argmax() != lpW[k].argmax() for k in range(len(cand))) / len(cand):.0%} of candidates disagree)", flush=True)
+    settings = {k: getattr(a, k) for k in ("plies", "temperature", "seed", "held", "branch_plies", "alts", "depth")}
+    (cc.out / "roots.json").write_text(json.dumps(dict(roots=roots, bands=bands, settings=settings)), encoding="utf-8")
+    print(f"wrote {cc.out / 'roots.json'}")
 
+
+def play_stage(a):
+    """Contrast A and B lines from the roots with index % --parts == --part -> <run>/play-<part>-of-<parts>.json.
+    Contrast B: the chosen line (S's most likely move, then S), the root alternatives (S's 2nd.. most
+    likely moves), and branches off the chosen line at each --branch-plies ply (S's next most likely
+    moves there, excluding the one the chosen line played), all continued by S to --plies."""
+    dev = ev.device(a.device)
+    out, _ = dirs(a)
+    R = json.loads((out / "roots.json").read_text(encoding="utf-8"))
+    cc = load_cc(a.cc_run, a.cc, a.strong, "cpu")
+    models = {m: ev.load(cc.info["models"][m], dev)[0] for m in (0, 1)}
+    Sm, Wm = models[cc.s], models[cc.w]
+    rng = np.random.default_rng([a.seed, a.part])
+    branch = set(a.branch_plies)
+    if any(k % 2 or k <= 0 or k >= a.plies for k in branch):
+        sys.exit("--branch-plies must be even plies between 0 and --plies (the studied player's moves)")
     L = []
-    for ri, r in enumerate(roots):
-        k, b = r["k"], boards[r["k"]]
-        order = np.argsort(-lpS[k])
-        first = {"S": sample(lpS[k], a.temperature, rng), "W": sample(lpW[k], a.temperature, rng), "chosen": int(order[0])}
-        for j in range(1, min(5, len(order))):
+    for ri, r in enumerate(R["roots"]):
+        if ri % a.parts != a.part:
+            continue
+        b = ev.board_of(parse_movetext(r["prompt"])[0])
+        legal = [chess.Move.from_uci(u) for u in r["legal"]]
+        lpS, lpW = np.array(r["lpS"]), np.array(r["lpW"])
+        order = np.argsort(-lpS)
+        first = {"S": sample(lpS, a.temperature, rng), "W": sample(lpW, a.temperature, rng), "chosen": int(order[0])}
+        for j in range(1, min(a.alts + 1, len(order))):
             first[f"alt{j}"] = int(order[j])
         for kind, j in first.items():
-            line = dict(root=ri, kind=kind, board=b.copy(), moves=[], sans=[], prompt=r["prompt"])
-            advance(line, legal[k][j])
+            line = dict(root=ri, kind=kind, branch=0, board=b.copy(), moves=[], sans=[], prompt=r["prompt"])
+            advance(line, legal[j])
             L.append(line)
     t0 = time.time()
     for ply in range(1, a.plies):
         live = [l for l in L if len(l["moves"]) == ply and not l["board"].is_game_over()]
+        new = []
         for m, model in ((cc.s, Sm), (cc.w, Wm)):
             group = [l for l in live if (cc.w if l["kind"] == "W" and ply % 2 == 0 else cc.s) == m]
-            if group:
-                lg, lp, _ = policy(model, [l["board"] for l in group], dev, [l["prompt"] for l in group], batch=a.batch)
-                for l, mv, p in zip(group, lg, lp):
-                    advance(l, mv[sample(p, a.temperature, rng)])
-        print(f"\r  {len(L)} lines, ply {ply + 1}/{a.plies}, {time.time() - t0:.0f}s", end="", flush=True)
+            if not group:
+                continue
+            lg, lp, _ = policy(model, [l["board"] for l in group], dev, [l["prompt"] for l in group], batch=a.batch)
+            for l, mv, p in zip(group, lg, lp):
+                j = sample(p, a.temperature, rng)
+                if l["kind"] == "chosen" and ply in branch:
+                    for r_, x in enumerate([x for x in np.argsort(-p) if x != j][:a.alts], 1):
+                        nl = dict(root=l["root"], kind=f"b{ply}_{r_}", branch=ply, board=l["board"].copy(),
+                                  moves=list(l["moves"]), sans=list(l["sans"]), prompt=l["prompt"])
+                        advance(nl, mv[x])
+                        new.append(nl)
+                advance(l, mv[j])
+        L += new
+        print(f"\r  part {a.part + 1}/{a.parts}: {len(L)} lines, ply {ply + 1}/{a.plies}, {time.time() - t0:.0f}s", end="", flush=True)
     print()
-
-    # every position of every line: its prompt end, the position before it and the move to it
-    root_prev = []
-    for r in roots:
-        b = boards[r["k"]].copy()
-        mv = b.pop()
-        root_prev.append((b.fen(), mv.uci()))
-    seqs, ends, jobs, pos_key = [], [], {}, []
-    line_start = [0]
     for l in L:
-        b = chess.Board(roots[l["root"]]["fen"])
-        prev, uci = root_prev[l["root"]]
-        p = roots[l["root"]]["prompt"]
-        e = [len(p) - 1]
-        keys = [roots[l["root"]]["fen"] + " " + uci]
-        jobs.setdefault(keys[0], (keys[0], prev, uci))
+        del l["board"], l["prompt"]
+    path = out / f"play-{a.part}-of-{a.parts}.json"
+    path.write_text(json.dumps(L), encoding="utf-8")
+    print(f"wrote {path}")
+
+
+def gather(a):
+    """The play parts -> <run>/lines.json (roots in order, then the kinds in play order)."""
+    out, _ = dirs(a)
+    R = json.loads((out / "roots.json").read_text(encoding="utf-8"))
+    parts = [out / f"play-{p}-of-{a.parts}.json" for p in range(a.parts)]
+    missing = [p.name for p in parts if not p.exists()]
+    if missing:
+        sys.exit(f"play parts missing: {', '.join(missing)}")
+    L = [l for p in parts for l in json.loads(p.read_text(encoding="utf-8"))]
+    rank = {k: i for i, k in enumerate(dict.fromkeys(l["kind"] for l in L))}
+    L.sort(key=lambda l: (l["root"], l["branch"], rank[l["kind"]]))
+    roots = [{k: v for k, v in r.items() if k not in ("legal", "lpS", "lpW")} for r in R["roots"]]
+    (out / "lines.json").write_text(json.dumps(dict(roots=roots, lines=L, bands=R["bands"], settings=R["settings"])),
+                                    encoding="utf-8")
+    print(f"wrote {out / 'lines.json'}: {len(L)} lines from {len(roots)} roots")
+
+
+def positions(Ld):
+    """Every position of every line, in order: its prompt end (character index) per line, a key (FEN and
+    the move to it), whether Stockfish is needed there (every position of the contrast-A lines, the last
+    of the others) and the Stockfish jobs (key, position before, move)."""
+    roots = Ld["roots"]
+    prev = []
+    for r in roots:
+        b = ev.board_of(parse_movetext(r["prompt"])[0])
+        mv = b.pop()
+        prev.append((b.fen(), mv.uci()))
+    seqs, ends, keys, need, jobs, line_start = [], [], [], [], {}, [0]
+    for l in Ld["lines"]:
+        r = roots[l["root"]]
+        b = chess.Board(r["fen"])
+        p, pv, uci = r["prompt"], *prev[l["root"]]
+        e, ks, js = [len(p) - 1], [r["fen"] + " " + uci], [(pv, uci)]
         for u in l["moves"]:
             mv = chess.Move.from_uci(u)
             san = b.san(mv)
             p += san + (" " if b.turn == chess.WHITE else f" {b.fullmove_number + 1}.")
-            prev = b.fen()
+            js.append((b.fen(), u))
             b.push(mv)
             e.append(len(p) - 1)
-            keys.append(b.fen() + " " + u)
-            jobs.setdefault(keys[-1], (keys[-1], prev, u))
-        assert p == l["prompt"]
+            ks.append(b.fen() + " " + u)
+        nd = [l["kind"] in ("S", "W")] * len(ks)
+        nd[-1] = True
+        for k, j, n in zip(ks, js, nd):
+            if n:
+                jobs.setdefault(k, (k, *j))
         seqs.append(encode(p))
         ends.append(e)
-        pos_key += keys
+        keys += ks
+        need += nd
         line_start.append(line_start[-1] + len(e))
-    npos = line_start[-1]
-    print(f"{npos} positions ({len(jobs)} distinct): Stockfish depth {a.depth} and board facts, {a.workers} workers", flush=True)
+    return seqs, ends, keys, np.array(need), jobs, line_start
+
+
+def judge(a):
+    """Stockfish (--depth) and the board facts on part --part of --parts of the positions that need them
+    -> <run>/judge-<part>-of-<parts>.npz. A finished part is kept (a rerun skips it)."""
+    out, _ = dirs(a)
+    path = out / f"judge-{a.part}-of-{a.parts}.npz"
+    if path.exists():
+        print(f"{path} exists; skipping")
+        return
+    Ld = json.loads((out / "lines.json").read_text(encoding="utf-8"))
+    jobs = positions(Ld)[4]
+    todo = [jobs[k] for k in sorted(jobs)][a.part::a.parts]
+    print(f"part {a.part + 1}/{a.parts}: {len(todo)} of {len(jobs)} positions, Stockfish depth {a.depth} and board facts, "
+          f"{a.workers} workers", flush=True)
     res, t0 = {}, time.time()
     with Pool(a.workers, initializer=_eval_init, initargs=(a.depth,)) as pool:
-        for d_, (key, cp, facts) in enumerate(pool.imap_unordered(_eval, list(jobs.values()), chunksize=16), 1):
+        for d_, (key, cp, facts) in enumerate(pool.imap_unordered(_eval, todo, chunksize=16), 1):
             res[key] = (cp, facts)
-            if d_ % 500 == 0 or d_ == len(jobs):
+            if d_ % 500 == 0 or d_ == len(todo):
                 rate = d_ / (time.time() - t0)
-                print(f"\r  {d_}/{len(jobs)}, {rate:.0f}/s, {(len(jobs) - d_) / max(rate, 1e-9) / 60:.0f} min left   ",
+                print(f"\r  {d_}/{len(todo)}, {rate:.0f}/s, {(len(todo) - d_) / max(rate, 1e-9) / 60:.0f} min left   ",
                       end="", flush=True)
     print()
+    ks = sorted(res)
+    np.savez(str(path) + ".tmp.npz", keys=np.array(ks), cp=np.array([np.nan if res[k][0] is None else res[k][0] for k in ks]),
+             facts=np.array([res[k][1] for k in ks], dtype=bool).reshape(len(ks), len(ANCHORS)))
+    os.replace(str(path) + ".tmp.npz", path)
+    print(f"wrote {path}")
+
+
+def judged(out, needed):
+    """Stockfish results from the judge parts, {key: (cp, facts)}: the first complete set of parts."""
+    found = {}
+    for p in out.glob("judge-*-of-*.npz"):
+        k, n = map(int, re.match(r"judge-(\d+)-of-(\d+)\.npz", p.name).groups())
+        found.setdefault(n, {})[k] = p
+    for n, ps in sorted(found.items()):
+        if len(ps) == n:
+            res = {}
+            for p in ps.values():
+                z = np.load(p)
+                res.update({k: (None if np.isnan(c) else c, f) for k, c, f in zip(z["keys"].tolist(), z["cp"], z["facts"])})
+            if needed <= set(res):
+                return res
+    sys.exit(f"no complete set of judge parts in {out} covers the positions: run judge")
+
+
+def encode_stage(a):
+    """Both models' states at every position, the crosscoder codes, the Stockfish results merged
+    -> <run>/codes.npz, evals.npy, facts.npy, meta.json."""
+    dev = ev.device(a.device)
+    cc = load_cc(a.cc_run, a.cc, a.strong, dev)
+    Ld = json.loads((cc.out / "lines.json").read_text(encoding="utf-8"))
+    roots, L, bands = Ld["roots"], Ld["lines"], Ld["bands"]
+    seqs, ends, keys, need, jobs, line_start = positions(Ld)
+    res = judged(cc.out, set(jobs))
+    npos = line_start[-1]
     pos_line = np.repeat(np.arange(len(L)), np.diff(line_start))
     pos_t = np.concatenate([np.arange(n) for n in np.diff(line_start)]).astype(np.int16)
     evals = np.full(npos, np.nan, dtype=np.float32)
     facts = np.zeros((npos, len(ANCHORS)), dtype=bool)
-    for q, key in enumerate(pos_key):
-        cp, fa = res[key]
+    for q in np.flatnonzero(need):
+        cp, fa = res[keys[q]]
         facts[q] = fa
         if cp is not None:
             sign = 1 if pos_t[q] % 2 == 0 else -1                  # even plies: the root's side to move
             evals[q] = float(np.clip(sign * cp / 100, -MATE_PAWNS, MATE_PAWNS))
-
-    print("states of both models at every position, and the crosscoder", flush=True)
+    models = {m: ev.load(cc.info["models"][m], dev)[0] for m in (0, 1)}
+    print(f"states of both models at {npos} positions of {len(L)} lines, and the crosscoder", flush=True)
     st = {m: line_states(models[m], seqs, ends, cc.layer[m], dev, a.max_tokens) for m in (0, 1)}
     indptr, lat, val = [0], [], []
     # reconstruction error and L0 per (line kind, root band): off-distribution lines would reconstruct worse
-    kind_of = np.array([KINDS.index(L[q]["kind"]) for q in pos_line])
+    kinds = list(dict.fromkeys(l["kind"] for l in L))
+    kind_of = np.array([kinds.index(L[q]["kind"]) for q in pos_line])
     band_of = np.array([bands.index(roots[L[q]["root"]]["band"]) for q in pos_line])
     grp = torch.from_numpy(kind_of * len(bands) + band_of).to(dev)
-    G, S_ = len(KINDS) * len(bands), len(cc.sources)
+    G, S_ = len(kinds) * len(bands), len(cc.sources)
     err, sxx = torch.zeros((G, S_), device=dev), torch.zeros((G, S_), device=dev)
     sx = torch.zeros((G, S_, cc.ck["d"]), device=dev)
     cnt, l0 = torch.zeros(G, device=dev), torch.zeros(G, device=dev)
@@ -994,28 +1152,34 @@ def lines(a):
     by = {}
     for gi in range(G):
         if cnt[gi] > 0:
-            kind, band = KINDS[gi // len(bands)], bands[gi % len(bands)]
+            kind, band = kinds[gi // len(bands)], bands[gi % len(bands)]
             by.setdefault(kind, {})[band] = dict(positions=int(cnt[gi]), l0=float(l0g[gi]),
                                                  **{cc.info["names"][m]: float(rel[gi, k]) for k, (m, _) in enumerate(cc.sources)})
     np.savez(cc.out / "codes.npz", indptr=np.array(indptr, dtype=np.int64), lat=np.concatenate(lat), val=np.concatenate(val),
              line_start=np.array(line_start, dtype=np.int64), pos_line=pos_line, pos_t=pos_t)
     np.save(cc.out / "evals.npy", evals)
     np.save(cc.out / "facts.npy", facts)
-    for l in L:
-        del l["board"], l["prompt"]
-    for r in roots:
-        del r["k"]
-    (cc.out / "lines.json").write_text(json.dumps(dict(roots=roots, lines=L)), encoding="utf-8")
-    end = {kind: [evals[line_start[q + 1] - 1] for q, l in enumerate(L) if l["kind"] == kind] for kind in KINDS}
+    end = {kind: [evals[line_start[q + 1] - 1] for q, l in enumerate(L) if l["kind"] == kind] for kind in kinds}
+    s = Ld["settings"]
     meta = dict(cc_run=str(cc.run), cc=cc.dir.name, S=cc.info["names"][cc.s], W=cc.info["names"][cc.w],
-                plies=a.plies, temperature=a.temperature, depth=a.depth, roots=len(roots), lines=len(L), positions=npos,
-                held=a.held, seed=a.seed, latents=cc.ck["latents"], anchors=ANCHORS,
-                fvu_lines={cc.info["names"][m]: fvu[k] for k, (m, _) in enumerate(cc.sources)}, fvu_by=by, bands=bands,
-                mean_end_eval={kind: float(np.nanmean(v)) if v else None for kind, v in end.items()},
-                stockfish_missing=int(np.isnan(evals).sum()))
+                plies=s["plies"], temperature=s["temperature"], depth=s["depth"], branch_plies=s["branch_plies"],
+                roots=len(roots), lines=len(L), positions=npos, held=s["held"], seed=s["seed"], latents=cc.ck["latents"],
+                anchors=ANCHORS, fvu_lines={cc.info["names"][m]: fvu[k] for k, (m, _) in enumerate(cc.sources)}, fvu_by=by,
+                bands=bands, mean_end_eval={kind: float(np.nanmean(v)) if v else None for kind, v in end.items()},
+                stockfish_missing=int(np.isnan(evals[need]).sum()))
     (cc.out / "meta.json").write_text(json.dumps(meta, indent=1))
     print(lines_text(meta))
-    print(f"wrote {cc.out}: lines.json, codes.npz, evals.npy, facts.npy, meta.json")
+    print(f"wrote {cc.out}: codes.npz, evals.npy, facts.npy, meta.json")
+
+
+def lines(a):
+    """roots, play, gather, judge and encode in one process (on Modal they run as separate, sharded stages)."""
+    roots_stage(a)
+    a.part, a.parts = 0, 1
+    play_stage(a)
+    gather(a)
+    judge(a)
+    encode_stage(a)
 
 
 def lines_text(meta):
@@ -1074,14 +1238,36 @@ def end_eval(evals, z, q):
     return evals[z["line_start"][q + 1] - 1]
 
 
-def pair_signs(z, pairs, nlat):
-    """Per (pair, latent) with a nonzero difference: pair, latent, d = sum over plies >= 1 of chosen's
-    activation minus the rejected line's."""
+def contrast_pairs(Ld, evals, z, margin):
+    """Contrast-B (chosen, rejected) line pairs where Stockfish prefers chosen's last position by >= margin
+    pawns; rejected = a root alternative or a branch off the chosen line. -> pairs [(chosen, rejected)],
+    their roots, the ply after which the two lines differ (0 for root alternatives), pairs tried."""
+    L, by = Ld["lines"], {}
+    for q, l in enumerate(L):
+        by.setdefault(l["root"], []).append(q)
+    pairs, proots, start, tried = [], [], [], 0
+    for ri, qs in by.items():
+        c = next((q for q in qs if L[q]["kind"] == "chosen"), None)
+        if c is None:
+            continue
+        for k in qs:
+            if L[k]["kind"].startswith(("alt", "b")):
+                tried += 1
+                if end_eval(evals, z, c) - end_eval(evals, z, k) >= margin:     # a missing evaluation fails
+                    pairs.append((c, k))
+                    proots.append(ri)
+                    start.append(L[k].get("branch", 0))
+    return pairs, np.array(proots, dtype=np.int64), np.array(start, dtype=np.int64), tried
+
+
+def pair_signs(z, pairs, start, nlat):
+    """Per (pair, latent) with a nonzero difference: pair, latent, d = sum over the plies after the lines
+    part (> start: before that they are the same positions) of chosen's activation minus the rejected line's."""
     ls, ip = z["line_start"], z["indptr"]
     P, J, V = [], [], []
     for p, (c, k) in enumerate(pairs):
         for q, sgn in ((c, 1.0), (k, -1.0)):
-            e0, e1 = ip[ls[q] + 1], ip[ls[q + 1]]                     # plies 1.. (the root is shared)
+            e0, e1 = ip[min(ls[q] + 1 + start[p], ls[q + 1])], ip[ls[q + 1]]
             P.append(np.full(e1 - e0, p))
             J.append(z["lat"][e0:e1])
             V.append(sgn * z["val"][e0:e1].astype(np.float32))
@@ -1139,27 +1325,15 @@ def sign_tests(lat, d, flip, fit_pair, active, a, nlat):
 
 def nodes(a):
     cc_run = Path(a.cc_run)
-    out = RUNS / f"{cc_run.name}-{a.cc.removeprefix('cc-')}"
+    out, _ = dirs(a)
     meta, Ld, z, evals, facts = load_run(out)
     roots, L = Ld["roots"], Ld["lines"]
     nlat = meta["latents"]
-    by = {(l["root"], l["kind"]): q for q, l in enumerate(L)}
     fit_root = np.array([not r["held"] for r in roots])
-    pairs, pair_root = [], []
-    tried = 0
-    for ri in range(len(roots)):
-        c = by.get((ri, "chosen"))
-        for j in range(1, 5):
-            k = by.get((ri, f"alt{j}"))
-            if c is None or k is None:
-                continue
-            tried += 1
-            if end_eval(evals, z, c) - end_eval(evals, z, k) >= a.margin:
-                pairs.append((c, k))
-                pair_root.append(ri)
+    pairs, pair_root, start, tried = contrast_pairs(Ld, evals, z, a.margin)
     if not pairs:
         sys.exit("no contrast-B pair passes --margin: lower it, or check the Stockfish evaluations")
-    fit_pair_r = fit_root[np.array(pair_root, dtype=np.int64)]
+    fit_pair_r = fit_root[pair_root]
     print(f"contrast B: {len(pairs)} of {tried} (chosen, rejected) pairs where Stockfish prefers chosen by >= {a.margin} pawns "
           f"({fit_pair_r.sum()} fit, {(~fit_pair_r).sum()} held out)", flush=True)
     pos_root = np.array([L[q]["root"] for q in z["pos_line"]])
@@ -1167,7 +1341,7 @@ def nodes(a):
     fires = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat)
     rate = fires / max(fit_pos.sum(), 1)
     active = rate >= a.min_rate
-    pp, lat, d = pair_signs(z, pairs, nlat)
+    pp, lat, d = pair_signs(z, pairs, start, nlat)
     fit_pair = fit_pair_r[pp]
     f2, f3, st = sign_tests(lat, d, np.ones(len(d)), fit_pair, active, a, nlat)
     rng = np.random.default_rng(a.seed)
@@ -1191,7 +1365,8 @@ def nodes(a):
                       sep_fit=float(st["af"][j]), n_fit=int(st["nf"][j]), q_fit=float(st["q2"][j]),
                       sep_held=float(st["ah"][j]), n_held=int(st["nh"][j]), q_held=float(st["q3"][j]), rate=float(rate[j]))
                  for j in surv]
-    frate = facts[fit_pos].mean(0)
+    a_pos = np.array([l["kind"] in ("S", "W") for l in L])[z["pos_line"]]       # facts exist on contrast-A lines
+    frate = facts[fit_pos & a_pos].mean(0)
     anchors = [dict(kind="fact", id=k, name=n, rate=float(frate[k])) for k, n in enumerate(ANCHORS) if 0.01 <= frate[k] <= 0.99]
     for n in lat_nodes + anchors:
         n["label"] = label(n, ex)
@@ -1623,11 +1798,512 @@ document.getElementById("out").innerHTML = h;
 </script></body></html>""", encoding="utf-8")
 
 
+# ---------------------------------------------------------------- plan templates
+
+def scales_of(z, nlat):
+    """Each latent's mean activation where it fires, over every line position: templates weigh latents on one scale."""
+    cnt = np.bincount(z["lat"], minlength=nlat)
+    tot = np.bincount(z["lat"], weights=z["val"].astype(np.float64), minlength=nlat)
+    return (tot / np.maximum(cnt, 1)).clip(min=1e-6)
+
+
+def line_matrix(z, keep, scale, T, nlat):
+    """(lines, (T + 1) * latents) sparse: each line's normalised activations, column t * latents + j."""
+    from scipy import sparse
+    rows = z["row"]
+    m = keep[z["lat"]]
+    cols = z["pos_t"][rows][m].astype(np.int64) * nlat + z["lat"][m]
+    vals = z["val"][m].astype(np.float64) / scale[z["lat"][m]]
+    return sparse.csr_matrix((vals, (z["pos_line"][rows][m], cols)), shape=(len(z["line_start"]) - 1, (T + 1) * nlat))
+
+
+def pair_matrix(C, pairs, start, nlat):
+    """(pairs, columns) sparse: chosen's normalised activations minus the rejected line's, at the plies after
+    the two lines part (before that they are the same positions)."""
+    c, k = np.array([p[0] for p in pairs]), np.array([p[1] for p in pairs])
+    D = (C[c] - C[k]).tocsr()
+    rows = np.repeat(np.arange(D.shape[0]), np.diff(D.indptr))
+    D.data[D.indices < (start[rows] + 1) * nlat] = 0
+    D.eliminate_zeros()
+    return D
+
+
+def maxmin(job):
+    """Schut et al.'s max-min LP over signed features (w = w+ - w-, so a feature can be pursued or avoided):
+        max m - C sum(xi)   s.t.   D w + xi >= m,   sum(w+ + w-) <= 1,   w+, w-, xi >= 0
+    nu = 0: the hard margin (xi = 0); nu > 0: C = 1 / (nu n), at most a share nu of the pairs inside the
+    margin. Dual simplex, so the answer is a vertex: sparse. -> key, (columns, weights, m, share separated)."""
+    from scipy import sparse
+    from scipy.optimize import linprog
+    key, D, cols, nu = job
+    n, k = D.shape
+    ns = n if nu > 0 else 0
+    c = np.zeros(2 * k + 1 + ns)
+    c[2 * k] = -1.0
+    if ns:
+        c[2 * k + 1:] = 1.0 / (nu * n)
+    top = [-D, D, sparse.csr_matrix(np.ones((n, 1)))] + ([-sparse.identity(n, format="csr")] if ns else [])
+    bot = sparse.hstack([sparse.csr_matrix(np.ones((1, 2 * k))), sparse.csr_matrix((1, 1 + ns))])
+    A = sparse.vstack([sparse.hstack(top), bot]).tocsr()
+    b = np.zeros(n + 1)
+    b[-1] = 1.0
+    r = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None)] * (2 * k) + [(None, None)] + [(0, None)] * ns, method="highs-ds")
+    if r.status != 0:
+        return key, None
+    w = r.x[:k] - r.x[k:2 * k]
+    nz = np.abs(w) > 1e-9
+    return key, (cols[nz], w[nz], float(r.x[2 * k]), float(np.mean(D @ w > 0)))
+
+
+def kmeans(X, K, seed, iters=25):
+    """Cosine k-means on the rows of X (dense torch) -> cluster of each row."""
+    X = X / X.norm(dim=1, keepdim=True).clamp_min(1e-9)
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    cent = X[torch.randperm(len(X), generator=g)[:K].to(X.device)].clone()
+    for _ in range(iters):
+        lab = (X @ cent.T).argmax(1)
+        for k in range(K):
+            m = lab == k
+            if m.any():
+                c = X[m].sum(0)
+                cent[k] = c / c.norm().clamp_min(1e-9)
+    return lab.cpu().numpy()
+
+
+def template_vector(cols, w, ncols):
+    from scipy import sparse
+    return sparse.csr_matrix((w / np.abs(w).sum(), (np.zeros(len(cols), dtype=np.int64), cols)), shape=(1, ncols))
+
+
+def dedupe(temps, ncols, tau, prune=0.05):
+    """Greedy grouping (best templates first): a template joins the first group whose first member it matches
+    at cosine >= tau. A group's template is its members' mean, weights below `prune` x the largest dropped,
+    L1 = 1. -> [(columns, weights, member indices)]."""
+    from scipy import sparse
+    if not temps:
+        return []
+    M = sparse.vstack([template_vector(t["cols"], t["w"], ncols) for t in temps]).tocsr()
+    U = sparse.diags(1 / np.sqrt(np.asarray(M.multiply(M).sum(1)).ravel().clip(min=1e-18))) @ M
+    sim = (U @ U.T).tocsr()
+    order = sorted(range(len(temps)), key=lambda i: (-temps[i]["sep"], -temps[i]["m"]))
+    reps, groups = [], []
+    for i in order:
+        row = sim.getrow(i).toarray().ravel()[reps] if reps else np.zeros(0)
+        if len(row) and row.max() >= tau:
+            groups[int(row.argmax())].append(i)
+        else:
+            reps.append(i)
+            groups.append([i])
+    out = []
+    for g in groups:
+        v = np.asarray(M[g].mean(0)).ravel()
+        keep = np.abs(v) >= prune * np.abs(v).max()
+        cols = np.flatnonzero(keep)
+        out.append((cols, v[cols] / np.abs(v[cols]).sum(), g))
+    return out
+
+
+def weights_matrix(templates, ncols, shift=0, nlat=1):
+    """(columns, templates) sparse signed weights, each template's plies shifted by `shift` (dropped if outside)."""
+    from scipy import sparse
+    r, c, v = [], [], []
+    for g, (cols, w) in enumerate(templates):
+        cs = cols + shift * nlat
+        ok = (cs >= 0) & (cs < ncols)
+        if ok.all():
+            r.append(cs)
+            c.append(np.full(len(cs), g))
+            v.append(w)
+    if not r:
+        return sparse.csr_matrix((ncols, len(templates)))
+    return sparse.csr_matrix((np.concatenate(v), (np.concatenate(r), np.concatenate(c))), shape=(ncols, len(templates)))
+
+
+def sign_counts(D, Wm, chunk=4096):
+    """For each template column: pairs where D w > 0 and where D w < 0."""
+    from scipy import sparse
+    pos, neg = [], []
+    for i in range(0, Wm.shape[1], chunk):
+        s = D @ Wm[:, i:i + chunk]
+        s = s.toarray() if sparse.issparse(s) else np.asarray(s)
+        pos.append((s > 1e-9).sum(0))
+        neg.append((s < -1e-9).sum(0))
+    return np.concatenate(pos), np.concatenate(neg)
+
+
+def null_templates(templates, rate_bin, bins, rng, n, nlat):
+    """For each template, n random templates with its plies, signs and weights, each latent replaced by a
+    random candidate latent with a similar firing rate (the same rate decile)."""
+    out = []
+    for cols, w in templates:
+        t, j = cols // nlat, cols % nlat
+        for _ in range(n):
+            jj = np.array([rng.choice(bins[rate_bin[x]]) for x in j])
+            cc_ = t * nlat + jj
+            u, first = np.unique(cc_, return_index=True)
+            out.append((u, w[first]))
+    return out
+
+
+def mcnemar(xS, xW):
+    """Paired exact test over roots: b = executed in the S line and not the W line, c the reverse. -> b, c, p."""
+    b, c = (xS & ~xW).sum(0), (~xS & xW).sum(0)
+    return b, c, np.minimum(1, 2 * binom_tail(np.maximum(b, c), b + c))
+
+
+def describe_plan(cols, w, nlat, ex, most=8):
+    """A template in words, ply by ply: even plies are the root's side to move."""
+    items = sorted(zip(cols // nlat, cols % nlat, w), key=lambda x: (x[0], -abs(x[2])))[:most]
+    parts = []
+    for t, j, v in items:
+        e = ex.get(int(j))
+        what = e["explanation"] if e and e.get("status") in ("explained", "weak") else f"latent {j}"
+        parts.append(dict(ply=int(t), latent=int(j), weight=float(v), text=what,
+                          role="pursued" if v > 0 else "avoided"))
+    return parts
+
+
+def plans(a):
+    from scipy import sparse
+    dev = ev.device(a.device)
+    out, res = dirs(a)
+    meta, Ld, z, evals, facts = load_run(out)
+    roots, L, T, nlat = Ld["roots"], Ld["lines"], meta["plies"], meta["latents"]
+    ex = explanations(meta)
+    # three splits by game: fit the templates, select them (generalisation), diff S against W
+    split = np.array([0 if not r["held"] else 1 + zlib.crc32(f"{r['band']}/{r['game']}/select".encode()) % 2 for r in roots])
+    pos_root = np.array([L[q]["root"] for q in z["pos_line"]])
+    fit_pos = split[pos_root] == 0
+    rate = np.bincount(z["lat"][fit_pos[z["row"]]], minlength=nlat) / max(fit_pos.sum(), 1)
+    keep = (rate >= a.min_rate) & (rate <= a.max_rate)
+    scale = scales_of(z, nlat)
+    C = line_matrix(z, keep, scale, T, nlat)
+    ncols = C.shape[1]
+    pairs, proot, start, tried = contrast_pairs(Ld, evals, z, a.margin)
+    if not pairs:
+        sys.exit("no contrast-B pair passes --margin")
+    D = pair_matrix(C, pairs, start, nlat)
+    psplit = split[proot]
+    print(f"plan templates: {len(pairs)} of {tried} contrast-B pairs kept ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'diff')))}); "
+          f"{keep.sum()} candidate latents (firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions)", flush=True)
+
+    # 1. fit: per root, and per cluster of similar roots
+    jobs = []
+    fit_pairs = np.flatnonzero(psplit == 0)
+    by_root = {}
+    for p in fit_pairs:
+        by_root.setdefault(int(proot[p]), []).append(p)
+
+    def job(key, rows, nu):
+        Dr = D[rows]
+        cols = np.unique(Dr.indices)
+        return (key, Dr[:, cols].tocsc().tocsr(), cols, nu) if len(cols) else None
+
+    if a.fit in ("root", "both"):
+        jobs += [j for ri, rows in by_root.items() if len(rows) >= a.min_fit_pairs
+                 for j in [job(("root", ri), rows, 0.0)] if j is not None]
+    clusters = {}
+    if a.fit in ("cluster", "both") and by_root:
+        fr = np.array(sorted(by_root))
+        chosen = {l["root"]: q for q, l in enumerate(L) if l["kind"] == "chosen"}
+        X = torch.from_numpy(C[[chosen[r] for r in fr]][:, :nlat].toarray()).float().to(dev)   # the root position
+        K = max(1, round(len(fr) / a.cluster_size))
+        lab = kmeans(X, K, a.seed)
+        for r, k in zip(fr, lab):
+            clusters.setdefault(int(k), []).append(int(r))
+        jobs += [j for k, rs in clusters.items() for j in [job(("cluster", k), [p for r in rs for p in by_root[r]], a.nu)]
+                 if j is not None]
+    print(f"  fitting {len(jobs)} LPs ({sum(j[0][0] == 'root' for j in jobs)} roots, {len(clusters)} clusters), "
+          f"{a.workers} workers", flush=True)
+    temps, t0 = [], time.time()
+    with Pool(a.workers) as pool:
+        for d_, (key, r) in enumerate(pool.imap_unordered(maxmin, jobs, chunksize=4), 1):
+            if r is not None and r[2] > 1e-9 and len(r[0]):
+                temps.append(dict(key=key, cols=r[0], w=r[1], m=r[2], sep=r[3]))
+            if d_ % 200 == 0 or d_ == len(jobs):
+                print(f"\r  {d_}/{len(jobs)} LPs, {len(temps)} templates with a positive margin, {time.time() - t0:.0f}s",
+                      end="", flush=True)
+    print()
+    # 2. deduplicate
+    groups = dedupe(temps, ncols, a.dedupe)
+    templates = [(cols, w) for cols, w, _ in groups]
+    print(f"  {len(temps)} templates -> {len(groups)} after merging at cosine >= {a.dedupe}", flush=True)
+    if not templates:
+        sys.exit("no template has a positive margin: more pairs per fit (branches), or --fit cluster")
+
+    # 3. generalise: the selection pairs (other games), sign test + BH, against rate-matched random templates
+    sel = np.flatnonzero(psplit == 1)
+    Ds = D[sel]
+    Wm = weights_matrix(templates, ncols)
+    pos, neg = sign_counts(Ds, Wm)
+    n_inf = pos + neg
+    p_gen = binom_tail(pos, n_inf)
+    q_gen, ok_gen = bh(p_gen, a.fdr_nodes)
+    cand = np.flatnonzero(keep)
+    rb = np.zeros(nlat, dtype=np.int64)
+    edges_ = np.quantile(rate[cand], np.linspace(0, 1, 11)[1:-1])
+    rb[cand] = np.searchsorted(edges_, rate[cand])
+    bins = {b: cand[rb[cand] == b] for b in np.unique(rb[cand])}
+    rng = np.random.default_rng(a.seed)
+    nulls = null_templates(templates, rb, bins, rng, a.null_templates, nlat)
+    npos_, nneg_ = sign_counts(Ds, weights_matrix(nulls, ncols))
+    agree_null = (npos_ / np.maximum(npos_ + nneg_, 1)).reshape(len(templates), a.null_templates)
+    p_null = binom_tail(npos_, npos_ + nneg_).reshape(len(templates), a.null_templates)
+    agree = pos / np.maximum(n_inf, 1)
+    cut = p_gen[ok_gen].max() if ok_gen.any() else 0.0              # the p-value BH let through
+    beats = agree > np.quantile(agree_null, 0.95, axis=1)
+    general = ok_gen & beats & (n_inf >= a.min_pairs_held)
+    null_rate = float((p_null <= cut).mean()) if ok_gen.any() else 0.0
+    print(f"  generalise on {len(sel)} selection pairs: {ok_gen.sum()} pass the sign test at FDR {a.fdr_nodes}, "
+          f"{general.sum()} also beat 95% of their {a.null_templates} rate-matched random templates; random templates "
+          f"pass the same p cut-off {null_rate:.1%} of the time", flush=True)
+
+    # execution threshold: halfway between the template's mean score on chosen and on rejected selection lines
+    Esel_c = C[[pairs[p][0] for p in sel]] @ Wm
+    Esel_k = C[[pairs[p][1] for p in sel]] @ Wm
+    tau = (np.asarray(Esel_c.mean(0)).ravel() + np.asarray(Esel_k.mean(0)).ravel()) / 2
+
+    # 4. diff: S and W lines from the diff roots, executed or not, McNemar; the same for the random templates
+    by = {(l["root"], l["kind"]): q for q, l in enumerate(L)}
+    droots = [ri for ri in range(len(roots)) if split[ri] == 2 and (ri, "S") in by and (ri, "W") in by]
+    drop = np.full(len(droots), np.nan)
+    for r, ri in enumerate(droots):
+        q = by[(ri, "W")]
+        e = evals[z["line_start"][q]:z["line_start"][q + 1]]
+        d = [e[t] - e[t + 1] for t in range(0, len(e) - 1, 2) if not (np.isnan(e[t]) or np.isnan(e[t + 1]))]
+        drop[r] = max(d) if d else np.nan
+    positional = drop <= a.blunder
+    band = np.array([roots[ri]["band"] for ri in droots])
+    sS, sW = [by[(ri, "S")] for ri in droots], [by[(ri, "W")] for ri in droots]
+    ES, EW = np.asarray((C[sS] @ Wm).todense()), np.asarray((C[sW] @ Wm).todense())
+    xS, xW = ES >= tau, EW >= tau
+    gi = np.flatnonzero(general)
+    diff = {}
+    for sname, m in (("positional", positional), ("all", np.ones(len(droots), bool))):
+        b, c, p = mcnemar(xS[m][:, gi], xW[m][:, gi])
+        q, sig = bh(p, a.fdr)
+        diff[sname] = dict(roots=int(m.sum()), b=b, c=c, p=p, q=q, sig=sig,
+                           bands={n: mcnemar(xS[m & (band == n)][:, gi], xW[m & (band == n)][:, gi])[:2] for n in sorted(set(band))},
+                           cont=((ES[m][:, gi] > EW[m][:, gi]).sum(0), (ES[m][:, gi] < EW[m][:, gi]).sum(0)))
+    # random templates of the same sparsity, through the same diff
+    nidx = np.array([g * a.null_templates + k for g in gi for k in range(a.null_templates)], dtype=np.int64)
+    null_diff = 0.0
+    if len(nidx):
+        Wn = weights_matrix([nulls[i] for i in nidx], ncols)
+        tau_n = (np.asarray((C[[pairs[p][0] for p in sel]] @ Wn).mean(0)).ravel()
+                 + np.asarray((C[[pairs[p][1] for p in sel]] @ Wn).mean(0)).ravel()) / 2
+        m = positional
+        nb, nc, npv = mcnemar(np.asarray((C[sS] @ Wn).todense())[m] >= tau_n, np.asarray((C[sW] @ Wn).todense())[m] >= tau_n)
+        sp = diff["positional"]["p"][diff["positional"]["sig"]]
+        null_diff = float((npv <= (sp.max() if len(sp) else 0.0)).mean())
+    print(f"  diff on {len(droots)} roots ({positional.sum()} positional): "
+          f"{int(diff['positional']['sig'].sum())} plans differ at FDR {a.fdr} on the positional roots; random templates "
+          f"differ as often {null_diff:.1%} of the time", flush=True)
+
+    # 5. the plan graph on the diff roots: plans as nodes; follows (lags 2, 4, 6 between the plies they start
+    # at), competes (rarely executed together, lag 0), replaces (S executes B where W executes A)
+    order = gi[np.argsort(p_gen[gi])][:a.max_plans]
+    P = [templates[g] for g in order]
+    tmin = np.array([int(cols.min() // nlat) for cols, _ in P])
+    tmax = np.array([int(cols.max() // nlat) for cols, _ in P])
+    lines_S, lines_W = [by[(ri, "S")] for ri in np.array(droots)[positional]], [by[(ri, "W")] for ri in np.array(droots)[positional]]
+    R_ = len(lines_S)
+    AS, AW = np.zeros((R_, T + 1, len(P) + 1), np.float32), np.zeros((R_, T + 1, len(P) + 1), np.float32)
+    for A_, ls in ((AS, lines_S), (AW, lines_W)):
+        for r, q in enumerate(ls):
+            A_[r, :z["line_start"][q + 1] - z["line_start"][q], -1] = 1
+    for o in range(-T - (T % 2), T + 1, 2):
+        Wo = weights_matrix(P, ncols, o, nlat)
+        if Wo.nnz == 0:
+            continue
+        valid = [g for g in range(len(P)) if 0 <= tmin[g] + o and tmax[g] + o <= T]
+        if not valid:
+            continue
+        for A_, ls in ((AS, lines_S), (AW, lines_W)):
+            Eo = np.asarray((C[ls] @ Wo).todense())
+            for g in valid:
+                bucket = tmin[g] + o - (tmin[g] + o) % 2
+                A_[:, bucket, g] = np.maximum(A_[:, bucket, g], (Eo[:, g] >= tau[order[g]]) * A_[:, bucket, -1])
+    pnodes = [dict(kind="plan", id=int(g), label=f"plan {int(g)}") for g in order]
+    plan_rows, competes, replaces = [], [], []
+    if len(P) >= 2 and R_ >= a.min_roots:
+        tS, tW = torch.from_numpy(AS).to(dev), torch.from_numpy(AW).to(dev)
+        E = diff_edges(tS, tW, [k for k in (0, 2, 4, 6) if k <= T], a, dev)
+        for e in E.values():
+            for k_ in e:
+                e[k_] = e[k_][:len(P)] if e[k_].ndim == 1 else e[k_][:len(P), :len(P)]
+        plan_rows = categorise({k: v for k, v in E.items() if k > 0}, pnodes, a)
+        e0 = E[0]
+        for i in range(len(P)):
+            for j in range(i + 1, len(P)):
+                for who, l_, sd_ in (("S", e0["lS"], e0["sd_lS"]), ("W", e0["lW"], e0["sd_lW"])):
+                    if min(e0["aS" if who == "S" else "aW"][i], e0["aS" if who == "S" else "aW"][j]) >= a.min_count \
+                            and l_[i, j] + 1.96 * sd_[i, j] < 0:
+                        competes.append(dict(a=int(order[i]), b=int(order[j]), lines=who, lift=float(np.exp(l_[i, j]))))
+        anyS, anyW = AS[:, :, :-1].max(1) > 0, AW[:, :, :-1].max(1) > 0
+        onlyW, onlyS = (anyW & ~anyS).astype(np.float64), (anyS & ~anyW).astype(np.float64)
+        nAB = onlyW.T @ onlyS
+        exp_ = np.outer(onlyW.sum(0), onlyS.sum(0)) / max(R_, 1)
+        lift = (nAB + a.prior) / (exp_ + a.prior)
+        for i, j in zip(*np.nonzero((nAB >= a.min_count) & ~np.eye(len(P), dtype=bool))):
+            replaces.append(dict(w_plan=int(order[i]), s_plan=int(order[j]), roots=int(nAB[i, j]), lift=float(lift[i, j])))
+        replaces.sort(key=lambda r: -r["lift"])
+        competes.sort(key=lambda r: r["lift"])
+
+    # records, report, page
+    gpos = {int(g): k for k, g in enumerate(gi)}
+    recs = []
+    for g, (cols, w) in enumerate(templates):
+        members = groups[g][2]
+        r = dict(id=g, features=describe_plan(cols, w, nlat, ex), n_features=int(len(cols)), plies=sorted({int(x) for x in cols // nlat}),
+                 fits=len(members), from_roots=sum(temps[i]["key"][0] == "root" for i in members),
+                 from_clusters=sum(temps[i]["key"][0] == "cluster" for i in members), fit_sep=float(np.mean([temps[i]["sep"] for i in members])),
+                 sel_pairs=int(n_inf[g]), sel_agree=float(agree[g]), sel_q=float(q_gen[g]),
+                 null_agree95=float(np.quantile(agree_null[g], 0.95)), general=bool(general[g]), tau=float(tau[g]))
+        if g in gpos:
+            k = gpos[g]
+            for sname, d in diff.items():
+                r[f"diff_{sname}"] = dict(S_not_W=int(d["b"][k]), W_not_S=int(d["c"][k]), q=float(d["q"][k]), sig=bool(d["sig"][k]),
+                                         S_higher=int(d["cont"][0][k]), W_higher=int(d["cont"][1][k]),
+                                         bands={n: [int(v[0][k]), int(v[1][k])] for n, v in d["bands"].items()})
+            ex_roots = [ri for ri, a_, b_ in zip(np.array(droots)[positional], xS[positional][:, g], xW[positional][:, g]) if a_ and not b_][:3]
+            r["examples"] = [example(Ld, by, evals, z, ri) for ri in ex_roots]
+        recs.append(r)
+    rec = dict(settings={k: getattr(a, k) for k in ("fit", "cluster_size", "nu", "dedupe", "margin", "min_rate", "max_rate",
+                                                    "null_templates", "fdr_nodes", "fdr", "min_fit_pairs", "max_plans")},
+               funnel=dict(pairs=len(pairs), tried=tried, fit_pairs=int((psplit == 0).sum()), select_pairs=int(len(sel)),
+                           diff_roots=len(droots), positional_roots=int(positional.sum()), lps=len(jobs), templates=len(temps),
+                           merged=len(templates), pass_sign=int(ok_gen.sum()), general=int(general.sum()),
+                           null_pass=null_rate, diff_sig=int(diff["positional"]["sig"].sum()), null_diff=null_diff),
+               plans=recs, graph=dict(nodes=[int(g) for g in order], follows=[dict(r, src=int(order[r["src"]]), dst=int(order[r["dst"]]))
+                                                                             for r in plan_rows if r["category"] != "shared"],
+                                     competes=competes[:200], replaces=replaces[:200]))
+    (out / "plans.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
+    res.mkdir(parents=True, exist_ok=True)
+    (res / "plans.md").write_text(plans_text(rec, a) + "\n", encoding="utf-8")
+    plans_page(out / "plans.html", out.name, rec)
+    print(plans_text(rec, a))
+    print(f"wrote {res / 'plans.md'}, {out / 'plans.json'} and {out / 'plans.html'}")
+
+
+def example(Ld, by, evals, z, ri):
+    root = Ld["roots"][ri]
+    item = dict(fen=root["fen"], band=root["band"], s_top=root["s_top"], w_top=root["w_top"], lines={})
+    for kind in ("S", "W"):
+        q = by[(ri, kind)]
+        e = evals[z["line_start"][q]:z["line_start"][q + 1]]
+        l = Ld["lines"][q]
+        item["lines"][kind] = dict(sans=l["sans"], first=l["moves"][0], end=None if np.isnan(e[-1]) else float(e[-1]))
+    return item
+
+
+def plan_words(r, most=6):
+    return "; ".join(f"ply {f['ply']}: {'+' if f['weight'] > 0 else '-'}{f['text']} ({abs(f['weight']):.2f})"
+                     for f in r["features"][:most])
+
+
+def plans_text(rec, a):
+    f = rec["funnel"]
+    out = ["# Plan templates", "",
+           f"Contrast-B pairs kept: {f['pairs']} of {f['tried']} ({f['fit_pairs']} fit, {f['select_pairs']} selection); "
+           f"{f['diff_roots']} diff roots ({f['positional_roots']} positional). Fit, selection and diff roots come from different games.", "",
+           "| step | count |", "|---|---|",
+           f"| LPs fitted (per root, per cluster) | {f['lps']} |",
+           f"| templates with a positive margin | {f['templates']} |",
+           f"| after merging similar ones | {f['merged']} |",
+           f"| separate chosen from rejected on selection pairs (sign test, FDR {a.fdr_nodes}) | {f['pass_sign']} |",
+           f"| ... and beat 95% of rate-matched random templates | {f['general']} |",
+           f"| random templates passing the same p cut-off | {f['null_pass']:.1%} |",
+           f"| executed differently by S and W on positional diff roots (McNemar, FDR {a.fdr}) | {f['diff_sig']} |",
+           f"| random templates differing as often | {f['null_diff']:.1%} |", ""]
+    if f["general"] and f["null_pass"] > 0.2:
+        out += ["**Warning**: random templates pass the generalisation cut-off often; the templates may not be specific.", ""]
+    gen = [r for r in rec["plans"] if r.get("diff_positional")]
+    for title, keyf in (("executed by S and not W", lambda r: r["diff_positional"]["S_not_W"] - r["diff_positional"]["W_not_S"]),
+                        ("executed by W and not S", lambda r: r["diff_positional"]["W_not_S"] - r["diff_positional"]["S_not_W"])):
+        rs = sorted((r for r in gen if r["diff_positional"]["sig"] and keyf(r) > 0), key=keyf, reverse=True)[:a.show]
+        if not rs:
+            continue
+        bn = list(rs[0]["diff_positional"]["bands"])
+        out += [f"## Plans {title} (positional diff roots)", "",
+                "| plan | template (ply: feature, weight) | roots S not W / W not S | " + " | ".join(f"{n} roots" for n in bn)
+                + " | selection agreement (random 95%) | fits merged | q |", "|---|---|---|" + "---|" * len(bn) + "---|---|---|"]
+        for r in rs:
+            d = r["diff_positional"]
+            out.append(f"| {r['id']} | {plan_words(r)} | {d['S_not_W']} / {d['W_not_S']} | "
+                       + " | ".join(f"{v[0]} / {v[1]}" for v in d["bands"].values())
+                       + f" | {r['sel_agree']:.0%} ({r['null_agree95']:.0%}) | {r['fits']} | {d['q']:.2g} |")
+        out.append("")
+    g = rec["graph"]
+    lab = {r["id"]: r for r in rec["plans"]}
+    if g["follows"]:
+        out += ["## Plan graph: which plans follow which (S-only and W-only edges)", "", "| lag | from | to | lift S | lift W | category |",
+                "|---|---|---|---|---|---|"]
+        for r in sorted(g["follows"], key=lambda r: -abs(r["delta"]))[:a.show]:
+            out.append(f"| {r['lag']} | {r['src']}: {plan_words(lab[r['src']], 2)} | {r['dst']}: {plan_words(lab[r['dst']], 2)} | "
+                       f"{r['lift_S']:.2f} | {r['lift_W']:.2f} | {r['category']} |")
+        out.append("")
+    if g["replaces"]:
+        out += ["## Replacements: S executes the second plan where W executes the first (same root)", "",
+                "| W's plan | S's plan | roots | lift |", "|---|---|---|---|"]
+        out += [f"| {r['w_plan']}: {plan_words(lab[r['w_plan']], 2)} | {r['s_plan']}: {plan_words(lab[r['s_plan']], 2)} | {r['roots']} | "
+                f"{r['lift']:.2f} |" for r in g["replaces"][:a.show]]
+        out.append("")
+    if g["competes"]:
+        out += ["## Competing plans (rarely executed in the same line)", "", "| plan | plan | lines | lift |", "|---|---|---|---|"]
+        out += [f"| {r['a']}: {plan_words(lab[r['a']], 2)} | {r['b']}: {plan_words(lab[r['b']], 2)} | {r['lines']} | {r['lift']:.2f} |"
+                for r in g["competes"][:a.show]]
+    return "\n".join(out)
+
+
+def plans_page(path, name, rec):
+    """plans.html: the plan graph (vis-network) and a card per plan in it, with roots where S executes it and W doesn't."""
+    keep = set(rec["graph"]["nodes"])
+    data = dict(plans={r["id"]: r for r in rec["plans"] if r["id"] in keep}, graph=rec["graph"])
+    js = json.dumps(data, default=float).replace("</", "<\\/")
+    path.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Plans: {html.escape(name)}</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>body{{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}}#net{{flex:1;border-right:1px solid #ccc}}
+#card{{width:560px;overflow:auto;padding:12px}}.ln{{font-family:monospace;font-size:12px}}.f{{margin:2px 0}}{BOARD_CSS}</style></head>
+<body>{BOARD_DEFS}{MOVE_HEAD}<div id="net"></div><div id="card"><h3>Plans: {html.escape(name)}</h3>
+<p>Nodes: plans that generalise (green: executed more by S, orange: more by W, grey: no difference). Arrows: one plan follows another
+(green S-only, orange W-only); dashed blue: S executes the arrow's head where W executes its tail; red: rarely in the same line.
+Click a plan.</p></div>
+<script>{BOARD_JS}
+const D = {js};
+const col = p => {{ const d = p.diff_positional; if (!d || !d.sig) return "#bbb"; return d.S_not_W > d.W_not_S ? "#2e8b57" : "#e08a1e"; }};
+const nodes = new vis.DataSet(Object.values(D.plans).map(p => ({{id: p.id, label: String(p.id), color: col(p), shape: "dot",
+  size: 8 + 2 * Math.sqrt(p.fits)}})));
+const E = [];
+for (const e of D.graph.follows) if (e.src in D.plans && e.dst in D.plans)
+  E.push({{from: e.src, to: e.dst, arrows: "to", color: e.category === "S-only" ? "#2e8b57" : e.category === "W-only" ? "#e08a1e" : "#999"}});
+for (const e of D.graph.replaces.slice(0, 60)) if (e.w_plan in D.plans && e.s_plan in D.plans)
+  E.push({{from: e.w_plan, to: e.s_plan, arrows: "to", dashes: true, color: "#4a6fd6"}});
+for (const e of D.graph.competes.slice(0, 60)) if (e.a in D.plans && e.b in D.plans) E.push({{from: e.a, to: e.b, color: "#d64a4a"}});
+const net = new vis.Network(document.getElementById("net"), {{nodes, edges: new vis.DataSet(E)}}, {{physics: {{stabilization: true}}}});
+const fmt = v => v === null ? "?" : (v > 0 ? "+" : "") + v.toFixed(2);
+net.on("click", ev => {{
+  if (!ev.nodes.length) return;
+  const p = D.plans[ev.nodes[0]], d = p.diff_positional;
+  let h = `<h3>plan ${{p.id}}</h3><div>merged from ${{p.fits}} fits; selection pairs agreeing ${{(100 * p.sel_agree).toFixed(0)}}% of
+    ${{p.sel_pairs}} (random templates' 95th percentile ${{(100 * p.null_agree95).toFixed(0)}}%)</div>`;
+  if (d) h += `<div>positional diff roots: S executes and W doesn't in ${{d.S_not_W}}, the reverse in ${{d.W_not_S}} (q ${{d.q.toPrecision(2)}})</div>`;
+  h += "<h4>template</h4>" + p.features.map(f => `<div class="f">ply ${{f.ply}} (${{f.ply % 2 ? "opponent" : "player"}} to move):
+    <b>${{f.role}}</b> ${{f.text}} (${{Math.abs(f.weight).toFixed(2)}})</div>`).join("");
+  for (const x of (p.examples || [])) h += `<h4>${{x.band}} root: S executes it, W doesn't</h4>${{board(x.fen, x.lines.S.first)}}
+    <div class="ln">S would play ${{x.s_top}}, W ${{x.w_top}}<br><b>S line</b> (${{fmt(x.lines.S.end)}}): ${{x.lines.S.sans.join(" ")}}<br>
+    <b>W line</b> (${{fmt(x.lines.W.end)}}): ${{x.lines.W.sans.join(" ")}}</div>`;
+  document.getElementById("card").innerHTML = h;
+}});
+</script></body></html>""", encoding="utf-8")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["health", "recall", "lines", "nodes", "graph", "all"])
+    ap.add_argument("command", choices=["health", "recall", "lines", "roots", "play", "gather", "judge", "encode", "nodes",
+                                        "graph", "plans", "all"])
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run (one layer per model), e.g. Lfinal or L15")
     ap.add_argument("--strong", default="2400", help="a part of the strong model's name (S); the other is W")
@@ -1654,6 +2330,10 @@ def main():
     g.add_argument("--held", type=int, default=30, help="percent of games held out")
     g.add_argument("--plies", type=int, default=8, help="plies per line")
     g.add_argument("--temperature", type=float, default=0.25, help="every policy's temperature (over legal moves)")
+    g.add_argument("--branch-plies", type=int, nargs="*", default=[2, 4], help="plies the chosen line branches at (even)")
+    g.add_argument("--alts", type=int, default=4, help="rejected moves at the root and at each branch ply")
+    g.add_argument("--part", type=int, default=0, help="play and judge: this part of the roots / positions ...")
+    g.add_argument("--parts", type=int, default=1, help="... of this many (Modal runs the parts in parallel)")
     g.add_argument("--depth", type=int, default=12, help="Stockfish depth for every position")
     g.add_argument("--workers", type=int, default=max(1, min(16, (os.cpu_count() or 2) - 2)), help="Stockfish processes")
     g.add_argument("--max-tokens", type=int, default=300_000, help="characters per forward pass when reading the lines")
@@ -1677,10 +2357,20 @@ def main():
     g.add_argument("--boot", type=int, default=1000, help="bootstrap resamples of the roots")
     g.add_argument("--boot-chunk", type=int, default=25, help="bootstrap resamples at once (GPU memory)")
     g.add_argument("--max-motifs", type=int, default=20_000, help="motif candidates at most")
-    g.add_argument("--show", type=int, default=20, help="motifs listed (and drawn) per direction")
+    g.add_argument("--show", type=int, default=20, help="motifs (and plans) listed per direction")
+    g = ap.add_argument_group("plans")
+    g.add_argument("--fit", choices=["root", "cluster", "both"], default="both", help="fit templates per root, per cluster, or both")
+    g.add_argument("--cluster-size", type=int, default=20, help="roots per cluster (k-means on the root position's latents)")
+    g.add_argument("--nu", type=float, default=0.2, help="cluster fits: share of pairs allowed inside the margin (soft LP)")
+    g.add_argument("--min-fit-pairs", type=int, default=2, help="pairs a root needs for its own fit")
+    g.add_argument("--max-rate", type=float, default=0.5, help="candidate latents fire on at most this share of positions")
+    g.add_argument("--dedupe", type=float, default=0.5, help="cosine at which templates merge")
+    g.add_argument("--null-templates", type=int, default=50, help="rate-matched random templates per template")
+    g.add_argument("--max-plans", type=int, default=300, help="plans in the plan graph at most")
     a = ap.parse_args()
-    steps = dict(health=health, recall=recall, lines=lines, nodes=nodes, graph=graph)
-    for name in (steps if a.command == "all" else [a.command]):
+    steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
+                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans)
+    for name in (["health", "recall", "lines", "nodes", "graph", "plans"] if a.command == "all" else [a.command]):
         print(f"\n=== {name}", flush=True)
         steps[name](a)
 

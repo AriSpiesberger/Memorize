@@ -28,14 +28,20 @@ def months_back(latest, n):
     return out
 
 
-def lab_image(*packages):
-    """Debian with Python 3.12 and the given pip packages, plus chess_beyond/ at REMOTE (code only:
-    no data, runs, models, tools, results or this folder) and this module (Modal ships only the
-    entry file by itself)."""
+def lab_image(*packages, apt=(), commands=(), env=None):
+    """Debian with Python 3.12 and the given pip packages (and apt packages, shell commands run at build
+    time, environment variables), plus chess_beyond/ at REMOTE (code only: no data, runs, models, tools,
+    results or this folder) and this module (Modal ships only the entry file by itself)."""
+    image = modal.Image.debian_slim(python_version="3.12")
+    if apt:
+        image = image.apt_install(*apt)
+    if commands:
+        image = image.run_commands(*commands)
+    image = image.pip_install(*packages)
+    if env:
+        image = image.env(env)
     return (
-        modal.Image.debian_slim(python_version="3.12")
-        .pip_install(*packages)
-        .add_local_dir(ROOT, REMOTE, ignore=["data", "runs", "models", "tools", "results", "modal",
-                                             "**/__pycache__", "*.pyc"])
+        image.add_local_dir(ROOT, REMOTE, ignore=["data", "runs", "models", "tools", "results", "modal",
+                                                  "**/__pycache__", "*.pyc"])
         .add_local_python_source("modal_shared")
     )
