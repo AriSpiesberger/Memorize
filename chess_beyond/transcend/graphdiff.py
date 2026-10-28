@@ -2701,8 +2701,9 @@ net.on("click", ev => {{
 
 LATENT_PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><title>Latent graphs: __NAME__</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
-<style>body{font-family:system-ui,sans-serif;margin:0}#top{display:flex;height:68vh}.panel{flex:1;display:flex;flex-direction:column;
-border-right:1px solid #ccc}.panel h3{margin:6px 10px}.net{flex:1}#card{padding:10px 14px;border-top:1px solid #ccc}
+<style>body{font-family:system-ui,sans-serif;margin:0}#top{display:flex;height:68vh}.panel{flex:1;position:relative;
+border-right:1px solid #ccc}.panel h3{margin:6px 10px;height:24px}.net{position:absolute;top:36px;bottom:0;left:0;right:0}
+#card{padding:10px 14px;border-top:1px solid #ccc}
 .ln{font-family:monospace;font-size:12px}table.g{border-collapse:collapse}table.g td,table.g th{border:1px solid #ddd;vertical-align:top;padding:4px}
 .ex{margin-bottom:8px;max-width:330px}.ex b{background:#fde68a}.c{cursor:pointer;color:#2a5bd7}__BOARD_CSS__</style></head>
 <body>__BOARD_DEFS____MOVE_HEAD__
