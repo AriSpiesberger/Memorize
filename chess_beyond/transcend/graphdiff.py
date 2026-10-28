@@ -68,6 +68,8 @@ lines   Roots: held-out positions of both bands (data/pgn_probe/population.jsonl
             "S"   S writes every move, both colours
             "W"   W writes every move, both colours
             "S2"  S again (--control): the S-vs-S control, which takes S's sampling noise through the same pipeline
+            "SH"  S at W's entropy (--s-hot auto: the temperature at which S's mean per-move entropy over the roots
+                  matches W's): is a difference in structure about how S's play is organised, or that it is less random
         (both models are pure imitation learners: a rollout is one model imitating the game from the root, with no
         player and no opponent)
         Every position is read by both models and encoded with the crosscoder (and its FVU there: the
@@ -120,6 +122,10 @@ plans   Concepts, as in Schut et al. (AlphaZero concept discovery), in the cross
                          G_diff     nodes: execution rate S minus W, McNemar over roots, BH; edges: log-lift in
                                     G_S minus in G_W, bootstrap over roots, BH at --fdr
                          control    G_diff from S against S2: should come out nearly empty
+                         structure  whether S's richer graph is W's noise: pairs of concepts co-executed across roots
+                                    (BH), the same corrected for each concept's reliability (its execution in the
+                                    first and second half of a root's rollouts; disattenuated), and within roots (the
+                                    variation among a root's own rollouts, pooled); for S, W, S2 and SH
           examples     per concept (the --show-examples strongest), a 2x2 of replication rollouts: S's and W's, where it
                        is clearly present (top 10% of its score, one per game, strongest first) and clearly absent
                        (bottom 10%: another sample of the same model from the same root when there is one, else the
@@ -995,8 +1001,27 @@ def roots_stage(a):
     print(f"{len(roots)} roots ({sum(r['held'] for r in roots)} held out by game); S's and W's most likely first moves "
           f"differ at {sum(lpS[k].argmax() != lpW[k].argmax() for k in range(len(cand))) / len(cand):.0%} of them", flush=True)
     settings = {k: getattr(a, k) for k in ("plies", "temperature", "seed", "held", "depth", "rollouts", "control")}
+    if a.s_hot:
+        settings["s_hot_T"] = entropy_matched_T(lpS, lpW, a.temperature) if a.s_hot == "auto" else float(a.s_hot)
+        print(f"  entropy-matched S rollouts (SH) at temperature {settings['s_hot_T']:.3f}", flush=True)
     (cc.out / "roots.json").write_text(json.dumps(dict(roots=roots, bands=bands, settings=settings)), encoding="utf-8")
     print(f"wrote {cc.out / 'roots.json'}")
+
+
+def entropy_matched_T(lpS, lpW, T_w):
+    """The temperature at which S's mean per-move entropy over these positions matches W's at T_w (bisection)."""
+    def H(lps, T):
+        out = []
+        for lp in lps:
+            x = lp / T
+            q = np.exp(x - np.logaddexp.reduce(x))
+            out.append(-(q * np.log(np.maximum(q, 1e-300))).sum())
+        return float(np.mean(out))
+    target, lo, hi = H(lpW, T_w), 0.2, 8.0
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if H(lpS, mid) < target else (lo, mid)
+    return (lo + hi) / 2
 
 
 def play_stage(a):
@@ -1016,11 +1041,13 @@ def play_stage(a):
             continue
         b = ev.board_of(parse_movetext(r["prompt"])[0])
         legal = [chess.Move.from_uci(u) for u in r["legal"]]
-        kinds = [("S", np.array(r["lpS"])), ("W", np.array(r["lpW"]))] + ([("S2", np.array(r["lpS"]))] if a.control else [])
-        for kind, lp in kinds:
+        kinds = ([("S", np.array(r["lpS"]), a.temperature), ("W", np.array(r["lpW"]), a.temperature)]
+                 + ([("S2", np.array(r["lpS"]), a.temperature)] if a.control else [])
+                 + ([("SH", np.array(r["lpS"]), R["settings"]["s_hot_T"])] if "s_hot_T" in R["settings"] else []))
+        for kind, lp, T_ in kinds:
             for k in range(a.rollouts):
-                line = dict(root=ri, kind=kind, r=k, board=b.copy(), moves=[], sans=[], prompt=r["prompt"])
-                advance(line, legal[sample(lp, a.temperature, rng)])
+                line = dict(root=ri, kind=kind, r=k, T=T_, board=b.copy(), moves=[], sans=[], prompt=r["prompt"])
+                advance(line, legal[sample(lp, T_, rng)])
                 L.append(line)
     t0 = time.time()
     for ply in range(1, a.plies):
@@ -1030,7 +1057,7 @@ def play_stage(a):
             if group:
                 lg, lp, _ = policy(model, [l["board"] for l in group], dev, [l["prompt"] for l in group], batch=a.batch)
                 for l, mv, p in zip(group, lg, lp):
-                    advance(l, mv[sample(p, a.temperature, rng)])
+                    advance(l, mv[sample(p, l.get("T", a.temperature), rng)])
         print(f"\r  part {a.part + 1}/{a.parts}: {len(L)} lines, ply {ply + 1}/{a.plies}, {time.time() - t0:.0f}s", end="", flush=True)
     print()
     for l in L:
@@ -2251,6 +2278,61 @@ def concept_examples(order, templates, nulls, Wo, member, grp, rows, droots, X, 
     return out
 
 
+def structure(e, grp, a):
+    """How structured one model's co-execution is, three ways (e: rollouts x concepts, executed; grp: each rollout's root):
+      root level      correlation across roots of every pair's execution rates (the mean over a root's rollouts),
+                      Fisher z, BH at --fdr
+      disattenuated   the same correlations divided by sqrt(reliability_i reliability_j): a concept's reliability is the
+                      correlation across roots of its execution rate in the first and the second half of each root's
+                      rollouts, Spearman-Brown corrected to the full set; pairs at |r| >= --min-corr among the BH ones
+      within root     correlation of the rollouts' deviations from their root's mean, pooled over roots (what the root
+                      itself drives is removed), Fisher z with sum(rollouts - 1) degrees of freedom, BH at --fdr"""
+    e = e.astype(np.float64)
+    G, P = int(grp.max()) + 1, e.shape[1]
+    cnt = np.bincount(grp, minlength=G)
+    pos = np.zeros(len(grp), np.int64)                                 # each rollout's index within its root
+    seen = np.zeros(G, np.int64)
+    for i, g in enumerate(grp):
+        pos[i] = seen[g]
+        seen[g] += 1
+    first = pos < cnt[grp] / 2
+
+    def means(m):
+        s_, n_ = np.zeros((G, P)), np.bincount(grp[m], minlength=G)[:, None]
+        np.add.at(s_, grp[m], e[m])
+        return s_ / np.maximum(n_, 1), n_[:, 0] > 0
+
+    M, _ = means(np.ones(len(grp), bool))
+    A, okA = means(first)
+    B, okB = means(~first)
+    ok = okA & okB
+    rel = np.array([np.corrcoef(A[ok, k], B[ok, k])[0, 1] if A[ok, k].std() > 0 and B[ok, k].std() > 0 else np.nan
+                    for k in range(P)])
+    rel_full = np.clip(2 * rel / (1 + rel), 0.05, 1)
+    iu = np.triu_indices(P, 1)
+
+    def tested(R, n):
+        r = np.clip(R[iu], -0.999999, 0.999999)
+        z = np.arctanh(r) * math.sqrt(max(n - 3, 1))
+        p = np.array([math.erfc(abs(v) / math.sqrt(2)) for v in z])
+        return r, bh(p, a.fdr)[1]
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Rr = np.nan_to_num(np.corrcoef(M.T))
+        dev = e - M[grp]
+        cov = dev.T @ dev
+        sd = np.sqrt(np.diag(cov))
+        Rw = np.nan_to_num(cov / np.outer(sd, sd))
+    r_root, s_root = tested(Rr, G)
+    dis = (Rr / np.sqrt(np.outer(rel_full, rel_full)))[iu]
+    r_w, s_w = tested(Rw, int((cnt - 1).clip(min=0).sum()))
+    return dict(reliability=float(np.nanmedian(rel_full)) if np.isfinite(rel_full).any() else float("nan"),
+                root=int(s_root.sum()), root_pos=int((s_root & (r_root > 0)).sum()),
+                disattenuated=int((s_root & (np.abs(dis) >= a.min_corr)).sum()),
+                dis_mean=float(np.mean(np.abs(dis[s_root]))) if s_root.any() else 0.0,
+                within=int(s_w.sum()), within_pos=int((s_w & (r_w > 0)).sum()), rollouts=int(cnt.mean()) if G else 0)
+
+
 def cooc(E1, E2, M, groups, a, dev):
     """Co-execution lifts of every pair of concepts in two sets of rollouts from the same roots (E: rollouts x
     concepts, executed; M: where each concept is scored, so a pair counts only the rollouts where both are), with
@@ -2305,7 +2387,8 @@ def plans(a):
         rank = np.argsort([zlib.crc32(f"{roots[ri]['band']}/{roots[ri]['game']}/{ri}/sub".encode()) for ri in rr])
         rr = np.sort(rr[rank[:a.max_roots]])
     mean = {}
-    for kind in ("S", "W") + (("S2",) if control else ()):
+    hot = all((ri, "SH") in by for ri in rr)
+    for kind in ("S", "W") + (("S2",) if control else ()) + (("SH",) if hot else ()):
         rows = [(q, g) for g, ri in enumerate(rr) for q in by[(ri, kind)]]
         mean[kind] = per_root(X[[q for q, _ in rows]], [g for _, g in rows], len(rr))
     D = (mean["S"] - mean["W"]).tocsr()                                # per root: S's rollouts minus W's
@@ -2411,7 +2494,7 @@ def plans(a):
     gi = np.flatnonzero(keep_g)
     order = gi[np.argsort(-stats["replicate"]["margin"][gi])][:a.max_plans]
     Wo, tau_o = Wm[:, order], tau[order]
-    kinds = ("S", "W") + (("S2",) if control else ())
+    kinds = ("S", "W") + (("S2",) if control else ()) + (("SH",) if hot else ())
     nk = {ri: min(len(by[(ri, k)]) for k in kinds) for ri in droots}
     j0 = k_ // 2 if halves else 0                                      # cross-fitting: the scoring half only
     rows = {k: [by[(ri, k)][j] for ri in droots for j in range(j0, nk[ri])] for k in kinds}
@@ -2448,11 +2531,19 @@ def plans(a):
         E0 = cooc(ex_["S"], ex_["W"], member, grp, a, dev)
         (graphs["S"], tested), (graphs["W"], _), (graphs["diff"], _) = edges(E0, "S"), edges(E0, "W"), edges(E0, "diff")
         graphs["tested"] = tested
+        if hot:                                                         # S at W's entropy
+            Eh = cooc(ex_["SH"], ex_["W"], member, grp, a, dev)
+            graphs["SH"], graphs["SH_diff"] = edges(Eh, "S")[0], edges(Eh, "diff")[0]
+        # is S's extra structure W's noise? co-execution corrected for each concept's reliability, and within roots
+        graphs["structure"] = {k: structure(ex_[k], grp, a) for k in kinds}
         if control:
             Ec = cooc(ex_["S"], ex_["S2"], member, grp, a, dev)
             xS2 = (dense(msc["S2"][rep_rows] @ Wm) >= tau) & MR
             _, _, pc = mcnemar(xS[:, order], xS2[:, order])
             graphs["control"] = dict(nodes=int(bh(pc, a.fdr)[1].sum()), edges=len(edges(Ec, "diff")[0]))
+        print("  structure (pairs: root level BH / disattenuated |r| >= --min-corr / within root BH; reliability): "
+              + "; ".join(f"{k} {v['root']} / {v['disattenuated']} / {v['within']} ({v['reliability']:.2f})"
+                          for k, v in graphs["structure"].items()), flush=True)
         print(f"  graphs on {len(droots)} replication roots ({len(grp)} rollouts each side), {len(order)} concepts: "
               f"{len(graphs['S'])} edges in G_S, {len(graphs['W'])} in G_W, {len(graphs['diff'])} in G_diff, "
               f"{sum(n['sig'] for n in graphs['nodes'])} concepts executed differently"
@@ -2602,6 +2693,20 @@ def plans_text(rec, a):
                 f"| G_diff, edges: log-lift in G_S minus in G_W (bootstrap over roots) | {len(g['diff'])} | {c['edges'] if c else '-'} |", ""]
         if c and (c["edges"] > 0.2 * max(len(g["diff"]), 1) or c["nodes"] > 0.2 * max(sum(n["sig"] for n in g["nodes"]), 1)):
             out += ["**Warning**: G_diff from two samples of S is not nearly empty: the threshold or the test is too loose.", ""]
+        if g.get("SH") is not None:
+            out += [f"With S's rollouts at W's per-move entropy (SH): {len(g['SH'])} edges in G_SH (G_S: {len(g['S'])}, "
+                    f"G_W: {len(g['W'])}); {len(g.get('SH_diff', []))} edges differ from G_W.", ""]
+        stc = g.get("structure")
+        if stc:
+            name_ = dict(S="S (2400+)", W="W (1000-1300)", S2="S again (control)", SH="S at W's entropy")
+            out += ["Is S's extra structure just W's noise? Pairs of concepts executed together or apart, three ways (see the "
+                    "docstring): across roots (BH), the same corrected for each concept's reliability (rollouts' first half "
+                    f"against second half; |r| >= {a.min_corr}), and within roots (variation among a root's own rollouts, BH).", "",
+                    "| rollouts | per root | concept reliability (median) | pairs across roots (positive) | disattenuated | within roots (positive) |",
+                    "|---|---|---|---|---|---|"]
+            out += [f"| {name_.get(k, k)} | {v['rollouts']} | {v['reliability']:.2f} | {v['root']} ({v['root_pos']}) | "
+                    f"{v['disattenuated']} | {v['within']} ({v['within_pos']}) |" for k, v in stc.items()]
+            out.append("")
         nd = sorted((n for n in g["nodes"] if n["sig"]), key=lambda n: n["q"])[:a.show]
         if nd:
             out += ["Concepts executed more by one model:", "", "| concept | rate in S's / W's rollouts | roots S not W / W not S | q |",
@@ -2849,6 +2954,8 @@ def main():
     g.add_argument("--temperature", type=float, default=1.0,
                    help="sampling temperature over the legal moves (1: each model's own imitation distribution; 0: greedy)")
     g.add_argument("--rollouts", type=int, default=4, help="rollouts per model per root (a root uses their mean)")
+    g.add_argument("--s-hot", default="", help="also roll out S at a higher temperature (SH): 'auto' matches W's mean per-move "
+                   "entropy over the roots, or a temperature")
     g.add_argument("--control", action=argparse.BooleanOptionalAction, default=True,
                    help="also roll out S a second time (S2) for the S-vs-S control")
     g.add_argument("--part", type=int, default=0, help="play and judge: this part of the roots / positions ...")
@@ -2904,6 +3011,7 @@ def main():
     g.add_argument("--dedupe", type=float, default=0.5, help="cosine at which templates merge")
     g.add_argument("--null-templates", type=int, default=50, help="rate-matched random templates per template")
     g.add_argument("--max-plans", type=int, default=300, help="concepts in the graphs at most")
+    g.add_argument("--min-corr", type=float, default=0.2, help="structure check: |disattenuated r| a pair needs")
     g.add_argument("--examples", type=int, default=5, help="rollouts per cell of a concept's 2x2 (present/absent x S/W)")
     g.add_argument("--show-examples", type=int, default=60, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
