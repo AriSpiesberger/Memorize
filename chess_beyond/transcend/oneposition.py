@@ -254,7 +254,11 @@ def plant(X, rng):
 
 def planted_test(XA, a, rng):
     Xp, Ls = plant(XA, rng)
-    _, found = find(Xp, a, rng, "planted")
+    thr, found = find(Xp, a, rng, "planted")
+    Rp = corr(Xp)
+    print("  planted latents' mean pairwise r: " + ", ".join(f"concept {c + 1} {mean_r(Rp, L):.3f}" for c, L in enumerate(Ls))
+          + f" (threshold {thr:.3f}); their firing rates: "
+          + "; ".join(", ".join(f"{(Xp[:, j] > 0).mean():.0%}" for j in L) for L in Ls), flush=True)
     planted_all = set(np.concatenate(Ls).tolist())
     rows, ok = [], True
     for c, L in enumerate(Ls):
