@@ -2193,6 +2193,132 @@ def discover(D, psplit, keep, rate, nlat, F, a, dev, tag_="", calib=None, D_assi
     return out
 
 
+def planted(a):
+    """Does the separation mechanism return the concepts that are there? Synthetic rollouts with k planted concepts
+    (known latents, known roots, known side), through discover() exactly as plans runs it (clusters, deflation,
+    merging, the margin filter, the S-vs-S' and W-vs-W' bars), then each planted concept matched to what came back
+    by behaviour: the correlation, over the replication roots, of a found concept's score with the planted concept's
+    presence. Per planted concept: recovered (one found concept), split (several), missed (none); found concepts
+    matching two or more planted ones are merges, matching none spurious.
+
+      rollout     per latent j, Binomial(plies, p)/plies with p = the latent's base rate x a root effect (lognormal: roots
+                  differ), W's p further jittered per rollout (W plays more randomly); a planted concept raises p by
+                  --plant-effect (relative) for its latents, in its model's rollouts, on its roots
+      scenarios   disjoint (own latents), hub (one latent shared by all), ring (each shares two latents with the next),
+                  together (disjoint latents, roots of pairs overlapping 70%), continuum (one concept, its strength
+                  uniform over its roots: is it sliced into several?)"""
+    from scipy import sparse
+    rng0 = np.random.default_rng(a.seed)
+    nlat, R, k_ro, T = a.plant_latents, a.plant_roots, a.plant_rollouts, 8
+    dev = ev.device(a.device)
+    base = np.exp(rng0.uniform(np.log(0.01), np.log(0.3), nlat))
+    rows_out = []
+
+    def scenario(name, k):
+        rng = np.random.default_rng(a.seed + hash(name) % 1000)
+        own = rng.permutation(nlat)
+        if name == "hub":
+            hub = own[0]
+            lat = [np.r_[hub, own[1 + 4 * c:5 + 4 * c]] for c in range(k)]
+        elif name == "ring":
+            ring = own[:3 * k]
+            lat = [ring[np.arange(3 * c, 3 * c + 5) % (3 * k)] for c in range(k)]
+        else:
+            lat = [own[5 * c:5 * c + 5] for c in range(k)]
+        if name == "together":
+            act = np.zeros((k, R), bool)
+            for c in range(0, k, 2):
+                act[c] = rng.random(R) < 0.3
+                if c + 1 < k:
+                    act[c + 1] = np.where(rng.random(R) < 0.7, act[c], rng.random(R) < 0.3)
+        else:
+            act = rng.random((k, R)) < (0.6 if name == "continuum" else 0.3)
+        strength = np.where(act, rng.uniform(0, 2, (k, R)) if name == "continuum" else 1.0, 0.0)
+        side = np.array([1 if c % 2 == 0 else -1 for c in range(k)])
+        return lat, act, strength, side
+
+    def simulate(lat, strength, side, rng):
+        root_eff = np.exp(rng.normal(0, 0.5, (R, nlat)))
+        p0 = np.clip(base[None] * root_eff, 0, 0.95)
+        out = {}
+        for kind in ("S", "S2", "W", "W2"):
+            m = 1 if kind.startswith("S") else -1
+            p = p0.copy()
+            for c, L in enumerate(lat):
+                if side[c] == m:
+                    p[:, L] = np.clip(p[:, L] * (1 + a.plant_effect * strength[c][:, None]), 0, 0.95)
+            acc = np.zeros((R, nlat))
+            for _ in range(k_ro):
+                pr = p if m == 1 else np.clip(p * np.exp(rng.normal(0, a.plant_w_noise, p.shape)), 0, 0.95)
+                acc += rng.binomial(T, pr) / T
+            out[kind] = acc / k_ro
+        return out
+
+    psplit = np.where(rng0.random(R) < 0.7, 0, np.where(rng0.random(R) < 0.5, 1, 2))
+    keep, rate = np.ones(nlat, bool), base
+    scen = [("disjoint", a.plant_k), ("hub", a.plant_k), ("ring", a.plant_k), ("together", a.plant_k), ("continuum", 1)]
+    for name, k in scen:
+        lat, act, strength, side = scenario(name, k)
+        M = simulate(lat, strength, side, np.random.default_rng(a.seed + 7))
+        csr = lambda x: sparse.csr_matrix(x.astype(np.float32))
+        bars = {}
+        for x, y in (("S", "S2"), ("W", "W2")):
+            cf = discover(csr(M[x] - M[y]), psplit, keep, rate, nlat, nlat, a, dev, tag_=f"{name}: control {x} against {x}: ")
+            if cf["templates"]:
+                bars[x] = {nm: float(np.quantile(cf["stats"][nm]["margin"][np.isfinite(cf["stats"][nm]["margin"])], 0.95))
+                           for nm in ("select", "replicate")}
+        calib = {nm: max(b[nm] for b in bars.values()) for nm in ("select", "replicate")} if bars else None
+        D = csr(M["S"] - M["W"])
+        found = discover(D, psplit, keep, rate, nlat, nlat, a, dev, tag_=f"{name}: ", calib=calib)
+        rep = np.flatnonzero(psplit == 2)
+        idx = np.flatnonzero(found["replicated"]) if found["templates"] else np.zeros(0, int)
+        Wm = weights_matrix(found["templates"], nlat) if found["templates"] else None
+        Dr = np.asarray(D[rep].todense())
+        sc = (np.asarray(Dr @ (Wm[:, idx].toarray() if sparse.issparse(Wm) else Wm[:, idx])) * found["sign"][idx][None]
+              if len(idx) else np.zeros((len(rep), 0)))
+        C = np.zeros((len(idx), k))
+        for t in range(len(idx)):
+            for c in range(k):
+                y = strength[c][rep] * (side[c] == found["sign"][idx[t]])
+                C[t, c] = np.corrcoef(sc[:, t], y)[0, 1] if sc[:, t].std() > 0 and y.std() > 0 else 0.0
+        hit = C > a.plant_match
+        best = C.argmax(1) if len(idx) else np.zeros(0, int)
+        per = np.array([int((hit[:, c] & (best == c)).sum()) for c in range(k)])
+        merges = int((hit.sum(1) >= 2).sum())
+        spurious = int((~hit.any(1)).sum())
+        if len(idx) > 1:
+            z = (sc - sc.mean(0)) / np.maximum(sc.std(0), 1e-12)
+            ev_ = np.clip(np.linalg.eigvalsh(np.corrcoef(z.T))[::-1], 0, None)
+            eff = float(ev_.sum() ** 2 / max((ev_ ** 2).sum(), 1e-12))
+        else:
+            eff = float(len(idx))
+        rows_out.append(dict(scenario=name, planted=k, found=len(idx), recovered=int((per == 1).sum()), split=int((per > 1).sum()),
+                             split_into=float(per[per > 1].mean()) if (per > 1).any() else 0.0, missed=int((per == 0).sum()),
+                             merges=merges, spurious=spurious, effective=eff, per=per.tolist(),
+                             best_corr=[float(C[:, c].max()) if len(idx) else 0.0 for c in range(k)]))
+        r_ = rows_out[-1]
+        print(f"  {name}: {k} planted -> {len(idx)} found; recovered {r_['recovered']}, split {r_['split']} (into "
+              f"{r_['split_into']:.1f}), missed {r_['missed']}, merges {merges}, spurious {spurious}; effective number "
+              f"from scores {eff:.1f}; found per planted {per.tolist()}", flush=True)
+    res = RESULTS / "planted"
+    res.mkdir(parents=True, exist_ok=True)
+    tag = f"-{a.tag}" if a.tag else ""
+    (res / f"planted{tag}.json").write_text(json.dumps(dict(rows=rows_out, settings={k: v for k, v in vars(a).items()
+                                                                                      if isinstance(v, (int, float, str, bool))}), indent=1))
+    out = ["# Planted concepts through the separation mechanism", "",
+           f"{R} roots, {k_ro} rollouts per model, {nlat} latents; effect +{a.plant_effect:.0%} on a concept's latents' rates; "
+           f"W's rates jittered per rollout (sd {a.plant_w_noise} in log); fitting as plans: --cluster-size {a.cluster_size}, "
+           f"--per-cluster {a.per_cluster}, --nu {a.nu}, {'local' if a.local else 'global'} scoring, bars from S vs S' and W vs W'. "
+           f"A found concept matches a planted one at score correlation > {a.plant_match} on the replication roots.", "",
+           "| scenario | planted | found | recovered | split (into) | missed | merges | spurious | effective number (scores) |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    out += [f"| {r['scenario']} | {r['planted']} | {r['found']} | {r['recovered']} | {r['split']} ({r['split_into']:.1f}) | {r['missed']} | "
+            f"{r['merges']} | {r['spurious']} | {r['effective']:.1f} |" for r in rows_out]
+    (res / f"planted{tag}.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+    print("\n".join(out))
+    print(f"wrote {res / f'planted{tag}.md'}")
+
+
 def lichess_line(root, sans):
     """A Lichess analysis link: the game from its start, through the rollout, opened at the root."""
     from urllib.parse import quote
@@ -2422,14 +2548,27 @@ def plans(a):
     by = rollouts_by(L)
     if a.use_rollouts:                                                # scaling tests: each root's first k rollouts per model
         by = {k: v[:a.use_rollouts] for k, v in by.items()}
+    if a.s_kind != "S":                                               # e.g. SH: S's rollouts at W's entropy play S
+        by = {(ri, "S" if k == a.s_kind else k): v for (ri, k), v in by.items() if k != "S"}
+    if a.half_controls:                                               # S vs S' and W vs W' from each model's own halves
+        by_ = {}
+        for (ri, k), v in by.items():
+            if k in ("S", "W"):
+                h = len(v) // 2
+                by_[(ri, k)], by_[(ri, k + "2")] = v[:h], v[h:2 * h]
+            elif k != "S2":
+                by_[(ri, k)] = v
+        by = by_
     control = all((ri, "S2") in by for ri in range(len(roots)) if (ri, "S") in by)
-    rr = np.array([ri for ri in range(len(roots)) if (ri, "S") in by and (ri, "W") in by and (not control or (ri, "S2") in by)])
+    wcontrol = any(k == "W2" for _, k in by) and all((ri, "W2") in by for ri in range(len(roots)) if (ri, "W") in by)
+    rr = np.array([ri for ri in range(len(roots)) if (ri, "S") in by and (ri, "W") in by and (not control or (ri, "S2") in by)
+                   and (not wcontrol or (ri, "W2") in by)])
     if a.max_roots and len(rr) > a.max_roots:                         # ... and a fixed subsample of the roots
         rank = np.argsort([zlib.crc32(f"{roots[ri]['band']}/{roots[ri]['game']}/{ri}/sub".encode()) for ri in rr])
         rr = np.sort(rr[rank[:a.max_roots]])
     mean = {}
     hot = all((ri, "SH") in by for ri in rr)
-    for kind in ("S", "W") + (("S2",) if control else ()) + (("SH",) if hot else ()):
+    for kind in ("S", "W") + (("S2",) if control else ()) + (("W2",) if wcontrol else ()) + (("SH",) if hot else ()):
         rows = [(q, g) for g, ri in enumerate(rr) for q in by[(ri, kind)]]
         mean[kind] = per_root(X[[q for q, _ in rows]], [g for _, g in rows], len(rr))
     D = (mean["S"] - mean["W"]).tocsr()                                # per root: S's rollouts minus W's
@@ -2455,59 +2594,77 @@ def plans(a):
     print(f"concepts{sfx}: {len(rr)} roots, {k_} rollouts per model each ({', '.join(f'{n} {(psplit == i).sum()}' for i, n in enumerate(('fit', 'select', 'replicate')))}"
           f"{f', {zero.sum()} with identical rollouts left out' if zero.any() else ''}); {keep.sum()} candidate latents "
           f"(firing on {a.min_rate:.0%}-{a.max_rate:.0%} of positions); plies: {a.sum_plies}; aggregate: {a.aggregate}; "
-          f"scoring: {'local (own clusters)' if a.local else 'global'}{', cross-fitted' if a.local and a.crossfit else ''}{'; control: S against a second set of S rollouts' if control else ''}",
+          f"scoring: {'local (own clusters)' if a.local else 'global'}{', cross-fitted' if a.local and a.crossfit else ''}{'; control: S against a second set of S rollouts' if control else ''}{', W against a second set of W rollouts' if wcontrol else ''}"
+          f"{f'; S is {a.s_kind}' if a.s_kind != 'S' else ''}{' (controls from each model’s own halves)' if a.half_controls else ''}",
           flush=True)
 
     # the S-vs-S control goes first: the identical pipeline (clusters, fitting, scoring) on S - S2. With --calibrate
     # (default) its concepts set the bar: an S-vs-W concept must beat the 95th percentile of their margins, so whatever
     # bias the pipeline has (the circularity of scoring a concept on its own clusters' roots) is paid on both sides
-    calib, cf = None, None
-    if control:
-        Dc = (mean["S"] - mean["S2"]).tocsr()
-        cf = discover(Dc, psplit, keep, rate, nlat, F, a, dev, tag_="control (S against S): ", **cross("S", "S2"))
-        if a.calibrate and cf["templates"]:
-            calib = {}
+    # With W against W' as well (W's sampling noise is the larger), each control sets its own 95th percentile and the
+    # bar is the higher of the two, for S's and W's concepts alike
+    calib, cf, cfs = None, None, {}
+    pairs_c = ([("S", "S2")] if control else []) + ([("W", "W2")] if wcontrol else [])
+    for x, y in pairs_c:
+        cfs[x] = discover((mean[x] - mean[y]).tocsr(), psplit, keep, rate, nlat, F, a, dev,
+                          tag_=f"control ({x} against {x}): ", **cross(x, y))
+    cf = cfs.get("S") or cfs.get("W")
+    bars = {}
+    if a.calibrate:
+        for x, c_ in cfs.items():
+            if not c_["templates"]:
+                continue
+            bars[x] = {}
             for nm in ("select", "replicate"):
-                m_ = cf["stats"][nm]["margin"]
+                m_ = c_["stats"][nm]["margin"]
                 m_ = m_[np.isfinite(m_)]
-                calib[nm] = float(np.quantile(m_, 0.95)) if len(m_) else 0.0
-            print(f"  the bar the control sets: soft margin above {calib['select']:.4f} (selection), {calib['replicate']:.4f} "
-                  f"(replication)", flush=True)
+                bars[x][nm] = float(np.quantile(m_, 0.95)) if len(m_) else 0.0
+        if bars:
+            calib = {nm: max(b[nm] for b in bars.values()) for nm in ("select", "replicate")}
+            print("  the bar the controls set: soft margin above "
+                  + "; ".join(f"{x} against {x}: {b['select']:.4f} / {b['replicate']:.4f}" for x, b in bars.items())
+                  + f" (selection / replication); used: {calib['select']:.4f} / {calib['replicate']:.4f}", flush=True)
     found = discover(D, psplit, keep, rate, nlat, F, a, dev, calib=calib, **cross("S", "W"))
     templates, sign, groups, stats = found["templates"], found["sign"], found["groups"], found["stats"]
     if not templates:
         sys.exit("no concept has a positive margin: larger clusters (--cluster-size) or a larger --nu")
     selected, replicated = found["selected"], found["replicated"]
-    ctrl_run = None
-    if cf is not None:
-        st_ = cf["stats"]
-        both = (np.zeros(0, bool) if not cf["templates"] else
+    ctrl_runs = {}
+    for x, c_ in cfs.items():
+        st_ = c_["stats"]
+        both = (np.zeros(0, bool) if not c_["templates"] else
                 st_["select"]["passed"] & st_["replicate"]["passed"]
                 & (st_["select"]["margin"] > (calib or {}).get("select", -np.inf))
                 & (st_["replicate"]["margin"] > (calib or {}).get("replicate", -np.inf)))
-        ctrl_run = dict(templates=len(cf["templates"]), selected=int(st_["select"]["passed"].sum()) if cf["templates"] else 0,
-                        replicated=int(both.sum()), calib=calib)
+        sel_ = (st_["select"]["passed"] & (st_["select"]["margin"] > (calib or {}).get("select", -np.inf))) if c_["templates"] else both
+        ctrl_runs[x] = dict(templates=len(c_["templates"]), selected=int(sel_.sum()), replicated=int(both.sum()), calib=calib,
+                            bar=bars.get(x))
+    ctrl_run = ctrl_runs.get("S") or ctrl_runs.get("W")
     print(f"  {len(found['temps'])} concepts -> {len(templates)} after merging ({(sign > 0).sum()} S's, {(sign < 0).sum()} W's); "
           f"{selected.sum()} pass on the selection roots, {replicated.sum()} again on the replication roots "
           f"({(sign[replicated] > 0).sum()} S's, {(sign[replicated] < 0).sum()} W's)"
-          + (f"; the control, through the same bar: {ctrl_run['replicated']} of {ctrl_run['templates']}" if ctrl_run else ""), flush=True)
+          + "".join(f"; {x} against {x}, through the same bar: {c_['replicated']} of {c_['templates']}" for x, c_ in ctrl_runs.items()),
+          flush=True)
 
     # each S-vs-W concept on S - S2, on the same roots: one that also separates S from S is noise, and is dropped
     ctrl = {}
     Wm = weights_matrix(templates, F)
-    if control:
+    ctrl_both = np.zeros(len(templates), bool)
+    if pairs_c:
         Wn = weights_matrix(found["nulls"], F)
         nsign = np.repeat(sign, a.null_templates)
-        for nm in ("select", "replicate"):
-            rows, mk = found["masks"][nm]
-            Dcs = (msc["S"] - msc["S2"]).tocsr()
-            m, _ = local_margins(Dcs[rows], Wm, sign, mk, a.nu)
-            mn, _ = local_margins(Dcs[rows], Wn, nsign, [x for x in mk for _ in range(a.null_templates)], a.nu)
-            n95 = np.quantile(mn.reshape(len(templates), a.null_templates), 0.95, axis=1)
-            ctrl[nm] = dict(margin=m, null95=n95, passed=(m > 0) & (m > n95) & (m > (calib or {}).get(nm, -np.inf)))
-        ctrl_both = ctrl["select"]["passed"] & ctrl["replicate"]["passed"]
-    else:
-        ctrl_both = np.zeros(len(templates), bool)
+        for x, y in pairs_c:
+            for nm in ("select", "replicate"):
+                rows, mk = found["masks"][nm]
+                Dcs = (msc[x] - msc[y]).tocsr()
+                m, _ = local_margins(Dcs[rows], Wm, sign, mk, a.nu)
+                mn, _ = local_margins(Dcs[rows], Wn, nsign, [x_ for x_ in mk for _ in range(a.null_templates)], a.nu)
+                n95 = np.quantile(mn.reshape(len(templates), a.null_templates), 0.95, axis=1)
+                ctrl[(x, nm)] = dict(margin=m, null95=n95, passed=(m > 0) & (m > n95) & (m > (calib or {}).get(nm, -np.inf)))
+            ctrl_both |= ctrl[(x, "select")]["passed"] & ctrl[(x, "replicate")]["passed"]
+        for nm in ("select", "replicate"):                            # the S control's, for the per-concept record
+            if ("S", nm) in ctrl:
+                ctrl[nm] = ctrl[("S", nm)]
 
     # one scoring everywhere: a concept is scored on the roots it was filtered on (its own clusters' with --local, all
     # with --no-local); its threshold is halfway between its mean on S's and on W's selection roots there, a root
@@ -2535,7 +2692,7 @@ def plans(a):
     gi = np.flatnonzero(keep_g)
     order = gi[np.argsort(-stats["replicate"]["margin"][gi])][:a.max_plans]
     Wo, tau_o = Wm[:, order], tau[order]
-    kinds = ("S", "W") + (("S2",) if control else ()) + (("SH",) if hot else ())
+    kinds = ("S", "W") + (("S2",) if control else ()) + (("W2",) if wcontrol else ()) + (("SH",) if hot else ())
     nk = {ri: min(len(by[(ri, k)]) for k in kinds) for ri in droots}
     j0 = k_ // 2 if halves else 0                                      # cross-fitting: the scoring half only
     rows = {k: [by[(ri, k)][j] for ri in droots for j in range(j0, nk[ri])] for k in kinds}
@@ -2547,10 +2704,11 @@ def plans(a):
         bn, cn, pn = mcnemar(xS[:, order], xW[:, order])
         qn, sn = bh(pn, a.fdr)
         msum = np.maximum(member.sum(0), 1)
-        for k, g in enumerate(order):
-            graphs["nodes"].append(dict(id=int(g), side="S" if sign[g] > 0 else "W", rate_S=float(ex_["S"][:, k].sum() / msum[k]),
-                                        rate_W=float(ex_["W"][:, k].sum() / msum[k]), S_not_W=int(bn[k]), W_not_S=int(cn[k]),
-                                        roots=int(MR[:, g].sum()), q=float(qn[k]), sig=bool(sn[k])))
+        for k, g in enumerate(order):                                  # significant: BH and a gap of >= --min-gap
+            rS_, rW_ = float(ex_["S"][:, k].sum() / msum[k]), float(ex_["W"][:, k].sum() / msum[k])
+            graphs["nodes"].append(dict(id=int(g), side="S" if sign[g] > 0 else "W", rate_S=rS_, rate_W=rW_,
+                                        S_not_W=int(bn[k]), W_not_S=int(cn[k]), roots=int(MR[:, g].sum()), q=float(qn[k]),
+                                        sig=bool(sn[k]) and abs(rS_ - rW_) >= a.min_gap, sig_p=bool(sn[k])))
         iu = np.triu_indices(len(order), 1)
 
         def edges(E0, which):
@@ -2581,7 +2739,33 @@ def plans(a):
             Ec = cooc(ex_["S"], ex_["S2"], member, grp, a, dev)
             xS2 = (dense(msc["S2"][rep_rows] @ Wm) >= tau) & MR
             _, _, pc = mcnemar(xS[:, order], xS2[:, order])
-            graphs["control"] = dict(nodes=int(bh(pc, a.fdr)[1].sum()), edges=len(edges(Ec, "diff")[0]))
+            gap_c = np.abs(ex_["S"].sum(0) - ex_["S2"].sum(0)) / np.maximum(member.sum(0), 1) >= a.min_gap
+            graphs["control"] = dict(nodes=int((bh(pc, a.fdr)[1] & gap_c).sum()), nodes_p=int(bh(pc, a.fdr)[1].sum()),
+                                     edges=len(edges(Ec, "diff")[0]))
+        if wcontrol:
+            Ewc = cooc(ex_["W"], ex_["W2"], member, grp, a, dev)
+            xW2 = (dense(msc["W2"][rep_rows] @ Wm) >= tau) & MR
+            _, _, pw = mcnemar(xW[:, order], xW2[:, order])
+            gap_w = np.abs(ex_["W"].sum(0) - ex_["W2"].sum(0)) / np.maximum(member.sum(0), 1) >= a.min_gap
+            graphs["control_W"] = dict(nodes=int((bh(pw, a.fdr)[1] & gap_w).sum()), nodes_p=int(bh(pw, a.fdr)[1].sum()),
+                                       edges=len(edges(Ewc, "diff")[0]))
+        # how many concepts there really are: the spectrum of their scores' correlations over the replication
+        # rollouts (S's and W's), not of their weights; two concepts with no latent in common can fire on the same rollouts
+        sc_ = np.vstack([dense(X[rows[k]] @ Wo) for k in ("S", "W")])
+        mm_ = np.vstack([member, member])
+        sc_ = np.where(mm_, sc_, np.nan)
+        sc_ = (sc_ - np.nanmean(sc_, 0)) / np.maximum(np.nanstd(sc_, 0), 1e-12)
+        Rc = np.corrcoef(np.nan_to_num(sc_).T)
+        ev_ = np.clip(np.linalg.eigvalsh(np.nan_to_num(Rc))[::-1], 0, None)
+        off = np.abs(Rc[np.triu_indices(len(order), 1)])
+        graphs["redundancy"] = dict(concepts=len(order), effective=float(ev_.sum() ** 2 / max((ev_ ** 2).sum(), 1e-12)),
+                                    top1=float(ev_[0] / ev_.sum()), top5=float(ev_[:5].sum() / ev_.sum()),
+                                    for90=int(np.searchsorted(np.cumsum(ev_) / ev_.sum(), 0.9) + 1),
+                                    pairs_r05=int((off > 0.5).sum()), pairs_r08=int((off > 0.8).sum()))
+        print("  redundancy (from the concepts' scores on the replication rollouts): effective number "
+              f"{graphs['redundancy']['effective']:.1f} of {len(order)}; first component {graphs['redundancy']['top1']:.0%}, "
+              f"first five {graphs['redundancy']['top5']:.0%}, {graphs['redundancy']['for90']} for 90%; pairs with |r| > 0.5: "
+              f"{graphs['redundancy']['pairs_r05']}, > 0.8: {graphs['redundancy']['pairs_r08']}", flush=True)
         print("  structure (pairs: root level BH / disattenuated |r| >= --min-corr / within root BH; reliability): "
               + "; ".join(f"{k} {v['root']} / {v['disattenuated']} / {v['within']} ({v['reliability']:.2f})"
                           for k, v in graphs["structure"].items()), flush=True)
@@ -2589,7 +2773,9 @@ def plans(a):
               f"{len(graphs['S'])} edges in G_S, {len(graphs['W'])} in G_W, {len(graphs['diff'])} in G_diff, "
               f"{sum(n['sig'] for n in graphs['nodes'])} concepts executed differently"
               + (f"; control (S against S): {graphs['control']['nodes']} concepts, {graphs['control']['edges']} G_diff edges"
-                 if graphs["control"] else ""), flush=True)
+                 if graphs["control"] else "")
+              + (f"; control (W against W): {graphs['control_W']['nodes']} concepts, {graphs['control_W']['edges']} G_diff edges"
+                 if graphs.get("control_W") else ""), flush=True)
 
     # the rollouts themselves, which are what a concept is read from: per concept a 2x2 (S's and W's rollouts, where it
     # is clearly present and clearly absent), and the same for a random concept, for a blind check
@@ -2621,7 +2807,7 @@ def plans(a):
                  fit_share=float(np.mean([t["sep"] for t in members])),
                  **{f"{nm}_{k}": float(st[k][g]) for nm, st in stats.items() for k in ("margin", "share", "null95", "used")},
                  selected=bool(selected[g]), replicated=bool(replicated[g]), control=bool(ctrl_both[g]), tau=float(tau[g]),
-                 **({f"control_{nm}_{k}": float(st[k][g]) for nm, st in ctrl.items() for k in ("margin", "null95")} if ctrl else {}),
+                 **({f"control_{nm}_{k}": float(st[k][g]) for nm, st in ctrl.items() if isinstance(nm, str) for k in ("margin", "null95")} if ctrl else {}),
                  executed=dict(S_not_W=int(b[g]), W_not_S=int(c[g]),
                                bands={n: [int((xS[band == n, g] & ~xW[band == n, g]).sum()), int((~xS[band == n, g] & xW[band == n, g]).sum())]
                                       for n in sorted(set(band))}))
@@ -2635,7 +2821,7 @@ def plans(a):
                            selected=int(selected.sum()), replicated=int(replicated.sum()),
                            replicated_S=int((sign[replicated] > 0).sum()), replicated_W=int((sign[replicated] < 0).sum()),
                            null_select=stats["select"]["null_pos"], null_replicate=stats["replicate"]["null_pos"],
-                           control=ctrl_run, also_control=int((replicated & ctrl_both).sum()), kept=int(keep_g.sum())),
+                           control=ctrl_run, control_W=ctrl_runs.get("W"), also_control=int((replicated & ctrl_both).sum()), kept=int(keep_g.sum())),
                plans=recs, graph=graphs, examples={str(k): v for k, v in examples.items()})
     (out / f"plans{sfx}.json").write_text(json.dumps(rec, default=float), encoding="utf-8")
     res.mkdir(parents=True, exist_ok=True)
@@ -2700,6 +2886,13 @@ def plans_text(rec, a):
            f"{ctl['replicated'] if ctl else '-'}{' (at most about 5% by construction: the bar is its 95th percentile on each set)' if ctl and ctl.get('calib') else ''} |",
            f"| S-vs-W concepts that also separate S from S (dropped) | {f.get('also_control', 0)} | |",
            f"| random concepts with a margin > 0 (selection / replication) | {f['null_select']:.1%} / {f['null_replicate']:.1%} | |", ""]
+    cw = f.get("control_W")
+    if cw:
+        out += [f"W against W (the same pipeline on two sets of W's rollouts, W's sampling noise): {cw['templates']} concepts "
+                f"after merging, {cw['selected']} pass on the selection roots, {cw['replicated']} again on the replication roots. "
+                + (f"Bars (95th percentiles, selection / replication): S against S {ctl['bar']['select']:.4f} / {ctl['bar']['replicate']:.4f}, "
+                   f"W against W {cw['bar']['select']:.4f} / {cw['bar']['replicate']:.4f}; every concept above must beat the higher."
+                   if ctl and ctl.get("bar") and cw.get("bar") else ""), ""]
     if ctl and not ctl.get("calib") and ctl["replicated"] and f["replicated"] and ctl["replicated"] > 0.2 * f["replicated"]:
         out += [f"**Warning**: S against S yields {ctl['replicated']} concepts against {f['replicated']} for S against W: much of "
                 "the S-vs-W list may be sampling noise.", ""]
@@ -2731,11 +2924,20 @@ def plans_text(rec, a):
                 f"| G_S: concepts S's rollouts execute together (lift > 1) or as alternatives (< 1), lift >= {a.lift} or <= 1/{a.lift} | "
                 f"{len(g['S'])} | |",
                 f"| G_W: the same in W's rollouts | {len(g['W'])} | |",
-                f"| G_diff, nodes: executed more by one model (McNemar over roots) | {sum(n['sig'] for n in g['nodes'])} | "
+                f"| G_diff, nodes: executed more by one model (McNemar over roots, BH, and a gap >= {a.min_gap:.0%}; "
+                f"BH alone: {sum(n.get('sig_p', n['sig']) for n in g['nodes'])}) | {sum(n['sig'] for n in g['nodes'])} | "
                 f"{c['nodes'] if c else '-'} |",
                 f"| G_diff, edges: log-lift in G_S minus in G_W (bootstrap over roots) | {len(g['diff'])} | {c['edges'] if c else '-'} |", ""]
         if c and (c["edges"] > 0.2 * max(len(g["diff"]), 1) or c["nodes"] > 0.2 * max(sum(n["sig"] for n in g["nodes"]), 1)):
             out += ["**Warning**: G_diff from two samples of S is not nearly empty: the threshold or the test is too loose.", ""]
+        if g.get("control_W"):
+            out += [f"Control W against W: {g['control_W']['nodes']} concepts executed differently, {g['control_W']['edges']} G_diff edges.", ""]
+        rd = g.get("redundancy")
+        if rd:
+            out += [f"How many concepts there are, from their scores (correlations over the replication rollouts, not their weights): "
+                    f"effective number {rd['effective']:.1f} of {rd['concepts']}; the first component carries {rd['top1']:.0%} of the "
+                    f"variance, the first five {rd['top5']:.0%}, {rd['for90']} components reach 90%; pairs of concepts with |r| > 0.5: "
+                    f"{rd['pairs_r05']}, > 0.8: {rd['pairs_r08']}.", ""]
         if g.get("SH") is not None:
             out += [f"With S's rollouts at W's per-move entropy (SH): {len(g['SH'])} edges in G_SH (G_S: {len(g['S'])}, "
                     f"G_W: {len(g['W'])}); {len(g.get('SH_diff', []))} edges differ from G_W.", ""]
@@ -3141,7 +3343,7 @@ def pages(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["health", "recall", "lines", "roots", "play", "gather", "judge", "encode", "nodes",
-                                        "graph", "plans", "compare", "pages", "all"])
+                                        "graph", "plans", "compare", "pages", "planted", "all"])
     ap.add_argument("--name", default=None, help="the run folder's name (default <crosscoder run>-<layer>), e.g. for a second set of rollouts")
     ap.add_argument("--cc-run", default="runs/transcend/crosscoder/everything-3m", help="crosscoder run folder")
     ap.add_argument("--cc", default="Lfinal", help="crosscoder in that run (one layer per model), e.g. Lfinal or L15")
@@ -3171,6 +3373,20 @@ def main():
     g.add_argument("--temperature", type=float, default=1.0,
                    help="sampling temperature over the legal moves (1: each model's own imitation distribution; 0: greedy)")
     g.add_argument("--rollouts", type=int, default=4, help="rollouts per model per root (a root uses their mean)")
+    g.add_argument("--plant-k", type=int, default=6, help="planted: concepts per scenario")
+    g.add_argument("--plant-latents", type=int, default=600, help="planted: latents")
+    g.add_argument("--plant-roots", type=int, default=4000, help="planted: roots")
+    g.add_argument("--plant-rollouts", type=int, default=8, help="planted: rollouts per model per root")
+    g.add_argument("--plant-effect", type=float, default=0.3, help="planted: relative rise in a concept's latents' rates")
+    g.add_argument("--plant-w-noise", type=float, default=0.3, help="planted: W's per-rollout jitter of its rates (sd, log)")
+    g.add_argument("--plant-match", type=float, default=0.3, help="planted: score correlation at which a found concept matches")
+    g.add_argument("--min-gap", type=float, default=0.05, help="plans: execution-rate gap (S minus W, in rollouts) a concept "
+                   "needs, beside BH, to count as executed differently")
+    g.add_argument("--s-kind", default="S", help="plans: the rollouts that play S, e.g. SH (S at W's entropy) for the "
+                   "entropy-matched refit")
+    g.add_argument("--half-controls", action=argparse.BooleanOptionalAction, default=False,
+                   help="plans: each model's rollouts split in halves, S against W on the first, the controls S against S' "
+                        "and W against W' on the two halves (every comparison at the same number of rollouts)")
     g.add_argument("--s-hot", default="", help="also roll out S at a higher temperature (SH): 'auto' matches W's mean per-move "
                    "entropy over the roots, or a temperature")
     g.add_argument("--control", action=argparse.BooleanOptionalAction, default=True,
@@ -3233,7 +3449,8 @@ def main():
     g.add_argument("--show-examples", type=int, default=300, help="concepts (strongest first) that get their rollouts on the page")
     a = ap.parse_args()
     steps = dict(health=health, recall=recall, lines=lines, roots=roots_stage, play=play_stage, gather=gather, judge=judge,
-                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare, pages=pages)
+                 encode=encode_stage, nodes=nodes, graph=graph, plans=plans, compare=compare, pages=pages,
+                 planted=planted)
     for name in (["health", "recall", "lines", "plans", "nodes", "graph"] if a.command == "all" else [a.command]):
         print(f"\n=== {name}", flush=True)
         steps[name](a)
