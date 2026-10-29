@@ -237,7 +237,7 @@ def train(a, run, size, models, dev, E, base):
     info = json.loads((run / "collect.json").read_text())
     names_ = info["names"]
     sources = [(m, a.layer) for m in range(len(info["names"]))]
-    cc_dir = run / f"cc-L{a.layer}-{size}"
+    cc_dir = run / f"cc-L{a.layer}-{size}" if a.seed == 0 else run / f"cc-L{a.layer}-{size}-s{a.seed}"
     cc_dir.mkdir(exist_ok=True)
     res = RESULTS / run.name / cc_dir.name
     res.mkdir(parents=True, exist_ok=True)
@@ -356,9 +356,74 @@ def report(res, size, row, a):
     (res / "report.md").write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
+@torch.no_grad()
+def best_pairs(u0, u1):
+    """Each row's best cosine partner in the other set, both ways -> (partner of each u0, its cosine, partner of each u1)."""
+    b1, c1 = torch.empty(len(u0), dtype=torch.long, device=u0.device), torch.empty(len(u0), device=u0.device)
+    b0 = torch.empty(len(u1), dtype=torch.long, device=u0.device)
+    best0 = torch.full((len(u1),), -2.0, device=u0.device)
+    for i in range(0, len(u0), 2048):
+        c = u0[i:i + 2048] @ u1.T
+        v, j = c.max(1)
+        b1[i:i + 2048], c1[i:i + 2048] = j, v
+        v0, j0 = c.max(0)
+        upd = v0 > best0
+        best0[upd], b0[upd] = v0[upd], (j0 + i)[upd]
+    return b1, c1, b0
+
+
+def match(a, run, dev):
+    """Latents of two seeds paired one-to-one: mutual best matches by decoder cosine (both models' decoders together,
+    and each model's alone among latents that write to it), the share above --match-cos; for sizes up to 8,192 also the
+    optimal one-to-one assignment (Hungarian). Split by the latent's relative decoder norm toward S (shared vs exclusive),
+    since exclusive latents are the ones a diff rests on."""
+    from scipy.optimize import linear_sum_assignment
+    s0, s1 = (int(x) for x in a.seeds.split(","))
+    info = json.loads((run / "collect.json").read_text())
+    si = next(i for i, n in enumerate(info["names"]) if "2400" in n)
+    out = [f"# Seed stability of the L{a.layer} crosscoders: seed {s0} against seed {s1}", "",
+           f"A latent of seed {s0} matches when it and a latent of seed {s1} are each other's best partner by decoder cosine and "
+           f"the cosine is above {a.match_cos}. r: the latent's decoder norm toward S over its total (seed {s0}); exclusive: "
+           "r < 0.1 (W only) or > 0.9 (S only).", ""]
+    for size in [int(x) for x in a.sizes.split(",")]:
+        dirs = [run / (f"cc-L{a.layer}-{size}" + ("" if s == 0 else f"-s{s}")) for s in (s0, s1)]
+        if not all((d_ / "cc.pt").exists() for d_ in dirs):
+            out += [f"## {size} latents: missing {', '.join(str(d_) for d_ in dirs if not (d_ / 'cc.pt').exists())}", ""]
+            continue
+        W = [torch.load(d_ / "cc.pt", map_location=dev, weights_only=False)["state"]["W_dec"].float() for d_ in dirs]
+        nrm = W[0].norm(dim=-1)
+        r = (nrm[:, si] / nrm.sum(1).clamp_min(1e-8)).cpu().numpy()
+        groups = dict(all=np.ones(size, bool), shared=(r >= 0.1) & (r <= 0.9), **{"S only": r > 0.9, "W only": r < 0.1})
+        out += [f"## {size} latents", "", "| decoder | " + " | ".join(f"{g} ({m.sum()})" for g, m in groups.items()) + " | median best cosine |",
+                "|---|" + "---|" * (len(groups) + 1)]
+        for name, view in [("both models", lambda w: w.flatten(1))] + [(info["names"][k], lambda w, k=k: w[:, k]) for k in range(W[0].shape[1])]:
+            v0, v1 = view(W[0]), view(W[1])
+            live0 = (v0.norm(dim=1) > 0.05 * v0.norm(dim=1).max()).cpu().numpy() if name != "both models" else np.ones(size, bool)
+            u0, u1 = F.normalize(v0, dim=1), F.normalize(v1, dim=1)
+            b1, c1, b0 = best_pairs(u0, u1)
+            mutual = (b0[b1] == torch.arange(size, device=dev)).cpu().numpy()
+            ok = mutual & (c1.cpu().numpy() > a.match_cos)
+            cells = [f"{ok[m & live0].mean():.1%}" if (m & live0).any() else "-" for m in groups.values()]
+            out.append(f"| {name} | " + " | ".join(cells) + f" | {float(c1[torch.from_numpy(live0).to(dev)].median()):.3f} |")
+            if name == "both models" and size <= 8192:
+                C = (u0 @ u1.T).cpu().numpy()
+                ri, ci = linear_sum_assignment(-C)
+                hung = np.zeros(size, bool)
+                hung[ri] = C[ri, ci] > a.match_cos
+                out.append("| both models, optimal one-to-one | " + " | ".join(f"{hung[m].mean():.1%}" if m.any() else "-" for m in groups.values()) + " | |")
+        out.append("")
+    res = RESULTS / run.name
+    res.mkdir(parents=True, exist_ok=True)
+    (res / "seed-match.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+    print("\n".join(out))
+    print(f"wrote {res / 'seed-match.md'}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=("human", "rollouts", "train", "all"))
+    ap.add_argument("command", choices=("human", "rollouts", "train", "all", "match"))
+    ap.add_argument("--seeds", default="0,1", help="match: the two seeds whose latents are paired")
+    ap.add_argument("--match-cos", type=float, default=0.9)
     ap.add_argument("--layer", default="11")
     ap.add_argument("--run", default="", help="default runs/transcend/crosscoder/mixed-L<layer>")
     ap.add_argument("--human", type=int, default=400_000, help="human positions (about as many as the rollouts give)")
@@ -381,6 +446,8 @@ def main():
     run = Path(a.run) if a.run else RUNS / f"mixed-L{a.layer}"
     run.mkdir(parents=True, exist_ok=True)
     dev = ev.device(a.device)
+    if a.command == "match":
+        return match(a, run, dev)
     if a.command in ("human", "all"):
         human(a, run)
     models = load_models(dev)
@@ -389,7 +456,7 @@ def main():
     if a.command in ("train", "all"):
         info = json.loads((run / "human" / "collect.json").read_text())
         (run / "collect.json").write_text(json.dumps({**info, "layers": [a.layer], "folders": info["folders"] + ["rollouts"]}, indent=1))
-        E = eval_positions(a, run, np.random.default_rng(a.seed)) if a.splice else None
+        E = eval_positions(a, run, np.random.default_rng(0)) if a.splice else None      # the same positions for every seed
         base = baseline(models, a.layer, E, dev) if E is not None else None
         for size in [int(s) for s in a.sizes.split(",")]:
             train(a, run, size, models, dev, E, base)
