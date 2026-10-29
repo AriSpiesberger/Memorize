@@ -55,8 +55,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paths
 import eval as ev
-import graphdiff as gd
-import manypositions as mp
+import shared as gd
+import shared as mp
 import oneposition as op
 
 RUNS = paths.RUNS / "transcend" / "recurring"

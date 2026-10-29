@@ -258,3 +258,6 @@ chess_beyond.zip
 *.gguf
 *.onnx
 *.bin
+
+# adapters stay local
+memorize/adapters/

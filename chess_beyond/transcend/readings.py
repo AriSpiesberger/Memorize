@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paths
 import eval as ev
-import graphdiff as gd
+import shared as gd
 from pgn_model import MAX_MOVE_CHARS, prompt
 from pgn_probe import parse_movetext
 
