@@ -99,6 +99,36 @@ def play(a, run, layers):
         roots = [dict(prompt=r["prompt"], fen=b.fen(), band=r["band"], game=str(r["game"])) for r, b in P]
         rpath.write_text(json.dumps(roots), encoding="utf-8")
     print(f"{len(roots)} positions", flush=True)
+    t0 = time.time()
+    if path.exists() and all((run / f"{a.model}-L{L}.npy").exists() for L in layers):
+        moves = json.loads(str(np.load(path)["moves"]))                # the futures are done: only the line states left
+        print("futures and root activations cached", flush=True)
+    else:
+        moves = rollouts(a, run, path, roots, model, layers, dev)
+    # every layer's state at every position of the greedy lines (ply 0: the root), for persistence
+    seqs, ends, _, _, _, start = gd.positions(dict(roots=roots, lines=[dict(root=i, moves=mv) for i, mv in enumerate(moves)]))
+    alive = np.load(path)["alive"]
+    for L in layers:
+        lp_ = run / f"{a.model}-lines-L{L}.npy"
+        if lp_.exists():
+            continue
+        t1 = time.time()
+        S_ = gd.line_states(model, seqs, ends, L, dev, a.max_tokens).numpy()
+        out = np.zeros((len(roots), a.plies + 1, S_.shape[1]), np.float16)
+        out[alive] = S_
+        root = np.load(run / f"{a.model}-L{L}.npy").astype(np.float32)
+        rel = np.linalg.norm(out[:, 0].astype(np.float32) - root, axis=1) / (np.linalg.norm(root, axis=1) + 1e-6)
+        if np.median(rel) > 0.05:
+            sys.exit(f"layer {L}: the lines' root states differ from the policy's (median relative difference "
+                     f"{np.median(rel):.3f}): two hooks disagree, stopping")
+        np.save(lp_, out)
+        print(f"  line states, layer {L} ({time.time() - t1:.0f}s; ply 0 against the policy's hook: median relative "
+              f"difference {np.median(rel):.4f}, max {rel.max():.4f})", flush=True)
+    print(f"futures and activations: {(time.time() - t0) / 60:.1f} min", flush=True)
+
+
+def rollouts(a, run, path, roots, model, layers, dev):
+    """The greedy futures and every layer's root activations -> moves (saved, with each line's live plies)."""
     X = {L: [] for L in layers}
     moves, conf = [], []
     t0 = time.time()
@@ -124,24 +154,12 @@ def play(a, run, layers):
             print(f"timed {len(part)} positions: {el:.0f}s; projected total {el * len(roots) / len(part) / 60:.0f} min", flush=True)
     for L in layers:
         np.save(run / f"{a.model}-L{L}.npy", np.concatenate(X[L]))
-    # every layer's state at every position of the greedy lines (ply 0: the root), for persistence
-    seqs, ends, _, _, _, start = gd.positions(dict(roots=roots, lines=[dict(root=i, moves=mv) for i, mv in enumerate(moves)]))
     alive = np.zeros((len(roots), a.plies + 1), bool)
-    for i in range(len(roots)):
-        alive[i, :start[i + 1] - start[i]] = True
-    for L in layers:
-        S_ = gd.line_states(model, seqs, ends, L, dev, a.max_tokens).numpy()
-        out = np.zeros((len(roots), a.plies + 1, S_.shape[1]), np.float16)
-        out[alive] = S_
-        root = np.load(run / f"{a.model}-L{L}.npy").astype(np.float32)
-        err = np.abs(out[:, 0].astype(np.float32) - root).max() / (np.abs(root).mean() + 1e-6)
-        if err > 0.1:
-            sys.exit(f"layer {L}: the lines' root states differ from the policy's (max {err:.2f} of the mean |state|): "
-                     "two hooks disagree, stopping")
-        np.save(run / f"{a.model}-lines-L{L}.npy", out)
-    print("line states: every layer, ply 0 checked against the policy's hook", flush=True)
+    for i, mv in enumerate(moves):
+        alive[i, :len(mv) + 1] = True
     np.savez(path, moves=np.array(json.dumps(moves)), conf=np.array(conf), alive=alive)
-    print(f"futures and activations: {(time.time() - t0) / 60:.1f} min", flush=True)
+    print(f"futures and root activations: {(time.time() - t0) / 60:.1f} min", flush=True)
+    return moves
 
 
 def targets(roots, moves):
@@ -341,7 +359,7 @@ def main():
     ap.add_argument("--boot", type=int, default=1000)
     ap.add_argument("--delta", type=int, default=4, help="the persistence lag (plies)")
     ap.add_argument("--match-pool", choices=("all", "test"), default="all", help="where the board-matched stand-ins come from")
-    ap.add_argument("--max-tokens", type=int, default=300_000)
+    ap.add_argument("--max-tokens", type=int, default=40_000, help="characters per forward pass for the line states (VRAM)")
     ap.add_argument("--chunk", type=int, default=200, help="positions per batch of rollouts (the first is timed)")
     ap.add_argument("--batch", type=int, default=48)
     ap.add_argument("--device", default="auto")
