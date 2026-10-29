@@ -59,6 +59,8 @@ PARTS = (("from", 64), ("to", 64), ("piece", 6))
 TARGETS = [f"{m} {p}" for m in MOVES for p, _ in PARTS] + ["check", "capture"]
 NCLASS = {**{f"{m} {p}": n for m in MOVES for p, n in PARTS}, "check": 2, "capture": 2}
 PLAN = [t for t in TARGETS if t.startswith(("m3", "m5"))]
+HIST = 6                                                              # plies of history in the third baseline
+BASES = ("board", "board + next move", "board + next move + history")
 
 
 def board_vec(b):
@@ -71,6 +73,27 @@ def board_vec(b):
     if b.ep_square is not None and b.has_legal_en_passant():
         v[773 + chess.square_file(b.ep_square)] = 1
     return v
+
+
+def hist_vec(stack, k=HIST):
+    """The last k plies before a position, one-hot from- and to-square each (k x 128; most recent first)."""
+    v = np.zeros(k * 128, np.uint8)
+    for j, m in enumerate(reversed(stack[-k:])):
+        v[j * 128 + m.from_square] = 1
+        v[j * 128 + 64 + m.to_square] = 1
+    return v
+
+
+def line_hist(roots, moves, plies):
+    """hist_vec at every ply of every greedy line (the game's moves before the position, then the line's own)."""
+    out = np.zeros((len(roots), plies + 1, HIST * 128), np.uint8)
+    for i, (r, mv) in enumerate(zip(roots, moves)):
+        stack = list(ev.board_of(gd.parse_movetext(r["prompt"])[0]).move_stack)
+        out[i, 0] = hist_vec(stack)
+        for t, u in enumerate(mv, 1):
+            stack.append(chess.Move.from_uci(u))
+            out[i, t] = hist_vec(stack)
+    return out
 
 
 def split_of(r):
@@ -164,9 +187,10 @@ def rollouts(a, run, path, roots, model, layers, dev):
 
 
 def targets(roots, moves):
-    """Per position: each target's class (-1 where the line is too short), the board, and the board + next move."""
+    """Per position: each target's class (-1 where the line is too short), and the three baselines' inputs: board;
+    board + next move; board + next move + the last HIST plies before the position."""
     Y = {t: np.full(len(roots), -1) for t in TARGETS}
-    B, BM = [], []
+    B, BM, BMH = [], [], []
     for i, (r, mv) in enumerate(zip(roots, moves)):
         b = chess.Board(r["fen"])
         bv = board_vec(b)
@@ -187,7 +211,8 @@ def targets(roots, moves):
             b.push(m)
         Y["check"][i], Y["capture"][i] = int(chk), int(cap)
         BM.append(np.r_[bv, nm])
-    return Y, np.array(B), np.array(BM)
+        BMH.append(np.r_[bv, nm, hist_vec(list(ev.board_of(gd.parse_movetext(r["prompt"])[0]).move_stack))])
+    return Y, np.array(B), np.array(BM), np.array(BMH, np.float32)
 
 
 # ---------------------------------------------------------------- probes
@@ -281,49 +306,126 @@ def partners(Bd, alive, sp, delta, rng, pool="all"):
     C = Bd[ci, cs].astype(np.float32)
     cn = C.sum(1)
     perm = te[rng.permutation(len(te))]
-    out = dict(own={}, random={}, matched={})
+    out = dict(own={}, random={}, matched={}, own_valid={}, matched_valid={})
     dist, own = [], []
+    nv = np.zeros(len(te), int)
     for t in range(Bd.shape[1] - delta):
-        out["own"][t] = (te, np.full(len(te), t + delta))
-        out["random"][t] = (perm, np.full(len(te), t + delta))
+        out["own"][t] = (te, np.full(len(te), t + delta), None)
+        out["random"][t] = (perm, np.full(len(te), t + delta), None)
         Q = Bd[te, t + delta].astype(np.float32)
         j = np.zeros(len(te), int)
         for s0 in range(0, len(te), 256):
             sc = 2 * Q[s0:s0 + 256] @ C.T - cn[None]                   # = |q| - Hamming distance; |q| fixed per row
             sc[te[s0:s0 + 256, None] == ci[None]] = -np.inf           # not the same game (one position per game)
             j[s0:s0 + 256] = sc.argmax(1)
-        out["matched"][t] = (ci[j], cs[j])
+        out["matched"][t] = (ci[j], cs[j], None)
         ok = alive[te, t + delta]
-        dist.append((Q.sum(1) + cn[j] - 2 * (Q * C[j]).sum(1))[ok])
-        own.append(np.abs(Bd[te, t].astype(int) - Bd[te, t + delta].astype(int)).sum(1)[ok & alive[te, t]])
-    return te, out, float(np.concatenate(dist).mean()), float(np.concatenate(own).mean())
+        dm = Q.sum(1) + cn[j] - 2 * (Q * C[j]).sum(1)
+        do = np.abs(Bd[te, t].astype(int) - Bd[te, t + delta].astype(int)).sum(1)
+        valid = ok & alive[te, t] & (dm <= do)                        # a stand-in at least as close as the line's own
+        out["own_valid"][t] = (te, np.full(len(te), t + delta), valid)
+        out["matched_valid"][t] = (ci[j], cs[j], valid)
+        nv += valid
+        dist.append(dm[ok])
+        own.append(do[ok & alive[te, t]])
+    return te, out, float(np.concatenate(dist).mean()), float(np.concatenate(own).mean()), nv
+
+
+DIFFS = (("own", "random"), ("own", "matched"), ("own_valid", "matched_valid"))
 
 
 def lag_stats(E, alive, te, Pt, rng, n_boot):
-    """The correlation of E at (line, t) with E at each partner, pooled over dimensions and t; bootstrap over test lines
-    -> {name: stat}, the 95% interval of own, and of own minus each other partner."""
+    """The correlation of E at (line, t) with E at each partner (only where its mask allows), pooled over dimensions
+    and t; bootstrap over test lines -> {name: stat}, the 95% interval of own, and of each difference in DIFFS
+    (key minus_<second>_ci)."""
     names = list(Pt)
     acc = {n: np.zeros((len(te), 3)) for n in names}
     for t in Pt["own"]:
         a_ = E[te, t]
         for n in names:
-            pi, ps = Pt[n][t]
-            ok = alive[te, t] & alive[pi, ps]
+            pi, ps, mask = Pt[n][t]
+            ok = alive[te, t] & alive[pi, ps] & (True if mask is None else mask)
             b_ = E[pi, ps]
             acc[n] += ok[:, None] * np.c_[(a_ * b_).sum(1), (a_ * a_).sum(1), (b_ * b_).sum(1)]
-    r = lambda A: A[:, 0].sum() / np.sqrt(A[:, 1].sum() * A[:, 2].sum())
+    r = lambda A: A[:, 0].sum() / np.sqrt(max(A[:, 1].sum() * A[:, 2].sum(), 1e-12))
     out = {n: float(r(acc[n])) for n in names}
-    bs = {n: [] for n in names}
+    bs = {"own": [], **{b: [] for _, b in DIFFS}}
     for _ in range(n_boot):
         idx = rng.integers(0, len(te), len(te))
-        own = r(acc["own"][idx])
-        bs["own"].append(own)
-        for n in names[1:]:
-            bs[n].append(own - r(acc[n][idx]))
+        bs["own"].append(r(acc["own"][idx]))
+        for x, y in DIFFS:
+            bs[y].append(r(acc[x][idx]) - r(acc[y][idx]))
     out["own_ci"] = (float(np.quantile(bs["own"], .025)), float(np.quantile(bs["own"], .975)))
-    for n in names[1:]:
-        out[f"minus_{n}_ci"] = (float(np.quantile(bs[n], .025)), float(np.quantile(bs[n], .975)))
+    for _, y in DIFFS:
+        out[f"minus_{y}_ci"] = (float(np.quantile(bs[y], .025)), float(np.quantile(bs[y], .975)))
     return out
+
+
+def mlp_residuals(X, F, alive, sp, dev, hidden=512, steps=3000, batch=1024):
+    """Each ply's state (standardised) minus a small MLP's prediction of it from that ply's board and history (fit on
+    the train positions, early-stopped on validation), standardised per dimension -> residuals, validation R^2 of the
+    MLP and of a linear (ridge) map from the same inputs."""
+    tr, va = alive & (sp == 0)[:, None], alive & (sp == 1)[:, None]
+    xm, xs = X[tr].mean(0), X[tr].std(0) + 1e-6
+    fm, fs = F[tr].mean(0), F[tr].std(0)
+    finv = np.where(fs > 1e-6, 1 / np.maximum(fs, 1e-6), 0.0).astype(np.float32)
+    T = lambda A: torch.tensor(A, dtype=torch.float32, device=dev)
+    xtr, ftr = T((X[tr] - xm) / xs), T((F[tr] - fm) * finv)
+    xva, fva = T((X[va] - xm) / xs), T((F[va] - fm) * finv)
+    torch.manual_seed(0)
+    net = torch.nn.Sequential(torch.nn.Linear(F.shape[-1], hidden), torch.nn.ReLU(), torch.nn.Linear(hidden, hidden),
+                              torch.nn.ReLU(), torch.nn.Linear(hidden, X.shape[-1])).to(dev)
+    opt = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    g = torch.Generator(device="cpu").manual_seed(0)
+    best = (float("inf"), None)
+    for step in range(steps):
+        idx = torch.randint(0, len(xtr), (batch,), generator=g).to(dev)
+        opt.zero_grad()
+        torch.nn.functional.mse_loss(net(ftr[idx]), xtr[idx]).backward()
+        opt.step()
+        if step % 100 == 99:
+            with torch.no_grad():
+                v = float(torch.nn.functional.mse_loss(net(fva), xva))
+            if v < best[0]:
+                best = (v, {k: w.clone() for k, w in net.state_dict().items()})
+    net.load_state_dict(best[1])
+    with torch.no_grad():
+        r2_mlp = 1 - best[0] / float(xva.var(0, unbiased=False).mean())
+        A = torch.cat([ftr, torch.ones(len(ftr), 1, device=dev)], 1)
+        W = torch.linalg.solve(A.T @ A + torch.eye(A.shape[1], device=dev), A.T @ xtr)
+        r2_lin = 1 - float(torch.nn.functional.mse_loss(torch.cat([fva, torch.ones(len(fva), 1, device=dev)], 1) @ W, xva)) \
+            / float(xva.var(0, unbiased=False).mean())
+        E = np.zeros(X.shape, np.float32)
+        rows = np.flatnonzero(alive.ravel())
+        Xf, Ff = X.reshape(-1, X.shape[-1]), F.reshape(-1, F.shape[-1])
+        out = []
+        for s0 in range(0, len(rows), 8192):
+            rr = rows[s0:s0 + 8192]
+            out.append(((Xf[rr] - xm) / xs - net(T((Ff[rr] - fm) * finv)).cpu().numpy()).astype(np.float32))
+        E.reshape(-1, X.shape[-1])[rows] = np.concatenate(out)
+    sd = E[tr].std(0)
+    return E * np.where(sd > 1e-6, 1 / np.maximum(sd, 1e-6), 0.0).astype(np.float32), float(r2_mlp), float(r2_lin)
+
+
+MIN_VALID = 200                                                       # test lines with a valid match, for that control
+
+
+def choose2(Ls, P2, n_valid):
+    """The corrected rule (fixed before its results): residuals after an MLP on the board and the last 6 plies; a layer
+    passes if its own-line autocorrelation is significantly above the board-matched swap restricted to valid matches
+    (stand-ins at least as close to the real ply t + delta board as the line's own ply t board; the 95% interval of
+    own - matched above zero, over the same pairs), or, if fewer than MIN_VALID test lines have a valid match, above
+    the random swap; and at least half the maximum over layers. The latest passing layer is chosen."""
+    basis = "matched_valid" if n_valid >= MIN_VALID else "random"
+    mx = max(P2[L]["own"] for L in Ls)
+    ok = [L for L in Ls if P2[L][f"minus_{basis}_ci"][0] > 0 and P2[L]["own"] >= 0.5 * mx]
+    why = [f"Test lines with at least one valid board match: {n_valid} (need {MIN_VALID}); the control used: "
+           + ("the valid board-matched swap." if basis == "matched_valid" else "the random swap (too few valid matches)."),
+           f"Maximum autocorrelation over layers {mx:.3f}; half of it {0.5 * mx:.3f}.",
+           "Passing: " + (", ".join(ok) if ok else "none") + "."]
+    if not ok:
+        return None, why + ["No layer passes: no choice."], basis
+    return ok[-1], why + [f"Chosen: {ok[-1]}, the latest passing layer."], basis
 
 
 def passes(P, L, mx):
@@ -388,12 +490,12 @@ def main():
         sys.exit("a game in more than one split: stopping")
     print(f"{a.model}: {len(roots)} positions from {len(games)} games; train / validation / test "
           f"{(sp == 0).sum()} / {(sp == 1).sum()} / {(sp == 2).sum()}; no game in two splits", flush=True)
-    Y, B, BM = targets(roots, moves)
+    Y, B, BM, BMH = targets(roots, moves)
     lams = [float(x) for x in a.lams.split(",")]
     rng = np.random.default_rng(a.seed)
     CE, ACC = {}, {}
     t0 = time.time()
-    inputs = [("board", lambda: B), ("board + next move", lambda: BM)] + \
+    inputs = [("board", lambda: B), ("board + next move", lambda: BM), ("board + next move + history", lambda: BMH)] + \
              [(f"L{L}", lambda L=L: np.load(run / f"{a.model}-L{L}.npy").astype(np.float32)) for L in layers]
     for name, get in inputs:
         X = get()
@@ -423,7 +525,10 @@ def main():
                 sys.exit("the final layer's m1 piece probe is below the model's confidence in its whole move: wrong hook? stopping")
     Bd = line_boards(roots, moves, a.plies)
     alive = z["alive"]
-    te, Pt, hd, hown = partners(Bd, alive, sp, a.delta, rng, a.match_pool)
+    te, Pt, hd, hown, nv = partners(Bd, alive, sp, a.delta, rng, a.match_pool)
+    n_valid = int((nv > 0).sum())
+    print(f"  board matches at least as close as the line's own ply t board: {n_valid} of {len(te)} test lines, "
+          f"{int(nv.sum())} pairs", flush=True)
     tr = alive & (sp == 0)[:, None]
     bsd = Bd[tr].std(0)
     Eb = ((Bd.astype(np.float32) - Bd[tr].mean(0)) * np.where(bsd > 1e-6, 1 / np.maximum(bsd, 1e-6), 0.0)) * alive[..., None]
@@ -436,15 +541,26 @@ def main():
         P[f"L{L}"] = lag_stats(E, alive, te, Pt, rng, a.boot)
         print(f"  persistence L{L}: {P[f'L{L}']['own']:.3f} (random swap {P[f'L{L}']['random']:.3f}, board-matched "
               f"{P[f'L{L}']['matched']:.3f}; {time.time() - t1:.0f}s)", flush=True)
-    write(a, res, layers, CE, ACC, rng, P, (hd, hown))
+    # the corrected control: the board and the last HIST plies removed by an MLP, against the valid board matches
+    F = np.concatenate([Bd, line_hist(roots, moves, a.plies)], -1).astype(np.float32)
+    P2, R2 = {}, {}
+    for L in layers:
+        t1 = time.time()
+        E, r2m, r2l = mlp_residuals(np.load(run / f"{a.model}-lines-L{L}.npy").astype(np.float32), F, alive, sp, dev)
+        P2[f"L{L}"], R2[f"L{L}"] = lag_stats(E, alive, te, Pt, rng, a.boot), (r2m, r2l)
+        q = P2[f"L{L}"]
+        print(f"  persistence after the MLP, L{L}: {q['own']:.3f} (random swap {q['random']:.3f}; valid board-matched: own "
+              f"{q['own_valid']:.3f}, matched {q['matched_valid']:.3f}; validation R^2 MLP {r2m:.3f}, linear {r2l:.3f}; "
+              f"{time.time() - t1:.0f}s)", flush=True)
+    write(a, res, layers, CE, ACC, rng, P, (hd, hown), P2, R2, n_valid)
     print(f"wrote {res / f'{a.model}-report.md'} ({(time.time() - t0) / 60:.1f} min of probes)")
 
 
-def write(a, res, layers, CE, ACC, rng, P, hds):
+def write(a, res, layers, CE, ACC, rng, P, hds, P2, R2, n_valid):
     hd, hown = hds
     Ls = [f"L{L}" for L in layers]
     G = {}                                                             # (baseline, layer, target) -> mean, lo, hi
-    for base in ("board", "board + next move"):
+    for base in BASES:
         for L in Ls:
             for t in TARGETS:
                 G[base, L, t] = boot_ci(CE[base][t] - CE[L][t], rng, a.boot)
@@ -454,13 +570,49 @@ def write(a, res, layers, CE, ACC, rng, P, hds):
     peak = max(Ls, key=lambda L: pg[L][0])
     pick, why = choose(Ls, P)
     mx = max(P[L]["own"] for L in Ls)
+    pick2, why2, basis = choose2(Ls, P2, n_valid)
+    mx2 = max(P2[L]["own"] for L in Ls)
+    HB = "board + next move + history"
+    plan_h = {L: np.where(valid, np.sum([CE[HB][t] - CE[L][t] for t in PLAN], 0), np.nan) for L in Ls}
+    pgh = {L: boot_ci(plan_h[L], rng, a.boot) for L in Ls}
+    peak_h = max(Ls, key=lambda L: pgh[L][0])
     out = [f"# {a.model}: how much each layer says about its own future moves", "",
            f"{a.positions} positions; {a.model}'s greedy continuation for {a.plies} plies (both colours); targets: from-square, "
            "to-square and piece of m1 (its move here), m3 and m5 (its next two), and check / capture by the side to move "
            "within the plies. Multinomial logistic probes from the activations at the position (the token predicting m1), "
            "L2 by validation; test cross-entropy in nats. gain = CE(baseline) - CE(layer), 95% bootstrap intervals over test "
-           "games. Baselines: board; board + next move (m1's from- and to-square added).", "",
-           f"## The chosen layer: {pick}", "",
+           "games. Baselines: board; board + next move (m1's from- and to-square added); board + next move + history (also "
+           f"the last {HIST} plies before the position, one-hot from- and to-square each: the prompt is the whole game, and "
+           "recent moves predict later ones).", "",
+           f"## The chosen layer, corrected control: {pick2}", "",
+           f"The first rule (below) used a board-matched swap that could not discriminate: its stand-ins were {hd:.1f} one-hot "
+           f"entries from the real board, further than a line's own board {a.delta} plies earlier ({hown:.1f}), and every layer "
+           "passed it. Corrected rule, fixed before its results: residuals after a small MLP (two hidden layers of 512) on "
+           f"the board and the last {HIST} plies at the same ply, so neither nonlinear board information nor recent history "
+           f"stays in them; a layer passes if its own-line autocorrelation at lag {a.delta} is significantly above the "
+           "board-matched swap counted only where the stand-in is at least as close to the real board as the line's own "
+           f"earlier board (or above the random swap if fewer than {MIN_VALID} test lines have such a match), and at least "
+           "half the maximum over layers. The latest passing layer is chosen.", ""]
+    out += [f"- {w}" for w in why2]
+    out += ["", "| layer | own | 95% | random swap | own (valid pairs) | valid board-matched | own - matched (valid), 95% | "
+            "passes | MLP R^2 (linear) | m3 + m5 gain over board + next move + history |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for L in Ls:
+        q = P2[L]
+        ok = q[f"minus_{basis}_ci"][0] > 0 and q["own"] >= 0.5 * mx2
+        out.append(f"| {L} | {q['own']:.3f} | [{q['own_ci'][0]:.3f}, {q['own_ci'][1]:.3f}] | {q['random']:.3f} | "
+                   f"{q['own_valid']:.3f} | {q['matched_valid']:.3f} | [{q['minus_matched_valid_ci'][0]:+.3f}, "
+                   f"{q['minus_matched_valid_ci'][1]:+.3f}] | {'yes' if ok else 'no'} | {R2[L][0]:.3f} ({R2[L][1]:.3f}) | "
+                   f"{pgh[L][0]:+.4f} [{pgh[L][1]:+.4f}, {pgh[L][2]:+.4f}] |")
+    out += ["", f"## The plan signal against the history baseline: m3 and m5 (six targets summed), gain over {HB}", "",
+            f"Peak: {peak_h}."]
+    for ref in ("L0", "L15", "Lfinal"):
+        if ref in Ls and ref != peak_h:
+            d = boot_ci(plan_h[peak_h] - plan_h[ref], rng, a.boot)
+            out.append(f"{peak_h} minus {ref}: {d[0]:+.4f} nats [{d[1]:+.4f}, {d[2]:+.4f}]: the interval "
+                       + ("excludes zero." if d[1] > 0 or d[2] < 0 else "includes zero."))
+    out += ["", "Absolute effects are small: the probes are far from reading off a plan (see the accuracies in the tables "
+            "below); they serve to rank layers.", "",
+            f"## The first rule's choice: {pick}", "",
            f"Rule (fixed before the results): a layer passes if its board-removed residual autocorrelation at lag {a.delta} is "
            "significantly above the board-matched swap (the 95% bootstrap interval over test lines of own - matched above "
            "zero) and at least half the maximum over layers. The latest passing layer is chosen.", ""]
@@ -492,7 +644,7 @@ def write(a, res, layers, CE, ACC, rng, P, hds):
             out.append(f"{peak} minus {ref}: {d[0]:+.4f} nats [{d[1]:+.4f}, {d[2]:+.4f}], paired over test games: "
                        + ("the interval excludes zero." if d[1] > 0 or d[2] < 0 else "the interval includes zero."))
     out.append("")
-    for base in ("board + next move", "board"):
+    for base in (HB, "board + next move", "board"):
         out += [f"## Gain over {base} (nats; the layer's accuracy in brackets)", "",
                 "| layer | " + " | ".join(TARGETS) + " |", "|---|" + "---|" * len(TARGETS)]
         for L in Ls:
@@ -503,7 +655,8 @@ def write(a, res, layers, CE, ACC, rng, P, hds):
     (res / f"{a.model}-report.md").write_text("\n".join(out) + "\n", encoding="utf-8")
     (res / f"{a.model}-report.json").write_text(json.dumps(dict(
         gains={f"{b} | {L} | {t}": v for (b, L, t), v in G.items()}, plan=pg, peak=peak, chosen=pick, why=why,
-        persistence=P, matched_hamming=hd, own_hamming=hown,
+        persistence=P, matched_hamming=hd, own_hamming=hown, chosen_corrected=pick2, why_corrected=why2,
+        persistence_mlp=P2, mlp_r2=R2, valid_match_lines=n_valid, plan_history=pgh, peak_history=peak_h,
         accuracy={n: {t: float(np.nanmean(v)) for t, v in r.items()} for n, r in ACC.items()},
         ce={n: {t: float(np.nanmean(v)) for t, v in r.items()} for n, r in CE.items()}), indent=1), encoding="utf-8")
     import matplotlib
@@ -512,15 +665,17 @@ def write(a, res, layers, CE, ACC, rng, P, hds):
     fig, ax = plt.subplots(3, 4, figsize=(18, 11))
     x = np.arange(len(Ls))
     for p, t in zip(ax.flat, TARGETS + ["plan"]):
-        v = [pg[L] if t == "plan" else G["board + next move", L, t] for L in Ls]
-        p.fill_between(x, [u[1] for u in v], [u[2] for u in v], alpha=0.25)
-        p.plot(x, [u[0] for u in v], "o-")
+        for base, col, src in (("board + next move", "C0", pg), (HB, "C1", pgh)):
+            v = [src[L] if t == "plan" else G[base, L, t] for L in Ls]
+            p.fill_between(x, [u[1] for u in v], [u[2] for u in v], alpha=0.2, color=col)
+            p.plot(x, [u[0] for u in v], "o-", color=col, label=f"over {base}")
+        p.legend(fontsize=6)
         p.axhline(0, color="0.5", lw=0.8)
         p.set_xticks(x, [L[1:] for L in Ls], fontsize=7)
         p.set_title("m3 + m5, six targets summed" if t == "plan" else t, fontsize=10)
         p.set_xlabel("layer")
-        p.set_ylabel("gain over board + next move (nats)")
-    fig.suptitle(f"{a.model}: gain over board + next move, 95% bootstrap intervals over test games")
+        p.set_ylabel("gain (nats)")
+    fig.suptitle(f"{a.model}: gain over board + next move (blue) and over board + next move + history (orange), 95% intervals")
     fig.tight_layout()
     fig.savefig(res / f"{a.model}-gains.png", dpi=110)
     plt.close(fig)
