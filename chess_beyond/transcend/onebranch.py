@@ -98,13 +98,25 @@ def states(a):
                 fs.append(gd.encode_states(cc, {m: st[m][i:i + 4096].to(dev) for m in (0, 1)})[0].cpu().numpy())
         F = np.concatenate(fs)
         keep = pos_t >= 1
-        Pc = P[pos_line[keep] * (a.plies + 1) + pos_t[keep]].toarray()
-        agree = ((F[keep] > 0) == (Pc > 0)).all(1).mean()
-        print(f"{M}: {len(D)} lines, {keep.sum()} states; rows whose re-encoded codes match the cached ones exactly: {agree:.1%}",
-              flush=True)
-        if agree < 0.9:
+        Fk, Pc = F[keep], P[pos_line[keep] * (a.plies + 1) + pos_t[keep]].toarray()
+        np.save(f, X)                                                  # saved first: the check below can be redone on CPU
+        # Exact equality is too strict: batching and bf16 move latents that sit at the threshold. Per row: the overlap
+        # of the active sets (Jaccard), and the correlation of values on latents active in both; against the same
+        # statistics for rows paired at random (what a wrong crosscoder, layer or position would look like).
+        on_f, on_p = Fk > 0, Pc > 0
+        jac = (on_f & on_p).sum(1) / np.maximum((on_f | on_p).sum(1), 1)
+        flips = (on_f ^ on_p).sum(1)
+        both = on_f & on_p
+        vc = np.corrcoef(Fk[both], Pc[both])[0, 1] if both.any() else float("nan")
+        perm = np.random.default_rng(0).permutation(len(Fk))
+        jr = ((on_f & on_p[perm]).sum(1) / np.maximum((on_f | on_p[perm]).sum(1), 1))
+        print(f"{M}: {len(D)} lines, {keep.sum()} states. Re-encoded against cached codes: exact rows {(flips == 0).mean():.1%}; "
+              f"Jaccard median {np.median(jac):.3f} (5th percentile {np.quantile(jac, .05):.3f}; random row pairs median "
+              f"{np.median(jr):.3f}); latents flipped per row median {np.median(flips):.0f} of {np.median(on_p.sum(1)):.0f} "
+              f"active; value correlation on shared active latents {vc:.4f}", flush=True)
+        if np.median(jac) < 0.9 or vc < 0.98:
+            f.unlink()
             sys.exit("the states do not reproduce divergence.py's codes: wrong crosscoder, layer or position")
-        np.save(f, X)
         print(f"wrote {f}")
 
 
@@ -332,7 +344,7 @@ def analyse(a):
                     "its parity (the codes differ by side to move). board: one-hot "
                     "board + side to move (the bar: different first moves give different boards). raw - board, latents - board: "
                     "minus a ridge read of the board. Same board: test rows of the two paths at the same tau with the same "
-                    "board, scored by the fixed probes (the board cannot separate them).", ""]
+                    "board, each scored by its tau's refit probe (the board cannot separate them).", ""]
     for M in ("S", "W"):
         if not (run / f"{M}-states.npy").exists():
             out += [f"## {M}", "", f"no states: run `onebranch.py states --position {a.position}` first", ""]
