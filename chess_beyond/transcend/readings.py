@@ -223,7 +223,7 @@ def main():
         s = sgn * d @ v
         return v, m, auc(s[held], lab[held]), s
 
-    def perm(fn, sgn, stat):
+    def perm(fn, sgn, stat, none):
         vals = []
         for _ in range(a.perms):
             lab = np.zeros(len(dis), bool)
@@ -231,8 +231,7 @@ def main():
                 idx = np.flatnonzero(half)
                 lab[rng.choice(idx, int(dis[half].sum()), replace=False)] = True
             got = fn(lab, sgn)
-            if got is not None:
-                vals.append(got[2])
+            vals.append(none if got is None else got[2])     # no solution: v = 0, a constant score
             print(f"\r    permutations {_ + 1}/{a.perms}", end="", flush=True)
         print()
         vals = np.array(vals)
@@ -257,7 +256,7 @@ def main():
                 out.append(f"| {kind} | {side} | no solution | | | | |")
                 continue
             v, m, stat, s = got
-            p, nul = perm(fn, sgn, stat)
+            p, nul = perm(fn, sgn, stat, 0.0 if kind == "(1) readings" else 0.5)
             if kind == "(1) readings":
                 hd, ha = float((s[held & dis] >= m).mean()), float((s[held & ~dis] >= m).mean())
                 cell, st = f"{hd:.0%} / {ha:.0%}", f"gap {stat:+.0%}"
