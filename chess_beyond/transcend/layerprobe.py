@@ -25,9 +25,10 @@ moves it will play there next, beyond the board and the move it is about to play
                 against a random swap (chance floor), a board-matched swap (the nearest board from another game: the
                 board control) and the raw board's own; the layer chosen by the rule in choose() (fixed before any
                 result), stated in the report with its numbers.
-Sanity checks: no game in two splits; the lines' root states equal the policy's hook; the m1 to-square probe at the final layer near the model's own confidence in m1
-(its mean top-move probability; m1 is the model's argmax, so a probe far below it means a wrong hook): the run stops if
-it is below half of that.
+Sanity checks: no game in two splits; the lines' root states equal the policy's hook; the m1 piece probe at the final layer at least the model's own confidence in m1
+(its mean top-move probability). Not the to-square: the model writes a move character by character, and at this token it
+commits only to the first character (the piece letter or a pawn's file); the squares come at the characters after, so the
+to-square is only partly readable here (0.22 at the final layer, against 0.79 for the piece).
 
 -> runs/transcend/layerprobe/<tag>/<model>.npz (futures), <model>-L<layer>.npy; results/transcend/layerprobe/<tag>/
    <model>-report.md, <model>-report.json, <model>-gains.png."""
@@ -399,17 +400,27 @@ def main():
         if len(X) != len(roots):
             sys.exit(f"{name}: {len(X)} rows for {len(roots)} positions")
         t1 = time.time()
-        CE[name], ACC[name] = {}, {}
-        for t in TARGETS:
-            CE[name][t], ACC[name][t], _ = probe(X, Y[t], sp, NCLASS[t], dev, lams, a.iters)
+        cache = run / f"probes-{a.model}" / f"{name.replace(' ', '_').replace('+', 'plus')}.npz"
+        if cache.exists():
+            c = np.load(cache)
+            CE[name] = {t: c[f"ce {t}"] for t in TARGETS}
+            ACC[name] = {t: c[f"acc {t}"] for t in TARGETS}
+        else:
+            CE[name], ACC[name] = {}, {}
+            for t in TARGETS:
+                CE[name][t], ACC[name][t], _ = probe(X, Y[t], sp, NCLASS[t], dev, lams, a.iters)
+            cache.parent.mkdir(exist_ok=True)
+            np.savez(cache, **{f"ce {t}": CE[name][t] for t in TARGETS}, **{f"acc {t}": ACC[name][t] for t in TARGETS})
         print(f"  {name}: m1 to {np.nanmean(ACC[name]['m1 to']):.3f}, m3 to {np.nanmean(ACC[name]['m3 to']):.3f}, "
               f"m5 to {np.nanmean(ACC[name]['m5 to']):.3f} (accuracy; {time.time() - t1:.0f}s)", flush=True)
         if name == "Lfinal":
-            got, want = np.nanmean(ACC[name]["m1 to"]), float(conf[sp == 2].mean())
-            print(f"  sanity: the m1 to-square probe at the final layer {got:.3f}; the model's own mean top-move probability "
+            # the model writes a move character by character: at this token it commits only to the first (the piece
+            # letter, or a pawn's file), the squares come at the characters after. So the check is on m1's piece
+            got, want = np.nanmean(ACC[name]["m1 piece"]), float(conf[sp == 2].mean())
+            print(f"  sanity: the m1 piece probe at the final layer {got:.3f}; the model's own mean top-move probability "
                   f"{want:.3f}", flush=True)
-            if got < 0.5 * want:
-                sys.exit("the final layer's m1 probe is far below the model's own confidence: wrong hook? stopping")
+            if got < want:
+                sys.exit("the final layer's m1 piece probe is below the model's confidence in its whole move: wrong hook? stopping")
     Bd = line_boards(roots, moves, a.plies)
     alive = z["alive"]
     te, Pt, hd, hown = partners(Bd, alive, sp, a.delta, rng, a.match_pool)
