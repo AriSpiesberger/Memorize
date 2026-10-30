@@ -34,6 +34,10 @@ modal run --detach modal/modal_train.py::prepare                      # data for
 modal run modal/modal_train.py::smoke --band 1000-1300                # 200 steps, two evals, snapshots
 modal run --detach modal/modal_train.py::train_band --band 1000-1300  # the full run
 modal run --detach modal/modal_train.py::train_band --band 2400+
+
+# RL on who won: each band's Hugging Face model on 500k of its own band's games
+modal run --detach modal/modal_train.py::rl_games                     # winner's moves only, both bands in parallel
+modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded   # + a bounded penalty on the loser's
 ```
 
 `--detach` keeps a run going after you close the terminal. Modal stops a function after
@@ -64,7 +68,7 @@ runs too:
 | calls | scripts |
 | --- | --- |
 | `modal_app.py` | `rating_bands/collect_games.py` |
-| `modal_train.py` | `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py` |
+| `modal_train.py` | `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py`, `transcend/rl_pgn_games.py` |
 | imported by those | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `intervals.py`, `transcend/pgn_model.py` |
 
 Everything else in `chess_beyond/` is not used by Modal. See

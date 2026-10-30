@@ -6,6 +6,8 @@
     modal run modal/modal_train.py::smoke --band 1000-1300               # 200 steps, evals at 0 and 200
     modal run --detach modal/modal_train.py::train_band --band 1000-1300 # the full run (paper: 100K steps)
     modal run --detach modal/modal_train.py::train_band --band 2400+
+    modal run --detach modal/modal_train.py::rl_games                    # RL on who won: 500k of each band's games
+    modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded
 
 prepare (CPU, runs on Modal end to end), in this order so no test puzzle can leak:
   puzzle_strata.py   the puzzles for the later RL and evals, with the transcend quality bar
@@ -77,7 +79,9 @@ HANDOVER = 23 * 60 * 60                      # seconds before a fresh container 
 app = modal.App("chess-beyond-train")
 data = modal.Volume.from_name(DATA_VOLUME, create_if_missing=True)
 runs = modal.Volume.from_name("chess-runs", create_if_missing=True)
-image = lab_image("torch==2.11.*", "numpy", "chess", "zstandard", "matplotlib")
+image = lab_image("torch==2.11.*", "numpy", "chess", "zstandard", "matplotlib", "huggingface_hub", "safetensors",
+                  env={"HF_HOME": f"{RUNS}/hf"})        # downloaded models stay on the runs Volume
+HF_MODELS = {"1000-1300": "Arisp/chess-pgn-1000-1300", "2400+": "Arisp/chess-pgn-2400plus"}
 
 
 def sh(cmd):
@@ -154,9 +158,27 @@ def make_pgn(band: str):
         return
     extra = sft_extra(band)
     data.commit()
-    sh([sys.executable, "transcend/make_pgn_data.py", "--pgn", f"data/lichess/bands/upsampled/{band}.pgn", str(extra),
-        "--out", str(out), "--exclude-puzzles", *map(str, puzzles), "--games", str(SFT_GAMES),
-        "--val-games", str(HELD_OUT)])
+    sh(make_pgn_cmd(band, extra, out, puzzles))
+    data.commit()
+
+
+def make_pgn_cmd(band, extra, out, puzzles):
+    return [sys.executable, "transcend/make_pgn_data.py", "--pgn", f"data/lichess/bands/upsampled/{band}.pgn", str(extra),
+            "--out", str(out), "--exclude-puzzles", *map(str, puzzles), "--games", str(SFT_GAMES),
+            "--val-games", str(HELD_OUT)]
+
+
+@app.function(image=image, volumes={DATA: data}, cpu=2.0, memory=8 * 1024, timeout=6 * 60 * 60)
+def pgn_info(band: str):
+    """<out>/info.npz (ratings, terminations) for a built pgn-<band>, by make_pgn's own pass and flags,
+    checked game by game against its starts.npy."""
+    data.reload()
+    out = Path(DATA) / "transcend" / f"pgn-{band}"
+    if (out / "info.npz").exists():
+        print(f"{out}/info.npz already built; skipping")
+        return
+    extra = Path(DATA) / "lichess" / "bands" / "sft-extra" / f"{band}.pgn"
+    sh(make_pgn_cmd(band, extra, out, [Path(DATA) / "lichess" / "puzzles" / f for f in PUZZLE_SETS]) + ["--info-only"])
     data.commit()
 
 
@@ -307,3 +329,85 @@ def train_band(band: str = "1000-1300", name: str = "", steps: int = 0, lr: str 
         + (["--min-epochs", str(min_epochs)] if min_epochs >= 0 else []) + (["--warmup", str(warmup)] if warmup else [])
     call = train.spawn(band, eval_every=eval_every, name=name, micro=MICRO, compile_mode=COMPILE, extra=extra)
     print(f"training {band} on Modal ({call.object_id}); with --detach it runs on after this terminal closes")
+
+
+@app.function(image=image, gpu=GPU, volumes={DATA: data, RUNS: runs}, cpu=4.0, memory=32 * 1024,
+              timeout=12 * 60 * 60)
+def rl(band: str, games: int = 500_000, name: str = "", extra: list = []):
+    """transcend/rl_pgn_games.py: the band's Hugging Face model on --games of the band's own training
+    games -> runs/transcend/rl-pgn-<band><name>.pt (+ _log, _step<N>). Needs info.npz (rl_band builds it first)."""
+    data.reload()
+    cmd = [sys.executable, "transcend/rl_pgn_games.py", "--init", HF_MODELS[band], "--data", f"data/transcend/pgn-{band}",
+           "--out", f"runs/transcend/rl-pgn-{band}{name}.pt", "--games", str(games), "--compile",
+           *[str(x) for x in extra]]
+    print("$", " ".join(cmd), flush=True)
+    stop = threading.Event()
+    threading.Thread(target=commit_every, args=(runs, 120, stop), daemon=True).start()
+    try:
+        subprocess.run(cmd, cwd=REMOTE, check=True)
+    finally:
+        stop.set()
+        runs.commit()
+
+
+@app.function(image=image, volumes={DATA: data}, cpu=0.125, memory=512, timeout=12 * 60 * 60)
+def rl_band(band: str, games: int, name: str, extra: list):
+    """info.npz on a CPU (if missing), then the GPU run: no GPU sits idle during the pass over 10M games."""
+    pgn_info.remote(band)
+    rl.remote(band, games, name, extra)
+
+
+@app.local_entrypoint()
+def rl_games(band: str = "both", games: int = 500_000, name: str = "", loser: str = "skip", beta: str = "",
+             lr: str = "", max_elo_diff: str = "", gamma: str = "", skip_plies: str = ""):
+    """--band 1000-1300, 2400+ or both (in parallel, each on its own GPU); --loser skip (winner only), bounded
+    or logp; the rest override rl_pgn_games.py's defaults (beta 0.1, lr 1e-5, max-elo-diff 50, gamma 1,
+    skip-plies 0); --name keeps runs apart."""
+    extra = ["--loser", loser]
+    for flag, v in [("--beta", beta), ("--lr", lr), ("--max-elo-diff", max_elo_diff), ("--gamma", gamma),
+                    ("--skip-plies", skip_plies)]:
+        extra += [flag, v] if v else []
+    for b in (BANDS if band == "both" else [band]):
+        call = rl_band.spawn(b, games, name, extra)
+        print(f"RL {b} on Modal ({call.object_id}); with --detach it runs on after this terminal closes")
+
+
+# ---------------------------------------------------------------- steering mined concepts
+STEER_TAG = "p16-r1024-T0.4-s0-L11-4k"
+STEER_CC = "transcend/crosscoder/mixed-L11"
+steer_image = lab_image("torch==2.11.*", "numpy", "scipy", "chess", "zstandard", "matplotlib", "huggingface_hub", "safetensors",
+                        env={"HF_HOME": f"{RUNS}/hf"})   # scipy: the analysis modules that shared.py pulls in
+
+
+@app.function(image=steer_image, gpu=GPU, volumes={RUNS: runs}, cpu=4.0, memory=32 * 1024, timeout=6 * 60 * 60)
+def steer(tag: str = STEER_TAG, extra: list = []):
+    """transcend/steer_concepts.py run on the uploaded steer-jobs.json and crosscoder; results stream to
+    runs/transcend/divergence/<tag>/mine/steer-results.jsonl (resumable), committed every 2 minutes."""
+    runs.reload()
+    stop = threading.Event()
+    threading.Thread(target=commit_every, args=(runs, 120, stop), daemon=True).start()
+    try:
+        sh([sys.executable, "transcend/steer_concepts.py", "run", "--tag", tag, *[str(x) for x in extra]])
+    finally:
+        stop.set()
+        runs.commit()
+
+
+@app.local_entrypoint()
+def steer_concepts(tag: str = STEER_TAG, extra: str = "", only: str = ""):
+    """Upload the crosscoder and steer-jobs.json (make it first: python transcend/steer_concepts.py prep), run
+    the steering on a GPU, and download steer-results.jsonl next to the jobs; then run steer_concepts.py summary."""
+    root = Path(__file__).resolve().parents[1]
+    mine = f"transcend/divergence/{tag}/mine"
+    files = [f"{STEER_CC}/collect.json", f"{STEER_CC}/cc-L11-4096/cc.pt", f"{mine}/steer-jobs.json"]
+    with runs.batch_upload(force=True) as batch:
+        for f in files:
+            batch.put_file(str(root / "runs" / f), f)
+    print("uploaded", ", ".join(files), flush=True)
+    name = "steer-pilot.jsonl" if only else "steer-results.jsonl"
+    steer.remote(tag, (extra.split() if extra else []) + (["--only", only] if only else []))
+    out = root / "runs" / mine / name
+    with open(out, "wb") as fh:
+        for chunk in runs.read_file(f"{mine}/{name}"):
+            fh.write(chunk)
+    print(f"downloaded {out}; now: python transcend/steer_concepts.py summary" + (f" --only {only}" if only else ""), flush=True)
