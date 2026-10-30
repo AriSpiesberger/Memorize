@@ -1,0 +1,213 @@
+<title>L11 Concept Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* layout: one column; header facts, view tabs, the 3D map full width, then the diff table */
+:root {
+  --bg: #fbfbfa; --panel: #f2f2ef; --fg: #161614; --fg2: #55544f; --muted: #8b8a84; --rule: #dcdbd5;
+  --node: #a9a8a1; --s-edge: #1baf7a; --w-edge: #eb6834; --none: #c9c8c1;
+  --seq0: #86b6ef; --seq1: #3987e5; --seq2: #1c5cab; --seq3: #0d366b;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #181817; --panel: #222220; --fg: #f0efec; --fg2: #c3c2b7; --muted: #8f8e86; --rule: #3a3a37;
+  --node: #6f6e68; --s-edge: #199e70; --w-edge: #d95926; --none: #4a4a46;
+  --seq0: #184f95; --seq1: #2a78d6; --seq2: #6da7ec; --seq3: #cde2fb; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #181817; --panel: #222220; --fg: #f0efec; --fg2: #c3c2b7; --muted: #8f8e86; --rule: #3a3a37;
+  --node: #6f6e68; --s-edge: #199e70; --w-edge: #d95926; --none: #4a4a46;
+  --seq0: #184f95; --seq1: #2a78d6; --seq2: #6da7ec; --seq3: #cde2fb; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1200px; margin: 0 auto; padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 17px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 72ch; color: var(--fg2); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; font-family: var(--mono); font-size: 13px; color: var(--fg2); }
+.facts b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.bar { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.tabs { display: flex; gap: 4px; background: var(--panel); padding: 4px; border-radius: 8px; }
+.tabs button { font: 500 14px var(--sans); color: var(--fg2); background: none; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--rule); }
+.tabs button:focus-visible, input:focus-visible { outline: 2px solid var(--seq1); outline-offset: 2px; }
+label { font-size: 13px; color: var(--fg2); display: flex; gap: 8px; align-items: center; }
+input[type=range] { width: 140px; }
+.out { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); min-width: 2ch; }
+#plot { width: 100%; height: min(78vh, 820px); min-height: 420px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); }
+.note { font-size: 13px; color: var(--muted); max-width: 90ch; }
+.key { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--fg2); align-items: center; }
+.sw { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.ramp { display: inline-block; width: 90px; height: 8px; border-radius: 2px; vertical-align: middle; margin: 0 6px;
+  background: linear-gradient(90deg, var(--seq0), var(--seq1), var(--seq2), var(--seq3)); }
+.tablebox { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-weight: 500; color: var(--fg2); background: var(--panel); position: sticky; top: 0; cursor: pointer; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+td.lat { font-family: var(--mono); white-space: normal; min-width: 260px; }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:8px">
+    <h1>L11 concept map: S and W concepts on one latent layout</h1>
+    <p>Each point is a seed-stable latent of the L11 4k crosscoder, placed by how often play turns it on together with the others (PPMI over rollout plies, S and W pooled, 3D SVD). Each star is a mined concept, joining its latents. Drag to rotate, scroll to zoom, hover for details.</p>
+  </header>
+  <div class="facts" id="facts"></div>
+  <div class="bar">
+    <div class="tabs" role="tablist" id="tabs">
+      <button role="tab" id="tab-gs" data-v="gs" aria-selected="true">G_S: S's concepts</button>
+      <button role="tab" id="tab-gw" data-v="gw" aria-selected="false">G_W: W's concepts</button>
+      <button role="tab" id="tab-gdiff" data-v="gdiff" aria-selected="false">G_diff</button>
+    </div>
+    <label for="minpos">Seen at ≥ <span class="out" id="minpos-out">5</span> positions
+      <input type="range" id="minpos" min="2" max="60" step="1" value="5"></label>
+    <label for="dedge" id="dedge-label"><input type="checkbox" id="dedge" checked> ΔPMI edges</label>
+  </div>
+  <div id="plot"></div>
+  <div class="key" id="key"></div>
+  <p class="note" id="method"></p>
+  <section style="display:grid;gap:10px">
+    <h2>Concepts present in one model only</h2>
+    <p class="note">The best match in the other model is below the cosine cut, by centroid cosine over the 4,096 latents. Click a column to sort.</p>
+    <div class="tablebox"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.27.0/plotly.min.js"></script>
+<script type="application/json" id="data">/*DATA*/</script>
+<script>
+const G = JSON.parse(document.getElementById("data").textContent);
+const N = G.nodes, C = G.concepts;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (x, d = 2) => x == null ? "–" : Number(x).toFixed(d);
+let view = ["gs", "gw", "gdiff"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "gs";
+try { const v = localStorage.getItem("cg-minpos"); if (v) document.getElementById("minpos").value = v; } catch (e) {}
+
+const pers = C.map(c => c.persistence).filter(x => x != null);
+const pmax = Math.min(8, Math.max(4, ...pers));
+const cut = G.settings.absent_cos;
+document.getElementById("facts").innerHTML = [
+  ["positions", G.n_positions], ["nodes", N.length + " of " + G.n_matched + " seed-matched"],
+  ["S concepts", C.filter(c => c.model === "S").length], ["W concepts", C.filter(c => c.model === "W").length],
+  ["S only", C.filter(c => c.model === "S" && c.absent).length], ["W only", C.filter(c => c.model === "W" && c.absent).length],
+  ["ΔPMI edges", G.dedges.length + " (|z| > " + G.dpmi_cut + ")"]].map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("");
+document.getElementById("method").textContent =
+  `On: z > 0.5·mu (mean of the two models' mu). Plies: every ply of every rollout line, weighted by its rollout count (S ${Math.round(G.plies.S).toLocaleString()}, W ${Math.round(G.plies.W).toLocaleString()}). ` +
+  `Concepts: night1 discovery families that replicate across seeds; their latents covering 95% of the squared weight, drawn where they are nodes. ` +
+  `Persistence: plies in a row from the split with v·(z_chosen − z_subpar) ≥ 0.5, median over branch points where the concept is on at the split. ` +
+  `G_diff: concepts whose best match in the other model has cosine < ${cut}; ΔPMI = PMI_S − PMI_W (counts + 0.5) for pairs with ≥ ${G.settings.min_pair} co-occurring plies, ` +
+  `over its sd when S and W are swapped at random positions (analytic, over all positions), and kept when |z| beats the 95th percentile of the largest |z| over all ${G.pairs_supported.toLocaleString()} pairs in ${G.settings.perms} actual swaps. Singular values: ${G.sv.slice(0, 4).join(", ")}.`;
+
+function centre(c) {
+  let x = [0, 0, 0], s = 0;
+  c.lat.forEach((k, i) => { const w = c.w[i] * c.w[i]; s += w; for (let d = 0; d < 3; d++) x[d] += w * N[k].x[d]; });
+  return x.map(v => v / s);
+}
+C.forEach(c => { if (c.lat.length) c.ctr = centre(c); });
+
+function traces() {
+  const minpos = +document.getElementById("minpos").value;
+  const scale = [[0, css("--seq0")], [0.33, css("--seq1")], [0.66, css("--seq2")], [1, css("--seq3")]];
+  const show = C.filter(c => c.ctr && c.positions >= minpos &&
+    (view === "gs" ? c.model === "S" : view === "gw" ? c.model === "W" : c.absent));
+  const T = [{
+    type: "scatter3d", mode: "markers", name: "latent", showlegend: false,
+    x: N.map(n => n.x[0]), y: N.map(n => n.x[1]), z: N.map(n => n.x[2]),
+    marker: { size: N.map(n => 1.5 + 0.6 * Math.log10(n.rate * 1e5)), color: css("--node"), opacity: 0.55 },
+    text: N.map(n => `latent ${n.latent}<br>on at ${(100 * n.rate).toFixed(2)}% of plies<br>seed-1 decoder cosine ${n.seed_cos}`),
+    hoverinfo: "text"
+  }];
+  // star segments, three width bins by the latent's weight in v
+  [[0.5, 1.01, 5], [0.25, 0.5, 3], [0, 0.25, 1.5]].forEach(([lo, hi, wd]) => {
+    const x = [], y = [], z = [], col = [];
+    show.forEach(c => c.lat.forEach((k, i) => {
+      if (c.w[i] < lo || c.w[i] >= hi) return;
+      const p = c.persistence == null ? -1 : c.persistence;
+      x.push(c.ctr[0], N[k].x[0], null); y.push(c.ctr[1], N[k].x[1], null); z.push(c.ctr[2], N[k].x[2], null); col.push(p, p, p);
+    }));
+    T.push({ type: "scatter3d", mode: "lines", showlegend: false, hoverinfo: "skip", x, y, z,
+      line: { width: wd, color: col.map(p => p < 0 ? 0 : p), colorscale: scale, cmin: 0, cmax: pmax }, opacity: 0.7 });
+  });
+  const hov = c => `<b>${c.id}</b> (${c.model}, ${c.tier}${c.theme ? ", " + c.theme : ""})<br>` +
+    `seen at ${c.positions} positions · persistence ${c.persistence == null ? "never on at split" : c.persistence + " plies"} (${c.on_at_split} branch points)<br>` +
+    `best match ${c.match}, cosine ${fmt(c.match_cos, 3)}<br>latents: ` +
+    c.latent.map((j, i) => `${j} (${fmt(c.w[i])})`).join(", ") + `<br>${c.lat.length} of ${c.k95} keep95 latents are nodes, ${Math.round(100 * c.covered)}% of the weight`;
+  const groups = view === "gdiff" ? [["S", "circle", "S-only concept"], ["W", "diamond", "W-only concept"]] : [[view === "gs" ? "S" : "W", "circle", "concept"]];
+  groups.forEach(([m, sym, nm], gi) => {
+    const g = show.filter(c => c.model === m);
+    T.push({ type: "scatter3d", mode: "markers", name: nm, showlegend: view === "gdiff",
+      x: g.map(c => c.ctr[0]), y: g.map(c => c.ctr[1]), z: g.map(c => c.ctr[2]),
+      marker: { symbol: sym, size: g.map(c => 3 + 1.6 * Math.sqrt(c.positions)),
+        color: g.map(c => c.persistence == null ? 0 : c.persistence), colorscale: scale, cmin: 0, cmax: pmax,
+        line: { color: css("--bg"), width: 1 },
+        colorbar: gi === 0 ? { title: { text: "persistence<br>(plies)", font: { color: css("--fg2"), size: 12 } }, thickness: 10, len: 0.5,
+          tickfont: { color: css("--fg2"), size: 11 }, outlinewidth: 0 } : undefined, showscale: gi === 0 },
+      text: g.map(hov), hoverinfo: "text" });
+  });
+  if (view === "gdiff" && document.getElementById("dedge").checked) {
+    [["S", d => d.d > 0, "--s-edge", "S combines more"], ["W", d => d.d < 0, "--w-edge", "W combines more"]].forEach(([m, f, tok, nm]) => {
+      const x = [], y = [], z = [], tx = [];
+      const mx = [], my = [], mz = [];
+      G.dedges.filter(f).forEach(d => {
+        const a = N[d.i].x, b = N[d.j].x;
+        x.push(a[0], b[0], null); y.push(a[1], b[1], null); z.push(a[2], b[2], null);
+        mx.push((a[0] + b[0]) / 2); my.push((a[1] + b[1]) / 2); mz.push((a[2] + b[2]) / 2);
+        tx.push(`latents ${N[d.i].latent} + ${N[d.j].latent}<br>ΔPMI ${d.d > 0 ? "+" : ""}${d.d} (z ${d.z})<br>${d.n.toLocaleString()} co-occurring plies, pooled`);
+      });
+      T.push({ type: "scatter3d", mode: "lines", name: `ΔPMI: ${nm}`, x, y, z, hoverinfo: "skip",
+        line: { width: 3, color: css(tok) }, opacity: 0.8 });
+      T.push({ type: "scatter3d", mode: "markers", showlegend: false, x: mx, y: my, z: mz, text: tx, hoverinfo: "text",
+        marker: { size: 3, color: css(tok), opacity: 0.9 } });
+    });
+  }
+  return [T, show.length];
+}
+
+function draw() {
+  const [T, n] = traces();
+  const ax = t => ({ title: { text: t, font: { color: css("--muted"), size: 11 } }, showgrid: true, gridcolor: css("--rule"),
+    zeroline: false, showticklabels: false, showbackground: false, color: css("--muted") });
+  const layout = { paper_bgcolor: css("--bg"), font: { family: css("--sans"), color: css("--fg2") },
+    margin: { l: 0, r: 0, t: 8, b: 0 }, showlegend: view === "gdiff",
+    legend: { x: 0.01, y: 0.98, bgcolor: "rgba(0,0,0,0)", font: { size: 12, color: css("--fg2") } },
+    hoverlabel: { bgcolor: css("--panel"), bordercolor: css("--rule"), font: { family: css("--mono"), size: 12, color: css("--fg") } },
+    scene: { xaxis: ax("SVD 1"), yaxis: ax("SVD 2"), zaxis: ax("SVD 3"), aspectmode: "data", bgcolor: css("--bg") },
+    uirevision: "keep" };
+  Plotly.react("plot", T, layout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["toImage"] });
+  document.getElementById("key").innerHTML =
+    `<span><span class="ramp"></span>persistence 0 → ${fmt(pmax, 0)}${pmax === 8 ? "+" : ""} plies (grey points: latents)</span>` +
+    `<span>marker size: discovery positions</span><span>line width: the latent's weight in v (≥ 0.5, 0.25–0.5, < 0.25)</span>` +
+    (view === "gdiff" ? `<span><span class="sw" style="background:var(--s-edge)"></span>ΔPMI, S combines more</span><span><span class="sw" style="background:var(--w-edge)"></span>ΔPMI, W combines more</span><span>● S-only · ◆ W-only</span>` : "") +
+    `<span><b class="out">${n}</b> concepts shown</span>`;
+  document.getElementById("dedge-label").hidden = view !== "gdiff";
+}
+
+function setView(v) {
+  view = v;
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.v === v));
+  history.replaceState(null, "", "#" + v); draw();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => setView(b.dataset.v)));
+const mp = document.getElementById("minpos");
+mp.addEventListener("input", () => { document.getElementById("minpos-out").textContent = mp.value; try { localStorage.setItem("cg-minpos", mp.value); } catch (e) {} draw(); });
+document.getElementById("minpos-out").textContent = mp.value;
+document.getElementById("dedge").addEventListener("change", draw);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+// table of one-model-only concepts
+const cols = [["id", "concept"], ["model", "model"], ["positions", "positions"], ["persistence", "persistence"], ["match", "best match"],
+  ["match_cos", "cosine"], ["tier", "tier"], ["theme", "theme"], ["latent", "latents (weight)"]];
+let sortk = "positions", sdir = -1;
+function table() {
+  const rows = C.filter(c => c.absent).sort((a, b) => { const x = a[sortk], y = b[sortk]; return (x > y ? 1 : x < y ? -1 : 0) * sdir; });
+  document.querySelector("#tbl thead").innerHTML = "<tr>" + cols.map(([k, t]) => `<th data-k="${k}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("") + "</tr>";
+  document.querySelector("#tbl tbody").innerHTML = rows.map(c => `<tr><td>${c.id}</td><td>${c.model}</td><td class="num">${c.positions}</td>` +
+    `<td class="num">${c.persistence == null ? "–" : c.persistence}</td><td>${c.match}</td><td class="num">${fmt(c.match_cos, 3)}</td><td>${c.tier}</td><td>${c.theme || ""}</td>` +
+    `<td class="lat">${c.latent.map((j, i) => `${j} (${fmt(c.w[i])})`).join(", ") || "none are nodes"}</td></tr>`).join("");
+  document.querySelectorAll("#tbl th").forEach(th => th.addEventListener("click", () => { const k = th.dataset.k; sdir = k === sortk ? -sdir : -1; sortk = k; table(); }));
+}
+table(); setView(view);
+</script>
