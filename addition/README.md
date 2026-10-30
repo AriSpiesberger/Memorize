@@ -2,8 +2,7 @@
 
 Pure RL from a **randomly initialised** transformer, in three steps: `rl_addition.py`
 (this page's first half), `rl_tasks.py` (a free workspace, several tasks) and
-`math100.py` (100 tasks, ten tiers). Per-run logs, and what each one shows, are indexed in
-[results/](results/README.md).
+`math100.py` (100 tasks, ten tiers). Runs write to `addition/results/` (not tracked).
 
 ## rl_addition.py
 

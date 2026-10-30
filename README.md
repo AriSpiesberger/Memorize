@@ -39,7 +39,7 @@ folder (`chess_beyond/modal/`), apart from the code it shares with the home GPU.
 Memorize/
 ├── memorize/        reasoning budgets, SFT, RL and label noise on a 2B model (MLX / CUDA)
 ├── addition/        pure RL from random init: addition, a free workspace, 100 math tasks
-├── chess_beyond/    chess: imitation, puzzle RL, rating bands, activation probes (home GPU + Modal)
+├── chess_beyond/    chess: imitation, puzzle RL, PGN models and what they represent (home GPU + Modal)
 └── tools/           check_repo.py: run before pushing (labs and Modal stay apart, no weights, no copies)
 ```
 
