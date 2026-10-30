@@ -7,6 +7,11 @@ moved.
 
     from predicates import NAMES, TEXT, features
     features(board, move)          # -> list of bools, one per NAMES entry (move may be None)
+
+Square facts are a second, concrete vocabulary: which piece stands on which square, and where
+their last move went (SQUARE_NAMES, SQUARE_TEXT, squares(board)). The models' latents see the board
+from the side to move's point of view, so squares are named that way too: as if we were White, rank
+1 is our back rank ("our king on g1" is the king castled short, whichever colour we are).
 """
 import chess
 
@@ -266,3 +271,30 @@ def features(board, move=None):
     v.update(legal_facts(b, us))
     v.update(move_facts(b, move, us))
     return [bool(v[n]) for n in NAMES]
+
+
+# ---------------------------------------------------------------- square facts
+
+def rel(sq, us):
+    """A square as the side to move sees it: unchanged for White, ranks mirrored for Black."""
+    return sq if us == chess.WHITE else chess.square_mirror(sq)
+
+
+SQUARE_DEFS = ([(f"{w}_{p}_{chess.square_name(s)}", f"{w} {p} on {chess.square_name(s)}")
+                for w in ("our", "their") for _, p in PIECES for s in chess.SQUARES]
+               + [(f"last_{p}_{chess.square_name(s)}", f"their last move put a {p} on {chess.square_name(s)}")
+                  for _, p in PIECES for s in chess.SQUARES])
+SQUARE_NAMES = [n for n, _ in SQUARE_DEFS]
+SQUARE_TEXT = dict(SQUARE_DEFS)
+
+
+def squares(board):
+    """One bool per SQUARE_NAMES entry: 12 x 64 piece-on-square, then 6 x 64 for their last move."""
+    us = board.turn
+    out = [False] * len(SQUARE_NAMES)
+    for sq, pc in board.piece_map().items():
+        out[((0 if pc.color == us else 6) + pc.piece_type - 1) * 64 + rel(sq, us)] = True
+    if board.move_stack:
+        to = board.peek().to_square
+        out[(12 + board.piece_type_at(to) - 1) * 64 + rel(to, us)] = True
+    return out

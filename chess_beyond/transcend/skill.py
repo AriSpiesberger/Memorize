@@ -36,6 +36,9 @@ THREAT = 20           # win-% points a free extra move would gain them: "they ha
 KEEP = 5              # win-% points a move may lose and still count as keeping the evaluation
 BLUNDER = 15          # win-% points lost: a blunder (INACCURATE: 5 to 15)
 RARE = 0.05           # Maia-2 probability below which a move is rare for a rating
+# win chances (%) between which a position is undecided. Outside them "keeps the evaluation" means
+# little (a lost side has nothing left to lose), so a sacrifice or meeting a threat only counts inside.
+OPEN = (10, 90)
 
 DEFS = [
     # the position
@@ -51,8 +54,10 @@ DEFS = [
     ("move_only", "the move is the only good move"),
     ("move_deep", f"the move is clearly best and only found from depth {DEEP} on"),
     ("move_quiet_best", "the move is a quiet best move in a position with only one good move"),
-    ("move_sound_sacrifice", f"the move gives up {SAC}+ pawns' worth along the engine line and keeps the evaluation"),
-    ("move_meets_threat", "they had a threat and the move keeps the evaluation"),
+    ("move_sound_sacrifice", f"the move gives up {SAC}+ pawns' worth along the engine line and keeps the evaluation "
+                             f"(position undecided: win chance {OPEN[0]}-{OPEN[1]}%)"),
+    ("move_meets_threat", f"they had a threat and the move keeps the evaluation (position undecided: win chance "
+                          f"{OPEN[0]}-{OPEN[1]}%)"),
     ("move_inaccurate", f"the move loses {KEEP}-{BLUNDER} win-% points"),
     ("move_blunder", f"the move loses {BLUNDER}+ win-% points"),
     ("move_rare_for_1100", f"1100-level players rarely play the move (Maia-2 below {RARE:.0%})"),
@@ -229,6 +234,7 @@ def facts(e, m):
     has_move = "move" in e
     loss = e.get("loss", 0.0)
     best = has_move and loss <= 2
+    undecided = OPEN[0] <= e["wp"] <= OPEN[1]
     p_low, p_high, p_best_low = (float(x) for x in m)
     v = dict(
         winning=e["wp"] >= 75,
@@ -242,8 +248,8 @@ def facts(e, m):
         move_only=best and e["gap"] >= SHARP,
         move_deep=has_move and e["move"] == e["best"] and e["found_at"] >= DEEP and e["gap"] >= KEEP,
         move_quiet_best=best and e.get("quiet", False) and e["gap"] >= SHARP,
-        move_sound_sacrifice=has_move and e["gives"] >= SAC and loss <= KEEP,
-        move_meets_threat=has_move and e["threat"] >= THREAT and loss <= KEEP,
+        move_sound_sacrifice=has_move and undecided and e["gives"] >= SAC and loss <= KEEP,
+        move_meets_threat=has_move and undecided and e["threat"] >= THREAT and loss <= KEEP,
         move_inaccurate=has_move and KEEP <= loss < BLUNDER,
         move_blunder=has_move and loss >= BLUNDER,
         move_rare_for_1100=has_move and p_low < RARE,

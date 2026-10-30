@@ -56,6 +56,9 @@ function explHTML(d, short) {
     if (!short && e.always && e.always.length)
       h += "<br>when it fires, also: " + e.always.map(([n, t, r, b]) => `${t} (${p(r)} vs ${p(b)} overall)`).join("; ");
     h += "</div>";
+    // engine link: how far Stockfish's evaluation where it fires is from what the board predicts
+    if (e.engine_text) h += `<div class="why"${e.engine_linked ? ' style="border-left:4px solid #5b6bd6"' : ""}>`
+      + `${e.engine_linked ? "<b>engine-linked</b>: " : "Stockfish: "}${e.engine_text}</div>`;
   }
   if (d.why && (!short || !e)) h += `<div class="why">${d.why}</div>`;
   return h;

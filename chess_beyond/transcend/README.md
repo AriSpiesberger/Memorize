@@ -17,8 +17,9 @@ are in [results/transcend/summary.md](../results/transcend/summary.md).
 | the Transcendence paper's character-level PGN model | `make_pgn_data.py`, `pgn_model.py`, `train_pgn.py` |
 | sparse autoencoder on the PGN model, with max-activating positions | `sae.py` (`collect`, `train`, `top`, or `all`) |
 | crosscoder between the two PGN models (shared vs model-only latents), layer sweep | `crosscoder.py` (`collect`, `train`, `top`, or `all`) |
-| a scored chess explanation for every crosscoder latent | `explain.py` (board facts from `predicates.py`, skill facts from `skill.py`: Stockfish and Maia-2) |
+| a scored chess explanation for every crosscoder latent, and what its layer knows | `explain.py` (board and square facts from `predicates.py`, skill facts and engine numbers from `skill.py`: Stockfish and Maia-2) |
 | concept paths from self-play rollouts: which latents turn on after which, the paths only one model takes, example rollouts per path, Stockfish on those rollouts | `concepts.py` (`rollout`, `graph`, `examples`, `score`, `modes`); page helpers in `pages.py` |
+| dynamic concepts with a persistence window: Schut's LP on each model's own branching points, planted check, held-out recurrence | `divergence.py` (`play`, `plant`, `lp`, `report`) |
 | evaluate the PGN models (games, positions, puzzles, by temperature) | `eval.py`, with level ratings from `calibrate_levels.py`; results in [../results/transcend/eval/](../results/transcend/eval/README.md) |
 | figures and summary | `plot_results.py` |
 
