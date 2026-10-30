@@ -5,6 +5,9 @@ from pathlib import Path
 import numpy as np, chess
 from scipy import sparse
 from scipy.optimize import linprog
+from types import SimpleNamespace
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # dynamic/: concept_mine
+import concept_mine as cm
 ROOT = Path(sys.argv[1]); OUT = Path(sys.argv[2]); MODEL = sys.argv[3]; WC, NODE = 0.75, 30
 run = ROOT / "runs/transcend/divergence/p16-r1024-T0.4-s0-L11-4k" / MODEL
 SCR = json.load(open(sys.argv[4]))
@@ -27,21 +30,7 @@ def load(k):
     return D, B, Z
 
 def pairs_of(D):
-    out = []
-    for t in range(1, PL + 1):
-        nodes = {}
-        for q, d in enumerate(D):
-            if len(d["sans"]) >= t:
-                nodes.setdefault(tuple(d["sans"][:t - 1]), {}).setdefault(d["sans"][t - 1], []).append(q)
-        for ch in nodes.values():
-            if len(ch) < 2: continue
-            wt = {m: sum(D[q]["n"] for q in qs) for m, qs in ch.items()}; tot = sum(wt.values())
-            best = max(ch, key=lambda m: (wt[m], -ch[m][0]))
-            if tot < NODE or wt[best] / tot < WC: continue
-            for m, qs in ch.items():
-                if m != best and wt[m] / tot >= 0.02:
-                    out.append(dict(t=t, c=ch[best][0], s=qs[0], chosen=best, subpar=m, wc=wt[best] / tot, ws=wt[m] / tot, node=tot))
-    return out
+    return cm.pairs_of(D, SimpleNamespace(node=NODE, wc=WC, min_share=0.02))
 
 def solve(dc, ds):
     act = np.flatnonzero((dc != 0).any(0) | (ds != 0).any(0))

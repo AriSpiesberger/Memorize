@@ -227,10 +227,6 @@ def summary(a):
         if obs is None or len(rnd) < 3: return None
         m_, sd = float(np.mean(rnd)), float(np.std(rnd, ddof=1)) or 1e-6
         return dict(obs=obs, neg=neg, rmax=max(rnd), r95=float(np.percentile(rnd, 95)), rmed=float(np.median(rnd)), p=1 - nd.cdf((obs - m_) / sd))
-    def bh(ps):
-        ps = np.array(ps, float); n = len(ps); o = np.argsort(ps); q = np.empty(n)
-        q[o] = np.minimum.accumulate((ps[o] * n / np.arange(1, n + 1))[::-1])[::-1]
-        return np.minimum(q, 1)
     rows = {}
     for r in R:
         row = rows.setdefault(r["id"], dict(id=r["id"], model=r["model"], tier=r["tier"], theme=r["theme"], shared=r["shared"]))
@@ -250,9 +246,9 @@ def summary(a):
                        xfer_p=min(1, best[1]["p"] * len(ts)) if best else None, xfer_dose=dose, xfer_kl=kls, xfer_readback=rb,
                        xfer_heldout=test(r, a.primary, "heldout"))
     rows = list(rows.values())
-    sp = [r for r in rows if r.get("self")]; q = bh([r["self"]["p"] for r in sp])
+    sp = [r for r in rows if r.get("self")]; q = sc.bh([r["self"]["p"] for r in sp])
     for r, qq in zip(sp, q): r["self_q"] = float(qq); r["self_pass"] = bool(r["self"]["obs"] > r["self"]["rmax"] and (r["self"]["neg"] or 0) < 0 and qq < a.fdr)
-    xp = [r for r in rows if r.get("xfer")]; q = bh([r["xfer_p"] for r in xp])
+    xp = [r for r in rows if r.get("xfer")]; q = sc.bh([r["xfer_p"] for r in xp])
     for r, qq in zip(xp, q): r["xfer_q"] = float(qq); r["transfers"] = bool(r["xfer"]["obs"] > r["xfer"]["r95"] and qq < a.fdr)
     ctrl = [r for r in rows if r.get("self_pass") and r["shared"] >= a.shared_control and "transfers" in r]
     rate = float(np.mean([r["transfers"] for r in ctrl])) if ctrl else float("nan")

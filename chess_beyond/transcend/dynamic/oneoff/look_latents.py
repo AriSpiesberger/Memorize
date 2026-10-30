@@ -3,6 +3,8 @@ from pathlib import Path
 from urllib.parse import quote
 import numpy as np, chess, chess.svg
 from scipy import sparse
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # dynamic/: concept_mine
+from concept_mine import nums
 ROOT = Path(sys.argv[1]); run = ROOT / "runs/transcend/divergence/p16-r1024-T0.4-s0-L11-4k/S"
 roots = json.loads((ROOT / "runs/transcend/manypositions/p16-r1024-T0.4-s0/positions.json").read_text())
 mu = np.array(json.loads((run / "mu.json").read_text())["mu"]); PL = 16
@@ -14,12 +16,6 @@ def pre_board(root):
         mv = tok.split(".")[-1]
         if mv: b.push_san(mv)
     return b
-def nums(fen, sans):
-    b = chess.Board(fen); out = []
-    for i, m in enumerate(sans):
-        w = b.turn; n = b.fullmove_number
-        out.append((f"{n}." if w else (f"{n}..." if i == 0 else "")) + m); b.push_san(m)
-    return out
 cache = {}
 def load(pos):
     if pos not in cache:

@@ -219,6 +219,13 @@ def run(a):
 
 
 # ------------------------------------------------------------------ summary
+def bh(ps):
+    """Benjamini-Hochberg adjusted p-values."""
+    ps = np.array(ps, float); n = len(ps); o = np.argsort(ps); q = np.empty(n)
+    q[o] = np.minimum.accumulate((ps[o] * n / np.arange(1, n + 1))[::-1])[::-1]
+    return np.minimum(q, 1)
+
+
 def summary(a):
     """The decision rule, fixed before the results (all at the concept's own points unless named):
       self-check passes   own model, alpha = 1, decision points (own branch points, step 0): the chosen move's
@@ -249,10 +256,6 @@ def summary(a):
         if obs is None or len(rnd) < 3: return None
         mu_, sd = float(np.mean(rnd)), float(np.std(rnd, ddof=1)) or 1e-6
         return dict(obs=obs, neg=neg, rmax=max(rnd), r95=float(np.percentile(rnd, 95)), p=1 - nd.cdf((obs - mu_) / sd))
-    def bh(ps):
-        ps = np.array(ps, float); n = len(ps); o = np.argsort(ps); q = np.empty(n)
-        q[o] = np.minimum.accumulate((ps[o] * n / np.arange(1, n + 1))[::-1])[::-1]
-        return np.minimum(q, 1)
     rows = {}
     for r in R:
         key = r["id"]; row = rows.setdefault(key, dict(id=r["id"], model=r["model"], tier=r["tier"], theme=r["theme"], shared=r["shared"]))

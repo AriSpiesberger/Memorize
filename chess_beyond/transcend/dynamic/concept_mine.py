@@ -97,6 +97,15 @@ def pairs_of(D, a):
     return out
 
 
+def nums(fen, sans):
+    """The SAN moves from fen with move numbers: ["12.Nf3", "Nc6", ...] (or "12...Nc6" when Black starts)."""
+    import chess
+    b = chess.Board(fen); o = []
+    for i, m in enumerate(sans):
+        w = b.turn; nn = b.fullmove_number; o.append((f"{nn}." if w else (f"{nn}..." if i == 0 else "")) + m); b.push_san(m)
+    return o
+
+
 def solve(dc, ds, C):
     from scipy.optimize import linprog
     act = np.flatnonzero((dc != 0).any(0) | (ds != 0).any(0))
@@ -351,11 +360,6 @@ def examples(a, model):
     run0, run1 = RUNS / a.tag / model, RUNS / a.tag1 / model; mu0, mu1 = mu_of(run0), mu_of(run1)
     keep = [i for i, f in enumerate(F) if f["tier"] in ("best", "clean", "board")] + \
            [i for i, f in enumerate(F) if f["tier"] == "weak"][:a.weak_examples]
-    def nums(fen, sans):
-        b = chess.Board(fen); o = []
-        for i, m in enumerate(sans):
-            w = b.turn; nn = b.fullmove_number; o.append((f"{nn}." if w else (f"{nn}..." if i == 0 else "")) + m); b.push_san(m)
-        return o
     def sq(m): return [chess.square_name(m.from_square), chess.square_name(m.to_square)]
     C0 = np.array([dense(F[i]["centroid"]) for i in keep]).T
     C1 = np.array([dense(F[i]["seed1_counterpart"]) for i in keep]).T

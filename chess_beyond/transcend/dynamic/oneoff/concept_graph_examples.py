@@ -2,14 +2,11 @@ import json, sys
 from pathlib import Path
 import numpy as np, chess
 from scipy import sparse
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # dynamic/: concept_mine
+from concept_mine import nums
 ROOT=Path(sys.argv[1]); PL=16; TAG="p16-r1024-T0.4-s0-L11-4k"
 roots=json.loads((ROOT/"runs/transcend/manypositions/p16-r1024-T0.4-s0/positions.json").read_text())
 G=json.load(open("vgraph.json"))
-def nums(fen,sans):
-    b=chess.Board(fen); o=[]
-    for i,m in enumerate(sans):
-        w=b.turn; n=b.fullmove_number; o.append((f"{n}." if w else (f"{n}..." if i==0 else ""))+m); b.push_san(m)
-    return o
 for M in "SW":
     run=ROOT/"runs/transcend/divergence"/TAG/M; mu=np.array(json.loads((run/"mu.json").read_text())["mu"]); cache={}
     for f in G[M]["families"]:

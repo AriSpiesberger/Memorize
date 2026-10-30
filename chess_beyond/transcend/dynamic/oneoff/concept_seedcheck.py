@@ -8,6 +8,8 @@ import json, sys
 from pathlib import Path
 import numpy as np, chess
 from scipy import sparse
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # dynamic/: concept_mine
+from concept_mine import nums
 ROOT=Path(sys.argv[1]); PL=16; BASE=ROOT/"runs/transcend/divergence"
 G=json.load(open("vgraph_act.json"))
 WANT=[("S",259),("S",12),("W",216),("W",70)]
@@ -23,11 +25,6 @@ def load(tag,M):
         A.data=np.minimum(A.data/np.maximum(mu[A.indices],1e-6),3.0); Z.append(A.tocsr())
     return Z
 roots=json.loads((ROOT/"runs/transcend/manypositions/p16-r1024-T0.4-s0/positions.json").read_text())
-def nums(fen,sans):
-    b=chess.Board(fen); o=[]
-    for i,m in enumerate(sans):
-        w=b.turn; n=b.fullmove_number; o.append((f"{n}." if w else (f"{n}..." if i==0 else ""))+m); b.push_san(m)
-    return o
 out=[]
 for M in "SW":
     R0=[r for r in json.load(open(f"all-{M}.json")) if r["mode"]=="continuous" and r["k"]>=2 and r["latents"]]
