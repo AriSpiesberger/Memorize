@@ -19,6 +19,8 @@ summary (CPU) steer_concepts.py's decision rule, unchanged, at --primary (r = 0.
     python transcend/dynamic/steer_after.py prep --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
     python transcend/dynamic/steer_after.py run --device cuda
     python transcend/dynamic/steer_after.py summary
+--history n (run, summary): push at the prompt ends of the last n plies (steer_hist.py), each by its own norm; files
+       steer-after-h<n>.*. The readback stays the last position's.
 -> results/transcend/divergence/<tag>/mine/steer-diag.md, steer-after.md (.json)"""
 import argparse, json, sys, time
 from pathlib import Path
@@ -76,6 +78,9 @@ def fits(models, pts):
 def jobs(a, name="steer-jobs.json"):
     J = json.loads((sc.mine_dir(a) / name).read_text())["jobs"]
     return [j for j in J if not a.only or j["id"] in a.only.split(",")]
+
+
+def stem(a): return f"steer-after{f'-h{a.history}' if a.history > 1 else ''}"
 
 
 q3 = lambda x: f"{np.median(x):.3f} [{np.min(x):.3f}, {np.max(x):.3f}]"
@@ -163,8 +168,9 @@ def prep(a):
 def run(a):
     import torch
     dev, gd, cc, models, idx = setup(a)
+    from steer_hist import policy_hist
     J = jobs(a, "steer-after-jobs.json"); rs = [float(x) for x in a.strengths.split(",")]
-    out = sc.mine_dir(a) / "steer-after.jsonl"
+    out = sc.mine_dir(a) / f"{stem(a)}.jsonl"
     done = {(r["id"], r["target_model"]) for r in map(json.loads, out.read_text().splitlines())} if out.exists() else set()
     fh = out.open("a"); t0 = time.time()
     print(f"run: {len(J)} concepts, {sum(len(j['points']) for j in J)} points, strengths {rs}, {a.n_random} random v's, on {dev}", flush=True)
@@ -193,8 +199,12 @@ def run(a):
             combos = [(cn, r) for cn in conds for r in rs]; n = len(pts)
             for s in range(0, len(combos), a.chunk):                       # a few conditions per call, to bound memory
                 cs = combos[s:s + a.chunk]
-                repl = torch.cat([h + r * hn * conds[cn][None] for cn, r in cs]).float().cpu()
-                _, lp, _ = gd.policy(models[mi], boards * len(cs), dev, prompts * len(cs), layer=str(cc.layer[mi]), repl=repl, batch=a.batch)
+                if a.history > 1:
+                    dirs = torch.stack([conds[cn] for cn, r in cs for _ in range(n)]); rr = [r for cn, r in cs for _ in range(n)]
+                    _, lp = policy_hist(models[mi], boards * len(cs), dev, prompts * len(cs), str(cc.layer[mi]), a.history, dirs, rr, a.batch)
+                else:
+                    repl = torch.cat([h + r * hn * conds[cn][None] for cn, r in cs]).float().cpu()
+                    _, lp, _ = gd.policy(models[mi], boards * len(cs), dev, prompts * len(cs), layer=str(cc.layer[mi]), repl=repl, batch=a.batch)
                 for c_i, (cn, r) in enumerate(cs):
                     L_ = lp[c_i * n:(c_i + 1) * n]
                     rec["runs"][f"{cn}@{r}"] = dict(t=[None if t_ is None else float(L_[i][t_]) for i, t_ in enumerate(ti)],
@@ -209,7 +219,7 @@ def run(a):
 def summary(a):
     from statistics import NormalDist
     nd = NormalDist(); rs = [float(x) for x in a.strengths.split(",")]
-    R = [json.loads(l) for l in (sc.mine_dir(a) / "steer-after.jsonl").read_text().splitlines()]
+    R = [json.loads(l) for l in (sc.mine_dir(a) / f"{stem(a)}.jsonl").read_text().splitlines()]
     if a.only: R = [r for r in R if r["id"] in a.only.split(",")]
     def delta(r, cond, s, kind="own", field="t", step=None):
         key = f"{cond}@{s}"
@@ -260,7 +270,7 @@ def summary(a):
         else: r["verdict"] = "incomplete"
     f_ = lambda x: "–" if x is None else f"{x:+.2f}"
     g_ = lambda x: "–" if x is None else f"{x:.2f}"
-    md = ["# Steering mined concepts after the split, strength by norm", "",
+    md = ["# Steering mined concepts after the split, strength by norm" + (f", pushed over the last {a.history} plies" if a.history > 1 else ""), "",
           f"h -> h + r ||h|| u_hat at the prompt end, r = {', '.join(map(str, rs))}; every condition (+v, -v, {a.n_random} random v's of matching "
           f"firing rate) pushes equally hard. Points: the chosen line at the plies of each branch pair's window where the concept is on; "
           f"target the line's next move. Decision rule as steer_concepts.py: self-check at r = {a.primary} (+v above every random v, -v below "
@@ -290,8 +300,8 @@ def summary(a):
     md += ["", "Readback: the concept's activity (sum_j w_j z_j / mu_j) after the push, median over points, beside its natural "
            "chosen-minus-subpar gap g. KL over all legal moves at the primary strength.", ""]
     od = RESULTS / a.tag / "mine"; od.mkdir(parents=True, exist_ok=True)
-    (od / "steer-after.md").write_text("\n".join(md) + "\n", encoding="utf-8"); (od / "steer-after.json").write_text(json.dumps(rows, default=str))
-    print(f"wrote {od / 'steer-after.md'}")
+    (od / f"{stem(a)}.md").write_text("\n".join(md) + "\n", encoding="utf-8"); (od / f"{stem(a)}.json").write_text(json.dumps(rows, default=str))
+    print(f"wrote {od / (stem(a) + '.md')}")
 
 
 def main():
@@ -306,6 +316,7 @@ def main():
     ap.add_argument("--alphas", default="0.5,1,2,4", help="diag: the pilot's strengths")
     ap.add_argument("--strengths", default="0.1,0.25,0.5", help="push as a share of ||h||")
     ap.add_argument("--primary", type=float, default=0.25, help="the strength the self-check is decided at")
+    ap.add_argument("--history", type=int, default=1, help="run/summary: push at the last n plies' prompt ends")
     ap.add_argument("--min-on", type=float, default=0.0, help="prep: a window ply counts when the concept's expression is above this")
     ap.add_argument("--n-random", type=int, default=20)
     ap.add_argument("--chunk", type=int, default=6, help="run: conditions x strengths per policy call")

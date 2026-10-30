@@ -50,14 +50,16 @@ def nodes_of(D, root, min_node):
     return out, B
 
 
-def ridge_oof(X, y, g, alpha, free):
-    """Out-of-fold ridge predictions; columns in `free` (and the intercept) unpenalised."""
-    X1 = np.hstack([X, np.ones((len(X), 1), X.dtype)]); P = np.full(X1.shape[1], alpha); P[free] = 1e-6; P[-1] = 1e-6       # tiny: a constant column stays solvable
-    oof = np.zeros(len(y))
+def ridge_oof(X, y, g, alphas, free):
+    """Out-of-fold ridge predictions per strength in alphas (each fold's Gram matrix computed once); columns in `free`
+    (and the intercept) unpenalised -> {alpha: predictions}."""
+    X1 = np.hstack([X, np.ones((len(X), 1), X.dtype)]).astype(np.float64)
+    oof = {al: np.zeros(len(y)) for al in alphas}
     for f in np.unique(g):
-        tr = g != f
-        A = X1[tr].T @ X1[tr] + np.diag(P)
-        oof[~tr] = X1[~tr] @ np.linalg.solve(A, X1[tr].T @ y[tr])
+        tr = g != f; G = X1[tr].T @ X1[tr]; b = X1[tr].T @ y[tr]
+        for al in alphas:
+            P = np.full(X1.shape[1], al); P[free] = 1e-6; P[-1] = 1e-6       # tiny: a constant column stays solvable
+            oof[al][~tr] = X1[~tr] @ np.linalg.solve(G + np.diag(P), b)
     return oof
 
 
@@ -78,8 +80,8 @@ def test(dirs, E, Ech, Y, Xb, pos, a, rng, boot):
     idx = np.array([r[0] for r in rows]); e = np.array([r[1] for r in rows]); y = np.array([r[2] for r in rows])
     X = Xb[idx]; g_ = pos[idx]; folds = np.unique(g_); fmap = {p: k % a.folds for k, p in enumerate(rng.permutation(folds))}
     g = np.array([fmap[p] for p in g_])
-    best = max(a.alphas, key=lambda al: r2(y, ridge_oof(X, y, g, al, [])))
-    p0 = ridge_oof(X, y, g, best, []); p1 = ridge_oof(np.hstack([X, e[:, None]]), y, g, best, [X.shape[1]])
+    P0 = ridge_oof(X, y, g, a.alphas, []); best = max(a.alphas, key=lambda al: r2(y, P0[al]))
+    p0 = P0[best]; p1 = ridge_oof(np.hstack([X, e[:, None]]), y, g, [best], [X.shape[1]])[best]
     gain = r2(y, p1) - r2(y, p0)
     bs = []
     if boot:
@@ -87,10 +89,10 @@ def test(dirs, E, Ech, Y, Xb, pos, a, rng, boot):
         for _ in range(a.boot):
             pick = rng.choice(up, len(up)); ii = np.concatenate([np.flatnonzero(g_ == p) for p in pick])
             bs.append(r2(y[ii], p1[ii]) - r2(y[ii], p0[ii]))
-    er = e - ridge_oof(X, e, g, best, [])                                   # e_pre with the board read out
+    er = e - ridge_oof(X, e, g, [best], [])[best]                                   # e_pre with the board read out
     yr = y - p0
     return dict(gain=float(gain), lo=float(np.percentile(bs, 2.5)) if bs else None, hi=float(np.percentile(bs, 97.5)) if bs else None,
-                r2_board=float(r2(y, p0)), corr=float(np.corrcoef(e, y)[0, 1]), partial=float(np.corrcoef(er, yr)[0, 1]),
+                r2_board=float(r2(y, p0)), corr=float(np.corrcoef(e, y)[0, 1]) if e.std() > 0 else 0.0, partial=float(np.corrcoef(er, yr)[0, 1]) if er.std() > 0 else 0.0,
                 nodes=len(rows), positions=len(np.unique(g_)), alpha=best)
 
 
@@ -126,8 +128,12 @@ def main():
                 Xb.append(bx); pos.append(p)
         data[m] = (E, Ech, np.array(Xb), np.array(pos))
         print(f"{m}: {len(E)} nodes over {len(roots)} positions", flush=True)
-    rng = np.random.default_rng(a.seed); res = []
+    part = md_dir / "lookahead-rows.jsonl"                                  # one row per concept as it finishes; rerun resumes
+    res = [json.loads(l) for l in part.read_text().splitlines()] if part.exists() else []
+    have = {r["id"] for r in res}
     for j in J:
+        if j["id"] in have: continue
+        rng = np.random.default_rng([a.seed, int(j["id"][1:]), ord(j["id"][0])])
         w = np.array(j["w"]); row = dict(id=j["id"], model=j["model"], theme=j.get("theme"), shared=j["shared"])
         for which, m in (("own", j["model"]), ("other", j["other"])):
             E, Ech, Xb, pos = data[m]
@@ -136,7 +142,9 @@ def main():
             g = [x["gain"] for x in nul if x]; pc = [x["partial"] for x in nul if x]
             row[which + "_null"] = dict(n=len(g), median=float(np.median(g)) if g else None, p95=float(np.percentile(g, 95)) if g else None,
                                         partial_median=float(np.median(pc)) if pc else None, partial_p95=float(np.percentile(pc, 95)) if pc else None)
-        res.append(row); print(j["id"], {k: (round(row[k]["gain"], 4) if row[k] else None) for k in ("own", "other")}, flush=True)
+        res.append(row)
+        with part.open("a") as fh: fh.write(json.dumps(row) + "\n")
+        print(j["id"], {k: (round(row[k]["gain"], 4) if row[k] else None) for k in ("own", "other")}, flush=True)
     f_ = lambda x, d=3: "–" if x is None else f"{x:+.{d}f}"
     md = ["# Look-ahead at L11", "",
           f"Per concept, its expression at a branching point (before the move) against the logit of the share of rollouts playing "
@@ -146,6 +154,7 @@ def main():
           "Partial: the correlation of the expression and the share once the board is read out of both.", "",
           "| concept | theme | rollouts | nodes (positions) | R^2 board | gain [95% CI] | null median / 95th | partial r | null partial median / 95th | above null 95th |",
           "|---|---|---|---|---|---|---|---|---|---|"]
+    res = [r for r in res if not a.only or r["id"] in a.only.split(",")]
     for r in res:
         for which in ("own", "other"):
             x, n = r[which], r[which + "_null"]
