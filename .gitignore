@@ -261,3 +261,21 @@ chess_beyond.zip
 
 # adapters stay local
 memorize/adapters/
+
+# chess_beyond: logs and launchers written at the folder's top, and scratch
+chess_beyond/*.log
+chess_beyond/*.bat
+chess_beyond/_to_delete/
+# chess_beyond/results keeps reports; raw dumps (over ~1 MB) stay local, rebuilt by the scripts
+chess_beyond/results/**/explanations.jsonl
+chess_beyond/results/**/path_examples.json
+chess_beyond/results/**/path_scores.json
+chess_beyond/results/transcend/divergence/**/report.json
+chess_beyond/results/transcend/divergence/**/candidates-view.json
+chess_beyond/results/transcend/divergence/**/concept-graph.json
+chess_beyond/results/transcend/divergence/**/concept-seed-*.json
+chess_beyond/results/transcend/divergence/**/decisive-*.json
+chess_beyond/results/transcend/divergence/**/eval-sample.json
+chess_beyond/results/transcend/divergence/**/minimal-pairs*.json
+chess_beyond/results/transcend/divergence/**/nonboard-*.json
+chess_beyond/results/transcend/divergence/**/mine/concepts.json

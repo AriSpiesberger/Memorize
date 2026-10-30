@@ -1,0 +1,2146 @@
+{
+ "root": {
+  "prompt": ";1.e4 Nc6 2.Nf3 f5 3.exf5 d5 4.g4 h5 5.Nh4 Nh6 6.Ng6 Rg8 7.f3 e6 8.d4 exf5 9.gxh5 Be6 10.Rg1 Be7 11.Qe2 Nxd4 12.Qd3 Bh4+ 13.Kd1 Bf6 14.c3 Nc6 15.Bxh6 gxh6 16.Nd2 Qd6 17.Kc2 O-O-O 18.Re1 d4 19.Bh3 Qc5 20.Rxe6 ",
+  "fen": "2kr2r1/ppp5/2n1RbNp/2q2p1P/3p4/2PQ1P1B/PPKN3P/6R1 b - - 0 20",
+  "band": "2400+",
+  "game": 3107,
+  "top": [
+   [
+    "dxc3",
+    0.5444389781694055
+   ],
+   [
+    "Nb4+",
+    0.2566456060622932
+   ],
+   [
+    "Qa5",
+    0.053952114689852504
+   ],
+   [
+    "Rxg6",
+    0.04187856196657068
+   ],
+   [
+    "Kb8",
+    0.023543991095774482
+   ]
+  ]
+ },
+ "temps": [
+  {
+   "T": 0.4,
+   "distinct": 816,
+   "top": 0.0126953125,
+   "ok": true,
+   "split": 2.0
+  }
+ ],
+ "T": 0.4,
+ "settings": {
+  "cc_run": "runs/transcend/crosscoder/everything-3m",
+  "cc": "Lfinal",
+  "strong": "2400",
+  "population": "C:\\Users\\arisp\\Documents\\Research\\Memorize\\chess_beyond\\data\\pgn_probe\\population.jsonl",
+  "candidates": 400,
+  "reasonable": 0.2,
+  "max_top": 0.6,
+  "rollouts": 1024,
+  "plies": 16,
+  "temps": "0.4",
+  "min_distinct": 20,
+  "max_line": 0.5,
+  "min_sd": 0.05,
+  "shuffles": 100,
+  "jaccard": 0.3,
+  "branch_plies": 4,
+  "null_sets": 1000,
+  "batch": 48,
+  "max_tokens": 300000,
+  "device": "auto",
+  "seed": 0,
+  "tag": ""
+ },
+ "concepts": [
+  {
+   "latents": [
+    4949,
+    7778,
+    12475
+   ],
+   "share": 0.0419921875,
+   "r": 0.8158073747479847,
+   "name": "1",
+   "match": {
+    "jaccard": 0.0,
+    "shared": 0,
+    "size": 4
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 12,
+    "effective": 2.9861751152073728,
+    "boards": 13,
+    "boards_eff": 3.0139534883720924,
+    "onset": 8,
+    "null5": 5.207131328286619,
+    "null5_boards": 5.221831497316964,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Knight to f5",
+     "phi": 0.46687613505983205,
+     "carrying": 0.7674418604651163,
+     "other": 0.07033639143730887
+    },
+    {
+     "split": "trade on f5",
+     "phi": 0.4414314495322333,
+     "carrying": 0.7674418604651163,
+     "other": 0.08053007135575943
+    },
+    {
+     "split": "White Queen to f5",
+     "phi": 0.43839844322784755,
+     "carrying": 0.7906976744186046,
+     "other": 0.08766564729867482
+    }
+   ]
+  },
+  {
+   "latents": [
+    4686,
+    5440,
+    7545
+   ],
+   "share": 0.4267578125,
+   "r": 0.7097431792906334,
+   "name": "2",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 60,
+    "effective": 7.118633912522468,
+    "boards": 57,
+    "boards_eff": 6.945922244957615,
+    "onset": 10,
+    "null5": 26.786495558819748,
+    "null5_boards": 29.20589693878985,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Knight to b4",
+     "phi": 0.4301682909256708,
+     "carrying": 0.6338672768878718,
+     "other": 0.20954003407155025
+    },
+    {
+     "split": "White King to d1",
+     "phi": 0.41805327878614107,
+     "carrying": 0.43707093821510296,
+     "other": 0.08006814310051108
+    },
+    {
+     "split": "Black Knight to d3",
+     "phi": 0.4105879826714677,
+     "carrying": 0.5675057208237986,
+     "other": 0.1737649063032368
+    }
+   ]
+  },
+  {
+   "latents": [
+    292,
+    9193,
+    15161,
+    15550
+   ],
+   "share": 0.5205078125,
+   "r": 0.6998029394475179,
+   "name": "3",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 2,
+    "effective": 1.0037664649846432,
+    "boards": 3,
+    "boards_eff": 1.306413345519336,
+    "onset": 1,
+    "null5": 1.0031104123836012,
+    "null5_boards": 1.2425824167515962,
+    "branch": false,
+    "branch_boards": false
+   },
+   "plan": true,
+   "splits": [
+    {
+     "split": "White Knight to c6",
+     "phi": -0.2951084265528692,
+     "carrying": 0.00375234521575985,
+     "other": 0.164969450101833
+    },
+    {
+     "split": "Black Queen to c6",
+     "phi": -0.2900869117397812,
+     "carrying": 0.005628517823639775,
+     "other": 0.164969450101833
+    },
+    {
+     "split": "Black Rook to h2",
+     "phi": -0.21959122377258142,
+     "carrying": 0.005628517823639775,
+     "other": 0.10386965376782077
+    }
+   ]
+  },
+  {
+   "latents": [
+    10321,
+    12488,
+    13800
+   ],
+   "share": 0.4443359375,
+   "r": 0.6899261009271501,
+   "name": "4",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 60,
+    "effective": 20.546496815286627,
+    "boards": 70,
+    "boards_eff": 29.166365280289334,
+    "onset": 9,
+    "null5": 21.090725669043223,
+    "null5_boards": 23.24635441527106,
+    "branch": true,
+    "branch_boards": false
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Rook to c6",
+     "phi": -0.3663655974170151,
+     "carrying": 0.06373626373626373,
+     "other": 0.37785588752196836
+    },
+    {
+     "split": "Black Knight to b4",
+     "phi": 0.3555555281131518,
+     "carrying": 0.5846153846153846,
+     "other": 0.23550087873462214
+    },
+    {
+     "split": "White Rook to f6",
+     "phi": 0.34857390603120597,
+     "carrying": 0.5626373626373626,
+     "other": 0.22319859402460457
+    }
+   ]
+  },
+  {
+   "latents": [
+    1965,
+    3697,
+    7423,
+    11966,
+    13219
+   ],
+   "share": 0.142578125,
+   "r": 0.6564709623471475,
+   "name": "5",
+   "match": {
+    "jaccard": 0.8,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 16,
+    "effective": 3.427322404371585,
+    "boards": 19,
+    "boards_eff": 3.6550116550116556,
+    "onset": 6,
+    "null5": 3.4495957314793513,
+    "null5_boards": 7.358586910280575,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade of a pawn",
+     "phi": -0.3871169293820809,
+     "carrying": 0.3904109589041096,
+     "other": 0.8473804100227791
+    },
+    {
+     "split": "trade on c3",
+     "phi": -0.37653700273104707,
+     "carrying": 0.3698630136986301,
+     "other": 0.8280182232346242
+    },
+    {
+     "split": "White King to b1",
+     "phi": 0.331173510786621,
+     "carrying": 0.9041095890410958,
+     "other": 0.4305239179954442
+    }
+   ]
+  },
+  {
+   "latents": [
+    3475,
+    3567,
+    4529,
+    10678,
+    11010
+   ],
+   "share": 0.4423828125,
+   "r": 0.6483199999620505,
+   "name": "6",
+   "match": {
+    "jaccard": 0.8333333333333334,
+    "shared": 5,
+    "size": 6
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 46,
+    "effective": 11.661187214611871,
+    "boards": 45,
+    "boards_eff": 11.472596585804132,
+    "onset": 6,
+    "null5": 14.911505275342947,
+    "null5_boards": 17.030819456021188,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "first move dxc3",
+     "phi": -0.40452232203886346,
+     "carrying": 0.717439293598234,
+     "other": 0.9912434325744308
+    },
+    {
+     "split": "first move Nb4+",
+     "phi": 0.400576845542834,
+     "carrying": 0.2781456953642384,
+     "other": 0.008756567425569177
+    },
+    {
+     "split": "White Knight to b3",
+     "phi": 0.29593376677699734,
+     "carrying": 0.31346578366445915,
+     "other": 0.08231173380035026
+    }
+   ]
+  },
+  {
+   "latents": [
+    3135,
+    10926,
+    11434,
+    13620
+   ],
+   "share": 0.5732421875,
+   "r": 0.5730185522502741,
+   "name": "7",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 180,
+    "effective": 21.943801822090286,
+    "boards": 188,
+    "boards_eff": 22.706175193305796,
+    "onset": 10,
+    "null5": 66.98665131447848,
+    "null5_boards": 71.8150047385554,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade of a knight",
+     "phi": -0.35318008256406913,
+     "carrying": 0.11243611584327087,
+     "other": 0.41876430205949655
+    },
+    {
+     "split": "Black Queen to c6",
+     "phi": -0.31768037008287786,
+     "carrying": 0.0068143100511073255,
+     "other": 0.18306636155606407
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": -0.3152714194640077,
+     "carrying": 0.0068143100511073255,
+     "other": 0.18077803203661327
+    }
+   ]
+  },
+  {
+   "latents": [
+    9808,
+    15970,
+    16056
+   ],
+   "share": 0.2216796875,
+   "r": 0.5676839274678965,
+   "name": "8",
+   "match": {
+    "jaccard": 0.4,
+    "shared": 2,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 22,
+    "effective": 5.092378752886836,
+    "boards": 25,
+    "boards_eff": 5.763199163617355,
+    "onset": 8,
+    "null5": 13.130944231587907,
+    "null5_boards": 13.478686294538504,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Knight to e6",
+     "phi": 0.4679289696723595,
+     "carrying": 0.5330396475770925,
+     "other": 0.09159347553324969
+    },
+    {
+     "split": "Black Knight to d4",
+     "phi": 0.3188930014914512,
+     "carrying": 0.5991189427312775,
+     "other": 0.24090338770388958
+    },
+    {
+     "split": "White Rook to c6",
+     "phi": -0.2653805066154479,
+     "carrying": 0.02643171806167401,
+     "other": 0.2986198243412798
+    }
+   ]
+  },
+  {
+   "latents": [
+    224,
+    2599,
+    5532,
+    11179
+   ],
+   "share": 0.572265625,
+   "r": 0.5624232123137193,
+   "name": "9",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 48,
+    "effective": 6.157880907807008,
+    "boards": 52,
+    "boards_eff": 6.288833730251902,
+    "onset": 4,
+    "null5": 8.008373102429656,
+    "null5_boards": 16.59498344611538,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Pawn to c3",
+     "phi": 0.3083659223110731,
+     "carrying": 0.7320819112627986,
+     "other": 0.4269406392694064
+    },
+    {
+     "split": "White pawn break: pawn takes on c3",
+     "phi": 0.3083659223110731,
+     "carrying": 0.7320819112627986,
+     "other": 0.4269406392694064
+    },
+    {
+     "split": "White Rook to c1",
+     "phi": -0.2622241521327814,
+     "carrying": 0.02901023890784983,
+     "other": 0.18493150684931506
+    }
+   ]
+  },
+  {
+   "latents": [
+    1275,
+    2842,
+    3612,
+    5778,
+    6456,
+    9520,
+    12275,
+    12874,
+    15206
+   ],
+   "share": 0.47265625,
+   "r": 0.5396924728688063,
+   "name": "10",
+   "match": {
+    "jaccard": 0.7777777777777778,
+    "shared": 7,
+    "size": 7
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 14,
+    "effective": 10.964912280701752,
+    "boards": 16,
+    "boards_eff": 12.254901960784313,
+    "onset": 11,
+    "null5": 6.077587265055622,
+    "null5_boards": 6.611739253393665,
+    "branch": false,
+    "branch_boards": false
+   },
+   "plan": true,
+   "splits": [
+    {
+     "split": "Black Rook to d2",
+     "phi": -0.44896160086542003,
+     "carrying": 0.20041322314049587,
+     "other": 0.6462962962962963
+    },
+    {
+     "split": "Black pawn break: pawn takes on c6",
+     "phi": -0.2689022158578622,
+     "carrying": 0.0743801652892562,
+     "other": 0.2833333333333333
+    },
+    {
+     "split": "Black Pawn to c6",
+     "phi": -0.25934535414107224,
+     "carrying": 0.08057851239669421,
+     "other": 0.2833333333333333
+    }
+   ]
+  },
+  {
+   "latents": [
+    718,
+    10880,
+    12134,
+    14508,
+    14766
+   ],
+   "share": 0.490234375,
+   "r": 0.5292189528352336,
+   "name": "11",
+   "match": {
+    "jaccard": 0.8,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 57,
+    "effective": 7.329584985033574,
+    "boards": 61,
+    "boards_eff": 8.282384130176435,
+    "onset": 6,
+    "null5": 12.417334442599536,
+    "null5_boards": 22.383386301786967,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "first move dxc3",
+     "phi": -0.3532997926516568,
+     "carrying": 0.749003984063745,
+     "other": 0.9865900383141762
+    },
+    {
+     "split": "first move Nb4+",
+     "phi": 0.34962483292935465,
+     "carrying": 0.24701195219123506,
+     "other": 0.013409961685823755
+    },
+    {
+     "split": "White Knight to b3",
+     "phi": 0.3089035186710305,
+     "carrying": 0.30677290836653387,
+     "other": 0.06704980842911877
+    }
+   ]
+  },
+  {
+   "latents": [
+    5155,
+    8787,
+    14025
+   ],
+   "share": 0.4521484375,
+   "r": 0.5207610942705077,
+   "name": "12",
+   "match": {
+    "jaccard": 0.0,
+    "shared": 0,
+    "size": 4
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 21,
+    "effective": 5.075187969924813,
+    "boards": 24,
+    "boards_eff": 6.948150972169271,
+    "onset": 4,
+    "null5": 8.277471381936033,
+    "null5_boards": 11.29359477994066,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade of a knight",
+     "phi": -0.19020144129083072,
+     "carrying": 0.15334773218142547,
+     "other": 0.3172905525846702
+    },
+    {
+     "split": "Black Queen to b4",
+     "phi": 0.1860475387356072,
+     "carrying": 0.13822894168466524,
+     "other": 0.035650623885918005
+    },
+    {
+     "split": "Black Queen to c6",
+     "phi": -0.1786179267698856,
+     "carrying": 0.028077753779697623,
+     "other": 0.1265597147950089
+    }
+   ]
+  },
+  {
+   "latents": [
+    2491,
+    6011,
+    7850,
+    11986
+   ],
+   "share": 0.5673828125,
+   "r": 0.519210731237341,
+   "name": "13",
+   "match": {
+    "jaccard": 0.3333333333333333,
+    "shared": 2,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 78,
+    "effective": 6.216610004856727,
+    "boards": 80,
+    "boards_eff": 6.74927498022673,
+    "onset": 4,
+    "null5": 8.787346548807902,
+    "null5_boards": 18.167586594562916,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Queen to c3",
+     "phi": -0.3927499806517074,
+     "carrying": 0.3442340791738382,
+     "other": 0.7404063205417607
+    },
+    {
+     "split": "White Rook to f6",
+     "phi": 0.35722635863206237,
+     "carrying": 0.5249569707401033,
+     "other": 0.17607223476297967
+    },
+    {
+     "split": "Black Knight to d3",
+     "phi": 0.3175634024771271,
+     "carrying": 0.47332185886402756,
+     "other": 0.16930022573363432
+    }
+   ]
+  },
+  {
+   "latents": [
+    5949,
+    8589,
+    13694
+   ],
+   "share": 0.3583984375,
+   "r": 0.5131843357745461,
+   "name": "14",
+   "match": {
+    "jaccard": 0.16666666666666666,
+    "shared": 1,
+    "size": 4
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 14,
+    "effective": 2.8910242872228085,
+    "boards": 14,
+    "boards_eff": 2.8910242872228085,
+    "onset": 3,
+    "null5": 4.369888569819741,
+    "null5_boards": 5.561243824120156,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Queen to f5",
+     "phi": 0.4811476264314626,
+     "carrying": 0.3242506811989101,
+     "other": 0.0015220700152207
+    },
+    {
+     "split": "Black Knight to f5",
+     "phi": 0.44502486591287477,
+     "carrying": 0.2779291553133515,
+     "other": 0.0
+    },
+    {
+     "split": "Black Knight to d4",
+     "phi": 0.4384018441262643,
+     "carrying": 0.5940054495912807,
+     "other": 0.167427701674277
+    }
+   ]
+  },
+  {
+   "latents": [
+    2420,
+    6563,
+    8971,
+    10509,
+    12268,
+    13304
+   ],
+   "share": 0.28125,
+   "r": 0.5081789619871073,
+   "name": "15",
+   "match": {
+    "jaccard": 0.8333333333333334,
+    "shared": 5,
+    "size": 5
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 14,
+    "effective": 1.528950953678474,
+    "boards": 13,
+    "boards_eff": 1.5279101429543904,
+    "onset": 4,
+    "null5": 5.472058389046158,
+    "null5_boards": 7.453583308134261,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Bishop to c3",
+     "phi": 0.3124652245323623,
+     "carrying": 0.6354166666666666,
+     "other": 0.296195652173913
+    },
+    {
+     "split": "White Rook to c6",
+     "phi": 0.2415304074815854,
+     "carrying": 0.4027777777777778,
+     "other": 0.17391304347826086
+    },
+    {
+     "split": "queens off",
+     "phi": 0.24010470581734367,
+     "carrying": 0.4375,
+     "other": 0.20108695652173914
+    }
+   ]
+  },
+  {
+   "latents": [
+    596,
+    6691,
+    6943,
+    7549,
+    10471,
+    12267
+   ],
+   "share": 0.546875,
+   "r": 0.5047731788766038,
+   "name": "16",
+   "match": {
+    "jaccard": 0.8333333333333334,
+    "shared": 5,
+    "size": 5
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 3,
+    "effective": 1.318666532108857,
+    "boards": 7,
+    "boards_eff": 1.3326081044329618,
+    "onset": 1,
+    "null5": 1.276945068668488,
+    "null5_boards": 1.6122816045029447,
+    "branch": false,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Bishop to f5",
+     "phi": -0.6004272476998788,
+     "carrying": 0.2892857142857143,
+     "other": 0.8879310344827587
+    },
+    {
+     "split": "Black King to b8",
+     "phi": -0.30258798497816786,
+     "carrying": 0.34285714285714286,
+     "other": 0.646551724137931
+    },
+    {
+     "split": "Black Queen to b2",
+     "phi": 0.2569872323792972,
+     "carrying": 0.22678571428571428,
+     "other": 0.04525862068965517
+    }
+   ]
+  },
+  {
+   "latents": [
+    3052,
+    8595,
+    12838,
+    13616,
+    15640
+   ],
+   "share": 0.4716796875,
+   "r": 0.5035579177372277,
+   "name": "17",
+   "match": {
+    "jaccard": 0.8,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 155,
+    "effective": 74.95338983050847,
+    "boards": 157,
+    "boards_eff": 74.48,
+    "onset": 12,
+    "null5": 48.20309591470918,
+    "null5_boards": 48.73695227992203,
+    "branch": false,
+    "branch_boards": false
+   },
+   "plan": true,
+   "splits": [
+    {
+     "split": "White Bishop to f5",
+     "phi": 0.588297421613683,
+     "carrying": 0.8695652173913043,
+     "other": 0.2846580406654344
+    },
+    {
+     "split": "Black King to b8",
+     "phi": 0.3991229740378978,
+     "carrying": 0.6915113871635611,
+     "other": 0.2920517560073937
+    },
+    {
+     "split": "trade on c6",
+     "phi": 0.23035147999850916,
+     "carrying": 0.17391304347826086,
+     "other": 0.03512014787430684
+    }
+   ]
+  },
+  {
+   "latents": [
+    1469,
+    2510,
+    4128,
+    5424,
+    8616,
+    9302,
+    9658,
+    10115,
+    13548,
+    13742,
+    13868
+   ],
+   "share": 0.3828125,
+   "r": 0.4919498740607791,
+   "name": "18",
+   "match": {
+    "jaccard": 0.6111111111111112,
+    "shared": 11,
+    "size": 18
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 8,
+    "effective": 1.0789238090750601,
+    "boards": 8,
+    "boards_eff": 1.0789238090750601,
+    "onset": 2,
+    "null5": 1.2635467114284282,
+    "null5_boards": 2.843296318392364,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade on c6",
+     "phi": -0.16985994526120515,
+     "carrying": 0.03571428571428571,
+     "other": 0.14082278481012658
+    },
+    {
+     "split": "Black Queen to g1",
+     "phi": -0.16894888874035846,
+     "carrying": 0.06377551020408163,
+     "other": 0.18354430379746836
+    },
+    {
+     "split": "trade of a knight",
+     "phi": -0.1560475394219501,
+     "carrying": 0.15816326530612246,
+     "other": 0.2958860759493671
+    }
+   ]
+  },
+  {
+   "latents": [
+    2860,
+    6950,
+    13586
+   ],
+   "share": 0.4677734375,
+   "r": 0.48311800327636895,
+   "name": "19",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 116,
+    "effective": 13.29183955739972,
+    "boards": 122,
+    "boards_eff": 13.823360184119673,
+    "onset": 10,
+    "null5": 44.401321827746656,
+    "null5_boards": 45.39975136780856,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Rook to d2",
+     "phi": -0.43668025123329546,
+     "carrying": 0.2045929018789144,
+     "other": 0.6385321100917432
+    },
+    {
+     "split": "Black Rook to e8",
+     "phi": 0.3624691498617235,
+     "carrying": 0.35490605427974947,
+     "other": 0.06422018348623854
+    },
+    {
+     "split": "White King to d1",
+     "phi": 0.34136925672871415,
+     "carrying": 0.3862212943632568,
+     "other": 0.09724770642201835
+    }
+   ]
+  },
+  {
+   "latents": [
+    3406,
+    8648,
+    15473
+   ],
+   "share": 0.4375,
+   "r": 0.4824808292740929,
+   "name": "20",
+   "match": {
+    "jaccard": 0.0,
+    "shared": 0,
+    "size": 4
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 30,
+    "effective": 3.881840203730927,
+    "boards": 43,
+    "boards_eff": 6.888672520850938,
+    "onset": 4,
+    "null5": 9.789966186112014,
+    "null5_boards": 15.713027243842326,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "queens off",
+     "phi": -0.4174396953786224,
+     "carrying": 0.05803571428571429,
+     "other": 0.4305555555555556
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": -0.24028301704172336,
+     "carrying": 0.006696428571428571,
+     "other": 0.1388888888888889
+    },
+    {
+     "split": "Black Queen to c6",
+     "phi": -0.22059276188102203,
+     "carrying": 0.013392857142857142,
+     "other": 0.13541666666666666
+    }
+   ]
+  },
+  {
+   "latents": [
+    4983,
+    5886,
+    14701,
+    14779
+   ],
+   "share": 0.572265625,
+   "r": 0.47657037727558355,
+   "name": "21",
+   "match": {
+    "jaccard": 0.6,
+    "shared": 3,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 136,
+    "effective": 17.149265905383363,
+    "boards": 135,
+    "boards_eff": 16.148233486943166,
+    "onset": 10,
+    "null5": 46.69244586821456,
+    "null5_boards": 47.422885140872566,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White King to c2",
+     "phi": 0.33126981399449873,
+     "carrying": 0.5136518771331058,
+     "other": 0.18949771689497716
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": -0.32182604243396556,
+     "carrying": 0.005119453924914676,
+     "other": 0.182648401826484
+    },
+    {
+     "split": "Black Queen to c6",
+     "phi": -0.3026120805983333,
+     "carrying": 0.010238907849829351,
+     "other": 0.1780821917808219
+    }
+   ]
+  },
+  {
+   "latents": [
+    2327,
+    3401,
+    6922,
+    7002,
+    7508,
+    7569,
+    10059,
+    10712,
+    14052,
+    14533
+   ],
+   "share": 0.505859375,
+   "r": 0.4709185797172276,
+   "name": "22",
+   "match": {
+    "jaccard": 0.5,
+    "shared": 6,
+    "size": 8
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 71,
+    "effective": 15.47951441578148,
+    "boards": 73,
+    "boards_eff": 17.756309834638813,
+    "onset": 10,
+    "null5": 37.00816211229133,
+    "null5_boards": 38.578763979665936,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "queens off",
+     "phi": 0.3591278881451721,
+     "carrying": 0.4247104247104247,
+     "other": 0.1067193675889328
+    },
+    {
+     "split": "White King to b1",
+     "phi": -0.25778639165388084,
+     "carrying": 0.37065637065637064,
+     "other": 0.6284584980237155
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": 0.2505899318136015,
+     "carrying": 0.14864864864864866,
+     "other": 0.011857707509881422
+    }
+   ]
+  },
+  {
+   "latents": [
+    820,
+    14332,
+    14988
+   ],
+   "share": 0.44140625,
+   "r": 0.46695772631260457,
+   "name": "23",
+   "match": {
+    "jaccard": 0.0,
+    "shared": 0,
+    "size": 4
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 70,
+    "effective": 11.358237547892719,
+    "boards": 68,
+    "boards_eff": 16.04600811907983,
+    "onset": 13,
+    "null5": 22.90225986187643,
+    "null5_boards": 27.0675769810495,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade of a knight",
+     "phi": -0.2884051185517478,
+     "carrying": 0.10398230088495575,
+     "other": 0.3531468531468531
+    },
+    {
+     "split": "White King to d1",
+     "phi": 0.28377444407184815,
+     "carrying": 0.3672566371681416,
+     "other": 0.1258741258741259
+    },
+    {
+     "split": "White King to e2",
+     "phi": 0.2790496266022993,
+     "carrying": 0.23672566371681417,
+     "other": 0.0472027972027972
+    }
+   ]
+  },
+  {
+   "latents": [
+    344,
+    435,
+    1144,
+    9802,
+    10374
+   ],
+   "share": 0.4453125,
+   "r": 0.46653724774784794,
+   "name": "24",
+   "match": {
+    "jaccard": 0.8,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 87,
+    "effective": 42.14796747967478,
+    "boards": 93,
+    "boards_eff": 53.44536082474224,
+    "onset": 12,
+    "null5": 26.288777536596648,
+    "null5_boards": 26.780147553482532,
+    "branch": false,
+    "branch_boards": false
+   },
+   "plan": true,
+   "splits": [
+    {
+     "split": "White King to e2",
+     "phi": 0.2640971531715565,
+     "carrying": 0.23026315789473684,
+     "other": 0.051056338028169015
+    },
+    {
+     "split": "Black Queen to b2",
+     "phi": 0.26316233469286,
+     "carrying": 0.24780701754385964,
+     "other": 0.061619718309859156
+    },
+    {
+     "split": "Black King to b8",
+     "phi": -0.24813689331787134,
+     "carrying": 0.34210526315789475,
+     "other": 0.5915492957746479
+    }
+   ]
+  },
+  {
+   "latents": [
+    2687,
+    2695,
+    10652,
+    13198,
+    14485,
+    14747,
+    16186
+   ],
+   "share": 0.44140625,
+   "r": 0.45888659162895185,
+   "name": "25",
+   "match": {
+    "jaccard": 0.42857142857142855,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 11,
+    "effective": 1.452457027300303,
+    "boards": 14,
+    "boards_eff": 1.4607280862314416,
+    "onset": 2,
+    "null5": 1.7186788086268032,
+    "null5_boards": 3.7974759537931027,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "trade on c3",
+     "phi": -0.2992714143753851,
+     "carrying": 0.6194690265486725,
+     "other": 0.8758741258741258
+    },
+    {
+     "split": "Black Knight to f2",
+     "phi": -0.2973624702379497,
+     "carrying": 0.024336283185840708,
+     "other": 0.23251748251748253
+    },
+    {
+     "split": "first move dxc3",
+     "phi": -0.2942221229107611,
+     "carrying": 0.7588495575221239,
+     "other": 0.958041958041958
+    }
+   ]
+  },
+  {
+   "latents": [
+    4555,
+    5875,
+    6778,
+    9141,
+    10874,
+    16265
+   ],
+   "share": 0.5185546875,
+   "r": 0.45586185418370845,
+   "name": "26",
+   "match": {
+    "jaccard": 0.5,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 65,
+    "effective": 7.708421370359192,
+    "boards": 69,
+    "boards_eff": 7.8681352537934215,
+    "onset": 5,
+    "null5": 15.525495631027212,
+    "null5_boards": 22.243153444179914,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Rook to d2",
+     "phi": 0.5389451637980254,
+     "carrying": 0.6930320150659134,
+     "other": 0.15821501014198783
+    },
+    {
+     "split": "Black Queen to g1",
+     "phi": -0.22186873528547285,
+     "carrying": 0.064030131826742,
+     "other": 0.21703853955375255
+    },
+    {
+     "split": "Black Rook to e8",
+     "phi": -0.20174344271349925,
+     "carrying": 0.1224105461393597,
+     "other": 0.2839756592292089
+    }
+   ]
+  },
+  {
+   "latents": [
+    2653,
+    3447,
+    5777,
+    10266,
+    15132
+   ],
+   "share": 0.49609375,
+   "r": 0.4552293344962985,
+   "name": "27",
+   "match": {
+    "jaccard": 0.8,
+    "shared": 4,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 130,
+    "effective": 14.557205588822352,
+    "boards": 129,
+    "boards_eff": 14.681455833803042,
+    "onset": 6,
+    "null5": 24.209302035666184,
+    "null5_boards": 35.888942196137016,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Knight to e7",
+     "phi": -0.4646866902770377,
+     "carrying": 0.06692913385826772,
+     "other": 0.48255813953488375
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": -0.28036710534802584,
+     "carrying": 0.003937007874015748,
+     "other": 0.1569767441860465
+    },
+    {
+     "split": "White Knight to g8",
+     "phi": -0.2758164845959349,
+     "carrying": 0.015748031496062992,
+     "other": 0.18023255813953487
+    }
+   ]
+  },
+  {
+   "latents": [
+    5338,
+    7510,
+    7926,
+    10386,
+    11129,
+    11364,
+    15414,
+    15971,
+    16020
+   ],
+   "share": 0.4658203125,
+   "r": 0.4411461563014544,
+   "name": "28",
+   "match": {
+    "jaccard": 0.3,
+    "shared": 3,
+    "size": 4
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 91,
+    "effective": 6.598252283947115,
+    "boards": 88,
+    "boards_eff": 6.493605852459931,
+    "onset": 7,
+    "null5": 19.100169554072675,
+    "null5_boards": 24.263718445406965,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black King to b8",
+     "phi": -0.3141913710633985,
+     "carrying": 0.31236897274633124,
+     "other": 0.6270566727605119
+    },
+    {
+     "split": "Black Rook to d2",
+     "phi": 0.29709027912441427,
+     "carrying": 0.5932914046121593,
+     "other": 0.2979890310786106
+    },
+    {
+     "split": "White Bishop to f5",
+     "phi": -0.27366835124335687,
+     "carrying": 0.41509433962264153,
+     "other": 0.6873857404021938
+    }
+   ]
+  },
+  {
+   "latents": [
+    1736,
+    11711,
+    13982,
+    14244,
+    15198,
+    15827
+   ],
+   "share": 0.5263671875,
+   "r": 0.43738293378455256,
+   "name": "29",
+   "match": {
+    "jaccard": 0.5,
+    "shared": 4,
+    "size": 6
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 149,
+    "effective": 21.96040156162855,
+    "boards": 161,
+    "boards_eff": 22.848793832380004,
+    "onset": 7,
+    "null5": 33.80181554454392,
+    "null5_boards": 48.863710916164024,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black King to b8",
+     "phi": 0.5716504143805516,
+     "carrying": 0.75139146567718,
+     "other": 0.17938144329896907
+    },
+    {
+     "split": "White Bishop to f5",
+     "phi": 0.28713945241368916,
+     "carrying": 0.6957328385899815,
+     "other": 0.41030927835051545
+    },
+    {
+     "split": "White King to e3",
+     "phi": -0.23035355840398686,
+     "carrying": 0.0055658627087198514,
+     "other": 0.11134020618556702
+    }
+   ]
+  },
+  {
+   "latents": [
+    6288,
+    11203,
+    14097
+   ],
+   "share": 0.4521484375,
+   "r": 0.43120060289817475,
+   "name": "30",
+   "match": {
+    "jaccard": 1.0,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 46,
+    "effective": 10.464497878359268,
+    "boards": 53,
+    "boards_eff": 11.578090766823165,
+    "onset": 7,
+    "null5": 19.601683579972907,
+    "null5_boards": 31.965357454274095,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Knight to e7",
+     "phi": 0.5003691251746528,
+     "carrying": 0.5226781857451404,
+     "other": 0.07308377896613191
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": 0.31253639159316693,
+     "carrying": 0.17494600431965443,
+     "other": 0.0035650623885918
+    },
+    {
+     "split": "White Knight to g8",
+     "phi": 0.2983190780941931,
+     "carrying": 0.19654427645788336,
+     "other": 0.017825311942959002
+    }
+   ]
+  },
+  {
+   "latents": [
+    3369,
+    3471,
+    10771,
+    11915,
+    12926,
+    15189
+   ],
+   "share": 0.5576171875,
+   "r": 0.4302244289240171,
+   "name": "31",
+   "match": {
+    "jaccard": 0.2857142857142857,
+    "shared": 2,
+    "size": 3
+   },
+   "replicated": false,
+   "spread": {
+    "routes": 111,
+    "effective": 20.413311421528345,
+    "boards": 126,
+    "boards_eff": 22.71879286694101,
+    "onset": 7,
+    "null5": 45.584734530518894,
+    "null5_boards": 56.8617292039828,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White Rook to d1",
+     "phi": -0.22128074788433727,
+     "carrying": 0.05604203152364273,
+     "other": 0.20088300220750552
+    },
+    {
+     "split": "White Knight to e7",
+     "phi": 0.2206912897346592,
+     "carrying": 0.36427320490367776,
+     "other": 0.16556291390728478
+    },
+    {
+     "split": "Black Rook to e8",
+     "phi": -0.18333986272673827,
+     "carrying": 0.13485113835376533,
+     "other": 0.282560706401766
+    }
+   ]
+  },
+  {
+   "latents": [
+    1586,
+    3639,
+    6739,
+    7067,
+    7568,
+    7917,
+    8496,
+    12075,
+    14315
+   ],
+   "share": 0.435546875,
+   "r": 0.4107384990130821,
+   "name": "32",
+   "match": {
+    "jaccard": 0.4,
+    "shared": 4,
+    "size": 5
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 85,
+    "effective": 18.98419864559819,
+    "boards": 99,
+    "boards_eff": 20.522205954123955,
+    "onset": 7,
+    "null5": 20.82616704660936,
+    "null5_boards": 26.127928411795487,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Queen to c6",
+     "phi": 0.31877594187858443,
+     "carrying": 0.18161434977578475,
+     "other": 0.005190311418685121
+    },
+    {
+     "split": "White Knight to c6",
+     "phi": 0.3092299977913825,
+     "carrying": 0.17713004484304934,
+     "other": 0.006920415224913495
+    },
+    {
+     "split": "trade on c6",
+     "phi": 0.262834989125292,
+     "carrying": 0.1905829596412556,
+     "other": 0.031141868512110725
+    }
+   ]
+  },
+  {
+   "latents": [
+    3319,
+    6417,
+    13612,
+    14931,
+    15579
+   ],
+   "share": 0.4580078125,
+   "r": 0.3973630672406516,
+   "name": "33",
+   "match": {
+    "jaccard": 0.6,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 29,
+    "effective": 5.054938632378725,
+    "boards": 28,
+    "boards_eff": 5.031413612565444,
+    "onset": 9,
+    "null5": 10.524823695345559,
+    "null5_boards": 11.562034736034734,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "Black Queen to b2",
+     "phi": 0.37467035026621,
+     "carrying": 0.2878464818763326,
+     "other": 0.023423423423423424
+    },
+    {
+     "split": "White Bishop to f5",
+     "phi": -0.36686317410476305,
+     "carrying": 0.3624733475479744,
+     "other": 0.7279279279279279
+    },
+    {
+     "split": "Black King to b8",
+     "phi": -0.31125763770222653,
+     "carrying": 0.31130063965884863,
+     "other": 0.6234234234234234
+    }
+   ]
+  },
+  {
+   "latents": [
+    1404,
+    2058,
+    2598,
+    5312,
+    16326
+   ],
+   "share": 0.380859375,
+   "r": 0.3924424436382921,
+   "name": "34",
+   "match": {
+    "jaccard": 0.6,
+    "shared": 3,
+    "size": 3
+   },
+   "replicated": true,
+   "spread": {
+    "routes": 4,
+    "effective": 1.0476072402677907,
+    "boards": 4,
+    "boards_eff": 1.0476072402677907,
+    "onset": 6,
+    "null5": 5.847480527065774,
+    "null5_boards": 6.172703584390385,
+    "branch": true,
+    "branch_boards": true
+   },
+   "plan": false,
+   "splits": [
+    {
+     "split": "White King to d1",
+     "phi": -0.26493891956287335,
+     "carrying": 0.08974358974358974,
+     "other": 0.32018927444794953
+    },
+    {
+     "split": "White King to e2",
+     "phi": -0.2506618771997783,
+     "carrying": 0.023076923076923078,
+     "other": 0.1971608832807571
+    },
+    {
+     "split": "Black Rook to d2",
+     "phi": 0.2479669508705177,
+     "carrying": 0.5923076923076923,
+     "other": 0.3391167192429022
+    }
+   ]
+  }
+ ],
+ "batch2": [
+  {
+   "latents": [
+    1965,
+    3697,
+    7423,
+    13219
+   ],
+   "share": 0.193359375,
+   "r": 0.7537257759633277
+  },
+  {
+   "latents": [
+    13198,
+    14747,
+    16186
+   ],
+   "share": 0.474609375,
+   "r": 0.7349478245748114
+  },
+  {
+   "latents": [
+    292,
+    9193,
+    15161,
+    15550
+   ],
+   "share": 0.455078125,
+   "r": 0.685540062934456
+  },
+  {
+   "latents": [
+    4686,
+    5440,
+    7545
+   ],
+   "share": 0.4541015625,
+   "r": 0.6852023160869214
+  },
+  {
+   "latents": [
+    10321,
+    12488,
+    13800
+   ],
+   "share": 0.345703125,
+   "r": 0.6831031267241133
+  },
+  {
+   "latents": [
+    718,
+    12134,
+    14508,
+    14766
+   ],
+   "share": 0.5048828125,
+   "r": 0.6237261686104768
+  },
+  {
+   "latents": [
+    3475,
+    3567,
+    4529,
+    10380,
+    10678,
+    11010
+   ],
+   "share": 0.591796875,
+   "r": 0.6173675530342589
+  },
+  {
+   "latents": [
+    224,
+    2599,
+    5532,
+    11179
+   ],
+   "share": 0.498046875,
+   "r": 0.5915468137310153
+  },
+  {
+   "latents": [
+    5875,
+    9141,
+    10874
+   ],
+   "share": 0.4443359375,
+   "r": 0.5869813329570016
+  },
+  {
+   "latents": [
+    3052,
+    8595,
+    13616,
+    15640
+   ],
+   "share": 0.54296875,
+   "r": 0.5515111438347134
+  },
+  {
+   "latents": [
+    1275,
+    2842,
+    3612,
+    5778,
+    6456,
+    12275,
+    15206
+   ],
+   "share": 0.482421875,
+   "r": 0.5477202914472636
+  },
+  {
+   "latents": [
+    3639,
+    7067,
+    10542,
+    11806
+   ],
+   "share": 0.529296875,
+   "r": 0.5471929017270214
+  },
+  {
+   "latents": [
+    3715,
+    5175,
+    5949,
+    16219
+   ],
+   "share": 0.0556640625,
+   "r": 0.5369839071112134
+  },
+  {
+   "latents": [
+    11915,
+    12926,
+    13044
+   ],
+   "share": 0.4970703125,
+   "r": 0.5341729540506207
+  },
+  {
+   "latents": [
+    3135,
+    10926,
+    11434,
+    13620
+   ],
+   "share": 0.3388671875,
+   "r": 0.5284755298520855
+  },
+  {
+   "latents": [
+    1929,
+    3369,
+    3471,
+    10059,
+    13619,
+    14052
+   ],
+   "share": 0.5283203125,
+   "r": 0.5275243179354316
+  },
+  {
+   "latents": [
+    596,
+    6943,
+    7549,
+    10471,
+    12267
+   ],
+   "share": 0.4716796875,
+   "r": 0.519599498836583
+  },
+  {
+   "latents": [
+    2420,
+    6563,
+    8971,
+    10509,
+    13304
+   ],
+   "share": 0.3095703125,
+   "r": 0.5190814211821387
+  },
+  {
+   "latents": [
+    2653,
+    3447,
+    5777,
+    10266
+   ],
+   "share": 0.6005859375,
+   "r": 0.5178539720235288
+  },
+  {
+   "latents": [
+    2491,
+    9808,
+    11986,
+    16056
+   ],
+   "share": 0.5029296875,
+   "r": 0.5153898024383916
+  },
+  {
+   "latents": [
+    5321,
+    6739,
+    7568,
+    8496,
+    12075
+   ],
+   "share": 0.4599609375,
+   "r": 0.5095767802068616
+  },
+  {
+   "latents": [
+    435,
+    1144,
+    9802,
+    10374
+   ],
+   "share": 0.5537109375,
+   "r": 0.49195115007574713
+  },
+  {
+   "latents": [
+    1404,
+    1469,
+    2510,
+    4128,
+    5424,
+    8616,
+    9126,
+    9302,
+    9658,
+    10115,
+    10292,
+    11966,
+    12459,
+    13228,
+    13548,
+    13742,
+    13868,
+    13935
+   ],
+   "share": 0.205078125,
+   "r": 0.4844651718300664
+  },
+  {
+   "latents": [
+    3850,
+    5450,
+    7510,
+    12565,
+    15414,
+    15971
+   ],
+   "share": 0.521484375,
+   "r": 0.48034020758093
+  },
+  {
+   "latents": [
+    2860,
+    6950,
+    13586
+   ],
+   "share": 0.4619140625,
+   "r": 0.47698933042880326
+  },
+  {
+   "latents": [
+    1586,
+    2327,
+    3401,
+    7002,
+    7508,
+    7569,
+    7917,
+    10712
+   ],
+   "share": 0.5419921875,
+   "r": 0.46362080946080564
+  },
+  {
+   "latents": [
+    11711,
+    12085,
+    13121,
+    14244,
+    15198,
+    15827
+   ],
+   "share": 0.564453125,
+   "r": 0.455427024625439
+  },
+  {
+   "latents": [
+    4555,
+    6778,
+    16265
+   ],
+   "share": 0.4765625,
+   "r": 0.45284031796120905
+  },
+  {
+   "latents": [
+    4983,
+    7157,
+    14701,
+    14779
+   ],
+   "share": 0.5888671875,
+   "r": 0.4496480947148967
+  },
+  {
+   "latents": [
+    6766,
+    7926,
+    11364,
+    16020
+   ],
+   "share": 0.6328125,
+   "r": 0.44955258473960097
+  },
+  {
+   "latents": [
+    6417,
+    13612,
+    14931
+   ],
+   "share": 0.4716796875,
+   "r": 0.4411576035405496
+  },
+  {
+   "latents": [
+    2598,
+    5312,
+    16326
+   ],
+   "share": 0.462890625,
+   "r": 0.4169932996067554
+  },
+  {
+   "latents": [
+    6288,
+    11203,
+    14097
+   ],
+   "share": 0.4599609375,
+   "r": 0.4128630709224528
+  },
+  {
+   "latents": [
+    5361,
+    10339,
+    12983
+   ],
+   "share": 0.5048828125,
+   "r": 0.39561146689043425
+  }
+ ],
+ "thresholds": [
+  0.3538786924832067,
+  0.36832632596678927
+ ],
+ "latents": [
+  380,
+  388
+ ],
+ "distinct": [
+  816,
+  827
+ ]
+}
