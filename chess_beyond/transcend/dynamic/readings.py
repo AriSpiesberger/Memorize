@@ -155,7 +155,7 @@ def main():
     ap.add_argument("--show", type=int, default=20)
     ap.add_argument("--nu", type=float, default=0.2, help="soft margin: the share of fit rows allowed inside it")
     ap.add_argument("--nu-contrast", type=float, default=0.5, help="the contrast LP's soft margin: the share of disagree-agree "
-                    "pairs allowed inside it (0.5: the median pair separated; 0.2 asks 80% of pairs, which no v >= 0 may reach)")
+                    "pairs allowed inside it (0.5: the median pair separated; 0.2 asks 80%% of pairs, which no v >= 0 may reach)")
     ap.add_argument("--min-active", type=float, default=0.05, help="latents active at >= this share of positions (lists, LPs)")
     ap.add_argument("--max-pairs", type=int, default=5000, help="disagree-agree pairs per contrast LP at most")
     ap.add_argument("--perms", type=int, default=100, help="label permutations for the significance of each gap")
