@@ -6,7 +6,7 @@
 :root {
   color-scheme: dark;
   --ink: #e2e8f5; --ink2: #94a3c7; --glass: rgba(12,17,32,.66); --edge: rgba(148,163,209,.2);
-  --s: #38bdf8; --w: #fb7185; --both: #c4b5fd; --p0: #4c3fb4; --p1: #8b7cf6; --p2: #ece8ff; --edge-c: #2bb5a7; --card: #fbfaf6; --card-ink: #1d2230;
+  --s: #38bdf8; --w: #fb7185; --both: #c4b5fd; --e0: #0f3d3a; --e1: #14b8a6; --e2: #d5fbf1; --r0: #3b2f9e; --r1: #8b7cf6; --r2: #f1eeff; --concept: #ffffff; --card: #fbfaf6; --card-ink: #1d2230;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 html, body { height: 100%; overflow: hidden; }
@@ -33,8 +33,9 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #key { bottom: calc(14px + env(safe-area-inset-bottom, 0px)); left: calc(14px + env(safe-area-inset-left, 0px));
   max-width: min(640px, calc(100vw - 28px)); display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 12px; color: var(--ink2); padding: 9px 14px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 8px currentColor; }
-.ramp { display: inline-block; width: 70px; height: 8px; border-radius: 4px; margin: 0 5px; vertical-align: -1px;
-  background: linear-gradient(90deg, var(--p0), var(--p1), var(--p2)); }
+.ramp { display: inline-block; width: 70px; height: 8px; border-radius: 4px; margin: 0 5px; vertical-align: -1px; }
+.ramp.e { background: linear-gradient(90deg, var(--e0), var(--e1), var(--e2)); }
+.ramp.r { background: linear-gradient(90deg, var(--r0), var(--r1), var(--r2)); }
 #tip { position: fixed; display: none; max-width: min(520px, calc(100vw - 24px)); max-height: 80vh; overflow-y: auto; background: var(--card); color: var(--card-ink);
   border-radius: 10px; padding: 10px 12px; box-shadow: 0 10px 40px rgba(0,0,0,.55); z-index: 10; font-size: 12.5px; }
 #tip.pinned { outline: 2px solid #a5b4fc; }
@@ -74,7 +75,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
     <button class="btn" id="rot">pause rotation</button><button class="btn" id="fit">re-centre</button><button class="btn" id="tbl">list</button>
     <span class="facts" id="n"></span>
   </div>
-  <div id="hint">White points are latents, violet points are concepts (brighter: persists longer), joined to their latents; only latents a concept in view uses are shown. Hover a point or an edge for its card and examples, click to pin and fly there, drag to orbit, scroll to zoom.</div>
+  <div id="hint">Large white points are concepts, joined to their latents; edges are heated by the concept's persistence, latents by how often they fire. Only latents a concept in view uses are shown. Hover a point or an edge for its card and examples, click to pin and fly there, drag to orbit, scroll to zoom.</div>
 </div>
 <div id="key" class="panel"></div>
 <div id="list" class="panel" hidden></div>
@@ -91,10 +92,14 @@ const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n)
 const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const mix = (a, b, f) => a.map((x, i) => Math.round(x + (b[i] - x) * f));
 const rgb = (c, al) => al == null ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${al})`;
-const S_ = hex(cssv("--s")), W_ = hex(cssv("--w")), B_ = hex(cssv("--both")), P = [hex(cssv("--p0")), hex(cssv("--p1")), hex(cssv("--p2"))];
+const S_ = hex(cssv("--s")), W_ = hex(cssv("--w")), EH = ["--e0", "--e1", "--e2"].map(x => hex(cssv(x))), RH = ["--r0", "--r1", "--r2"].map(x => hex(cssv(x)));
 const PMAX = 6, NONE = [124, 134, 162], DIM_NODE = "#1a2138", DIM_LINK = "rgba(60,72,110,0.10)";
-const LATENT = "#dbe4f5", EDGE = hex(cssv("--edge-c"));
-function pcol(p) { if (p == null) return NONE; const t = Math.min(1, p / PMAX); return t < 0.5 ? mix(P[0], P[1], t * 2) : mix(P[1], P[2], t * 2 - 1); }
+const ramp = (R, t) => (t = Math.max(0, Math.min(1, t)), t < 0.5 ? mix(R[0], R[1], t * 2) : mix(R[1], R[2], t * 2 - 1));
+// edges: the concept's persistence, 0 -> PMAX+ plies; latents: firing rate, log scale between the 2nd and 98th percentile
+const pcol = p => p == null ? NONE : ramp(EH, p / PMAX);
+const LR = D.nodes.map(n => Math.log10(n.rate)).sort((a, b) => a - b), RLO = LR[Math.floor(0.02 * LR.length)], RHI = LR[Math.floor(0.98 * LR.length)];
+const rcol = r => ramp(RH, (Math.log10(r) - RLO) / (RHI - RLO));
+const pct = x => { const v = 100 * 10 ** x; return v >= 1 ? v.toFixed(0) + "%" : v.toFixed(2) + "%"; };
 const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 const inC = new Map(); C.forEach(c => c.lat.forEach(k => { if (!inC.has(k)) inC.set(k, []); inC.get(k).push(c.id); }));
 const byId = new Map(C.map(c => [c.id, c]));
@@ -145,7 +150,7 @@ function examplesHTML(k) {
   if (!ex.length) return "";
   return `<div class="lab">activating (left) and its minimal pair (right): same position and ply, a different line, latent off</div>` + ex.map(e =>
     `<div class="exr"><div class="boards">${boardHTML(e, `on, ${e.value}×`)}${e.off ? boardHTML(e.off, "off") : ""}</div>` +
-    `<div style="padding-left:8px;border-left:3px solid #8b7cf6">${plyHTML(e)}<div class="meta" style="margin:0">on, ${e.value}× its mean · ${tag(e)}</div></div>` +
+    `<div style="padding-left:8px;border-left:3px solid #14b8a6">${plyHTML(e)}<div class="meta" style="margin:0">on, ${e.value}× its mean · ${tag(e)}</div></div>` +
     (e.off ? `<div style="padding-left:8px;border-left:3px solid #c9ccd6">${plyHTML(e.off)}<div class="meta" style="margin:0">off · the lines part at ply ${e.off.diverge + 1}</div></div>` : "") + `</div>`).join("");
 }
 function linkCard(l) {
@@ -208,7 +213,7 @@ function draw() {
   const cs = shown(), used = new Set(); cs.forEach(c => c.lat.forEach(k => used.add(k)));
   const links = [];
   cs.forEach(c => c.lat.forEach((k, i) => {
-    const col = view === "gdiff" ? (c.model === "S" ? S_ : W_) : EDGE;
+    const col = pcol(c.persistence);
     links.push({ id: c.id + "-" + k, source: "c" + c.id, target: "l" + k, c_: c, k, wd: 0.3 + 1.2 * c.w[i], rot: i * 1.3, color: rgb(col) });
   }));
   if (view === "gdiff") D.dedges.forEach(e => {
@@ -216,22 +221,24 @@ function draw() {
     used.add(e.i); used.add(e.j);
   });
   const nodes = N.filter((n, i) => used.has(i)).map(n => ({ id: "l" + n.i, kind: "l", n_: n, x: n.p[0], y: n.p[1], z: n.p[2], fx: n.p[0], fy: n.p[1], fz: n.p[2],
-    val: 0.3 + 0.35 * Math.log10(1 + n.rate * 1e4), c: LATENT }));
+    val: 0.3 + 0.35 * Math.log10(1 + n.rate * 1e4), c: rgb(rcol(n.rate)) }));
   cs.forEach(c => nodes.push({ id: "c" + c.id, kind: "c", c_: c, x: c.p[0], y: c.p[1], z: c.p[2], fx: c.p[0], fy: c.p[1], fz: c.p[2],
-    val: 1.2 + 0.5 * Math.sqrt(c.positions), c: rgb(pcol(c.persistence)) }));
+    val: 1.4 + 0.5 * Math.sqrt(c.positions), c: view === "gdiff" ? rgb(c.model === "S" ? S_ : W_) : cssv("--concept") }));
   adj = new Map();
   for (const l of links) for (const j of [l.source, l.target]) { if (!adj.has(j)) adj.set(j, []); adj.get(j).push(l); }
   pinned = false; tip.style.display = "none"; tip.classList.remove("pinned"); hl = new Set(); hlLinks = new Set(); focus = null; setFocus.key = null;
   G.graphData({ nodes, links }); NODES = new Map(nodes.map(n => [n.id, n]));
   const total = view === "gdiff" ? C.filter(c => c.absent).length : C.filter(c => c.model === (view === "gs" ? "S" : "W")).length;
   document.getElementById("n").innerHTML = `<b>${cs.length}</b> of ${total} concepts` + (view === "gdiff" ? ` · <b>${D.dedges.length}</b> ΔPMI pairs` : "");
-  document.getElementById("key").innerHTML = view === "gdiff"
-    ? `<span><span class="dot" style="color:var(--s);background:var(--s)"></span>S-only concepts, and pairs S combines more</span>` +
-      `<span><span class="dot" style="color:var(--w);background:var(--w)"></span>W-only concepts, and pairs W combines more</span>` +
-      `<span>one model only: best match cosine &lt; ${D.settings.absent_cos} · ΔPMI pairs: |z| &gt; ${D.dpmi_cut}, family-wise over ${D.pairs_supported.toLocaleString()} pairs</span>`
-    : `<span>concept persistence<span class="ramp"></span>0 → ${PMAX}+ plies</span><span>concept size: positions seen at</span>` +
-      `<span><span class="dot" style="color:#dbe4f5;background:#dbe4f5"></span>latent</span><span><span class="dot" style="color:var(--edge-c);background:var(--edge-c);border-radius:2px;height:3px;width:18px"></span>concept → latent, width: weight in v</span>` +
-      `<span>layout: a concept's latents sit ${D.layout.concept_spread}× random distance apart, play partners ${D.layout.neighbour_spread}×</span>`;
+  document.getElementById("key").innerHTML =
+    `<span>edges, concept persistence<span class="ramp e"></span>0 → ${PMAX}+ plies (width: weight in v)</span>` +
+    `<span>latents, firing rate<span class="ramp r"></span>${pct(RLO)} → ${pct(RHI)} of plies</span>` +
+    (view === "gdiff"
+      ? `<span><span class="dot" style="color:var(--s);background:var(--s)"></span>S-only concept · pair S combines more</span>` +
+        `<span><span class="dot" style="color:var(--w);background:var(--w)"></span>W-only concept · pair W combines more</span>` +
+        `<span>one model only: best match cosine &lt; ${D.settings.absent_cos} · ΔPMI pairs: |z| &gt; ${D.dpmi_cut}, family-wise over ${D.pairs_supported.toLocaleString()} pairs</span>`
+      : `<span><span class="dot" style="color:#fff;background:#fff"></span>concept, size: positions seen at</span>` +
+        `<span>layout: a concept's latents sit ${D.layout.concept_spread}× random distance apart, play partners ${D.layout.neighbour_spread}×</span>`);
   setTimeout(() => G.zoomToFit(0, 40), 50); setTimeout(() => G.zoomToFit(900, 40), 1200);
 }
 function setView(v) {
