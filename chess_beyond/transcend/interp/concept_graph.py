@@ -21,6 +21,7 @@ G_diff  concepts whose best match in the other model (report()'s centroid cosine
 
     python transcend/interp/concept_graph.py build      # CPU, a few minutes: runs/transcend/overnight/<name>/graph.npz, .json
     python transcend/interp/concept_graph.py layout     # CPU, under a minute: places the nodes (into graph.json)
+    python transcend/interp/concept_graph.py examples   # CPU, a few minutes: examples for the edges (into graph.json)
     python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html
 """
 import argparse, json, sys, time
@@ -260,16 +261,111 @@ def layout(a):
           f"play partners {sk:.2f} of random; median PMI within concepts {np.median(wi):.3f}", flush=True)
 
 
+def examples(a):
+    """Examples for the edges, from every rollout ply of both models (values in units of the latent's mu, pooled).
+    Concept -> latent edge: the latent's top activating plies (one per position, --n-ex), each with a minimal-pair
+    non-activating example: the same position and ply, the line sharing the longest prefix whose latent is off (0) there.
+    Plus, at the concept's branch points (its own model's codes), the latent's mean over the window on the chosen line
+    and on the subpar one. dPMI pair: plies where both are on (min of the two, top), and where one is on and the other
+    off, from the model that combines them more."""
+    from concept_mine import nums
+    g = json.loads((OV / a.name / "graph.json").read_text()); N = g["nodes"]
+    mu = {m: np.array(json.loads((DIV / f"{a.prefix}-disc-s0" / m / "mu.json").read_text())["mu"]) for m in "SW"}
+    mup = (mu["S"] + mu["W"]) / 2
+    roots = sum((json.loads((OV / a.name / s / "positions.json").read_text(encoding="utf-8")) for s in ("disc", "conf")), [])
+    use = sorted({k for c in g["concepts"] for k in c["lat"]} | {e[x] for e in g["dedges"] for x in ("i", "j")})
+    cols = np.array([N[k]["latent"] for k in use]); col_of = {k: q for q, k in enumerate(use)}
+    fs = {m: files(a, m) for m in "SW"}; t0 = time.time()
+    top = [[] for _ in use]                                  # (value, model, file, row)
+    pairs = [dict(e=e, m="S" if e["d"] > 0 else "W", both=[], only_i=[], only_j=[]) for e in g["dedges"]]
+    def keep(lst, item, n):
+        lst.append(item); lst.sort(key=lambda x: -x[0]); del lst[n:]
+    for m in "SW":
+        for fi, f in enumerate(fs[m]):
+            D, Z = raw(f); r, _ = plies(D); X = Z[r][:, cols].toarray() / mup[cols]
+            am = X.argmax(0); v = X[am, np.arange(len(cols))]
+            for q in np.flatnonzero(v > 0.5): keep(top[q], (float(v[q]), m, fi, int(r[am[q]])), 3 * a.n_ex)
+            for p in pairs:
+                if p["m"] != m: continue
+                xi, xj = X[:, col_of[p["e"]["i"]]], X[:, col_of[p["e"]["j"]]]
+                for key, s_ in (("both", np.minimum(xi, xj)), ("only_i", np.where(xj == 0, xi, 0)), ("only_j", np.where(xi == 0, xj, 0))):
+                    b = int(s_.argmax())
+                    if s_[b] > 0.5: keep(p[key], (float(s_[b]), m, fi, int(r[b]), float(xi[b]), float(xj[b])), a.n_ex)
+            if fi % 200 == 0: print(f"  {m}: position {fi} of {len(fs[m])} ({time.time() - t0:.0f}s)", flush=True)
+    cache = {}
+    def load(m, fi):
+        if (m, fi) not in cache:
+            if len(cache) > 64: cache.clear()
+            cache[(m, fi)] = raw(fs[m][fi])
+        return cache[(m, fi)]
+    def ply(m, fi, row, extra=2):
+        import chess
+        D, _ = load(m, fi); q, t = divmod(row, PL + 1); root = roots[fi]; sans = D[q]["sans"]
+        b = chess.Board(root["fen"])
+        for mv in sans[:t - 1]: b.push_san(mv)
+        return dict(model=m, band=root["band"], line=nums(root["fen"], sans[:t + extra]), t=t, games=D[q]["n"],
+                    fen=b.fen(), uci=b.parse_san(sans[t - 1]).uci())
+    def contrast(m, fi, row, col):
+        D, Z = load(m, fi); q, t = divmod(row, PL + 1); sans = D[q]["sans"]; best = None
+        for q2, d in enumerate(D):
+            if q2 == q or len(d["sans"]) < t: continue
+            if Z[q2 * (PL + 1) + t, col] != 0: continue
+            pre = next((i for i, (x, y) in enumerate(zip(d["sans"][:t], sans[:t])) if x != y), t)
+            if best is None or pre > best[0]: best = (pre, q2)
+        if best is None: return None
+        out = ply(m, fi, best[1] * (PL + 1) + t); out["diverge"] = best[0]; out["value"] = 0.0; return out
+    ex = {}
+    for q, k in enumerate(use):
+        seen, rows = set(), []
+        for v, m, fi, row in top[q]:
+            if fi in seen: continue
+            seen.add(fi); e = ply(m, fi, row); e["value"] = round(v, 2)
+            e["off"] = contrast(m, fi, row, int(cols[q])); rows.append(e)
+            if len(rows) == a.n_ex: break
+        ex[str(k)] = rows
+    for p in pairs:
+        p["e"]["examples"] = {key: [dict(ply(m, fi, row), value=round(v, 2), vi=round(xi, 2), vj=round(xj, 2)) for v, m, fi, row, xi, xj in p[key]]
+                              for key in ("both", "only_i", "only_j")}
+    # the concept's latents at its branch points, chosen line against subpar, its own model's codes
+    R0 = {m: {keyof(r): r for r in json.loads((DIV / f"{a.prefix}-disc-s0" / "mine" / f"lp-{m}-s0.json").read_text())} for m in "SW"}
+    rep = json.loads((paths.ROOT / "results" / "transcend" / "divergence" / f"{a.prefix}-disc-s0" / "mine" / "concepts.json").read_text())
+    src = {f["id"]: f for m_ in "SW" for f in rep[m_]["concepts"]}
+    for c in g["concepts"]:
+        if not c["lat"]: continue
+        m = c["model"]; recs, ps = [], set()
+        for key in sorted(src[c["id"]]["members"], key=lambda k_: -R0[m][k_]["node"]):
+            r_ = R0[m][key]
+            if r_["pos"] in ps: continue
+            ps.add(r_["pos"]); recs.append(r_)
+            if len(recs) == 2: break
+        bpv = []
+        for r_ in recs:
+            D, Z = raw(DIV / f"{a.prefix}-disc-s0" / m / f"pos-{r_['pos']}.npz"); t, k = r_["t"], r_["k"]
+            val = lambda q: (Z[q * (PL + 1) + t:q * (PL + 1) + t + k + 1][:, c["latent"]].toarray() / np.maximum(mu[m][c["latent"]], 1e-6)).mean(0)
+            vc, vs = val(r_["c"]), val(r_["s"])
+            bpv.append(dict(chosen=r_["chosen"], subpar=r_["subpar"], t=t, k=k, wc=round(r_["wc"], 3),
+                            vals={str(j): [round(float(x), 2), round(float(y), 2)] for j, x, y in zip(c["latent"], vc, vs)}))
+        c["bpv"] = bpv
+    g["examples"] = ex
+    (OV / a.name / "graph.json").write_text(json.dumps(g))
+    print(f"examples: {len(ex)} latents, {sum(len(v) for v in ex.values())} activating examples "
+          f"({sum(1 for v in ex.values() for e in v if e['off'])} with a minimal pair), {len(pairs)} dPMI pairs ({time.time() - t0:.0f}s)", flush=True)
+
+
 def page(a):
     g = (OV / a.name / "graph.json").read_text()
+    from pages import BOARD_DEFS, BOARD_JS, MOVE_HEAD
+    bjs = BOARD_JS.split("function explHTML")[0].replace('const q = cls === "sm" ? 16 : 32', 'const q = cls === "sm" ? 16 : cls === "md" ? 22 : 32')
+    assert "function board" in bjs and '"md" ? 22' in bjs
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
+    html = html.replace("<!--BOARDS-->", BOARD_DEFS + MOVE_HEAD).replace("/*BOARD_JS*/", bjs)
     RES.mkdir(parents=True, exist_ok=True); f = RES / f"{a.name}-graph.html"; f.write_text(html, encoding="utf-8")
     print(f"wrote {f} ({len(html) / 1e6:.1f} MB)")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["build", "layout", "page"])
+    ap.add_argument("command", choices=["build", "layout", "examples", "page"])
     ap.add_argument("--name", default="night1")
     ap.add_argument("--prefix", default="ov1")
     ap.add_argument("--match-cos", type=float, default=0.9)
@@ -278,14 +374,16 @@ def main():
     ap.add_argument("--perms", type=int, default=40)
     ap.add_argument("--absent-cos", type=float, default=0.5, help="G_diff: best match in the other model below this")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n-ex", type=int, default=3, help="examples: per latent and per pair kind")
     ap.add_argument("--knn", type=int, default=6, help="layout: play partners per latent")
     ap.add_argument("--concept-len", type=float, default=0.25, help="layout: concept-to-latent edge length, against 1 for play partners")
     ap.add_argument("--iters", type=int, default=80, help="layout: SMACOF iterations")
-    ap.add_argument("--sep", type=float, default=0.3, help="layout: gap between community balls, x their radii")
+    ap.add_argument("--sep", type=float, default=0.6, help="layout: gap between community balls, x their radii")
     ap.add_argument("--resolution", type=float, default=0.5, help="layout: Louvain resolution")
     a = ap.parse_args()
     if a.command == "build": build(a)
     elif a.command == "layout": layout(a)
+    elif a.command == "examples": examples(a)
     else:
         page(a)
 
