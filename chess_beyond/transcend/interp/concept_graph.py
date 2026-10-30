@@ -22,7 +22,10 @@ G_diff  concepts whose best match in the other model (report()'s centroid cosine
     python transcend/interp/concept_graph.py build      # CPU, a few minutes: runs/transcend/overnight/<name>/graph.npz, .json
     python transcend/interp/concept_graph.py layout     # CPU, under a minute: places the nodes (into graph.json)
     python transcend/interp/concept_graph.py examples   # CPU, a few minutes: examples for the edges (into graph.json)
-    python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html
+    python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html (and -graph.json, its data)
+
+The page is concept_graph.html with the data put in. To change the page only, edit concept_graph.html and run page: it
+reads results/transcend/overnight/<name>-graph.json when runs/ is absent (build, layout and examples need runs/).
 """
 import argparse, json, sys, time
 from pathlib import Path
@@ -353,7 +356,10 @@ def examples(a):
 
 
 def page(a):
-    g = (OV / a.name / "graph.json").read_text()
+    # runs/ is not in git, so the page's data is also kept beside the page in results/ (and read from there without runs/)
+    src = OV / a.name / "graph.json"; keep = RES / f"{a.name}-graph.json"
+    g = (src if src.exists() else keep).read_text()
+    if src.exists(): RES.mkdir(parents=True, exist_ok=True); keep.write_text(g)
     from pages import BOARD_DEFS, BOARD_JS, MOVE_HEAD
     bjs = BOARD_JS.split("function explHTML")[0].replace('const q = cls === "sm" ? 16 : 32', 'const q = cls === "sm" ? 16 : cls === "md" ? 22 : 32')
     assert "function board" in bjs and '"md" ? 22' in bjs
