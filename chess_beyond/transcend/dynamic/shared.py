@@ -12,9 +12,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 from concepts import Cache, extend, pad, room
 from crosscoder import CrossCoder

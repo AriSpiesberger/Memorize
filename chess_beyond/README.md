@@ -71,7 +71,7 @@ Three kinds of code share this folder. Keeping them apart keeps the labs separat
 | kind | where it lives | runs on |
 | --- | --- | --- |
 | **Modal only** | [modal/](modal/) | Modal containers (cloud); needs the `modal` CLI |
-| **Shared** | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_model.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py`, `transcend/rl_pgn_games.py` | a home GPU or Modal, unchanged. Modal calls these scripts, so editing one changes both |
+| **Shared** | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/pgn/make_pgn_data.py`, `transcend/pgn/pgn_model.py`, `transcend/pgn/pgn_probe.py`, `transcend/pgn/train_pgn.py`, `transcend/pgn/rl_pgn_games.py` | a home GPU or Modal, unchanged. Modal calls these scripts, so editing one changes both |
 | **Home GPU** | everything else: `search.py`, `intervals.py`, `transcend/` (`train.py`, `rl_puzzles.py`, `eval_puzzles.py`, `play_elo.py`, `pass_at_k.py`, `maia*.py`, ...), `rating_bands/` (`discover.py`, `hard_puzzles.py`, ...), `filter_experiment/` | your own machine (CUDA); not wired to Modal |
 
 Rule of thumb: put logic in the shared or experiment folders, and keep `modal/` to
@@ -125,8 +125,8 @@ python transcend/eval_puzzles.py --ckpt runs/transcend/rl.pt --strata all --n 20
 python transcend/play_elo.py --ckpt runs/transcend/imitation.pt runs/transcend/rl.pt
 python transcend/pass_at_k.py --ckpt runs/transcend/imitation.pt runs/transcend/rl.pt
 # the paper's character-level PGN model, for comparison
-python transcend/make_pgn_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn --out data/transcend/pgn-all
-python transcend/train_pgn.py --data data/transcend/pgn-all --out runs/transcend/pgn-all.pt
+python transcend/pgn/make_pgn_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn --out data/transcend/pgn-all
+python transcend/pgn/train_pgn.py --data data/transcend/pgn-all --out runs/transcend/pgn-all.pt
 python transcend/plot_results.py
 ```
 
@@ -168,22 +168,22 @@ layer 15 crosscoder; `explain.md` repeats these probes for whichever layer it is
 
 ```bash
 # 1. a crosscoder between the two models: one dictionary of latents read from both (~3M positions)
-python transcend/crosscoder.py collect --positions 3000000 --per-game 4 --layers 8 12 15 final --run runs/transcend/crosscoder/everything-3m
-python transcend/crosscoder.py train   --run runs/transcend/crosscoder/everything-3m --layers 15
-python transcend/crosscoder.py top     --run runs/transcend/crosscoder/everything-3m --cc L15
+python transcend/interp/crosscoder.py collect --positions 3000000 --per-game 4 --layers 8 12 15 final --run runs/transcend/crosscoder/everything-3m
+python transcend/interp/crosscoder.py train   --run runs/transcend/crosscoder/everything-3m --layers 15
+python transcend/interp/crosscoder.py top     --run runs/transcend/crosscoder/everything-3m --cc L15
 # 2. an explanation for every latent, scored on held-out games, and what the layer knows
 #    (board facts + Stockfish on every CPU core, ~30-40 min for 100k positions, cached and shared by
 #    the run's crosscoders; then Maia-2 and the crosscoder on the GPU)
-python transcend/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc L15
+python transcend/interp/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc L15
 # 3. self-play rollouts: which latents turn on after which, with each model playing (several hours)
-python transcend/concepts.py rollout --cc-run runs/transcend/crosscoder/everything-3m --cc L15
+python transcend/interp/concepts.py rollout --cc-run runs/transcend/crosscoder/everything-3m --cc L15
 # 4. the path graphs, example rollouts for every path, then Stockfish on every move of those rollouts
 #    (examples and score each redraw the graph with what they add)
-python transcend/concepts.py graph    --run runs/transcend/concepts/everything-3m-L15
-python transcend/concepts.py examples --run runs/transcend/concepts/everything-3m-L15
-python transcend/concepts.py score    --run runs/transcend/concepts/everything-3m-L15
+python transcend/interp/concepts.py graph    --run runs/transcend/concepts/everything-3m-L15
+python transcend/interp/concepts.py examples --run runs/transcend/concepts/everything-3m-L15
+python transcend/interp/concepts.py score    --run runs/transcend/concepts/everything-3m-L15
 # optional: the same paths summarised as SVD "flow modes"
-python transcend/concepts.py modes    --run runs/transcend/concepts/everything-3m-L15
+python transcend/interp/concepts.py modes    --run runs/transcend/concepts/everything-3m-L15
 ```
 
 | step | what it measures | look at |

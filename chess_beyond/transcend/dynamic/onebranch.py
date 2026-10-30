@@ -2,8 +2,8 @@
 first move from the lines that take another, ply by ply, read through the crosscoder's latents and through the raw
 activations, each against the board.
 
-    python transcend/onebranch.py states  --position 2    # GPU: raw L11 states of both models along the cached lines
-    python transcend/onebranch.py analyse --position 2    # CPU
+    python transcend/dynamic/onebranch.py states  --position 2    # GPU: raw L11 states of both models along the cached lines
+    python transcend/dynamic/onebranch.py analyse --position 2    # CPU
 
 data       divergence.py's cached rollouts at --position (one of the 50 positions; --div-tag's codes, 1,024 rollouts of
            16 plies at T = 0.4, the model both colours), for S's rollouts and W's. states: every ply's state after block
@@ -47,9 +47,8 @@ import chess
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import divergence as dv
 import recurring as rc

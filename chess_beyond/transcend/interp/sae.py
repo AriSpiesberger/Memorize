@@ -1,9 +1,9 @@
 """A sparse autoencoder on the PGN model's states, and the positions that most activate each latent.
 
-    python transcend/sae.py collect --model Arisp/chess-pgn-2400plus --layer 8
-    python transcend/sae.py train   --run runs/transcend/sae/chess-pgn-2400plus-L8
-    python transcend/sae.py top     --run runs/transcend/sae/chess-pgn-2400plus-L8
-    python transcend/sae.py all     --model Arisp/chess-pgn-2400plus --layer 8        # the three in a row
+    python transcend/interp/sae.py collect --model Arisp/chess-pgn-2400plus --layer 8
+    python transcend/interp/sae.py train   --run runs/transcend/sae/chess-pgn-2400plus-L8
+    python transcend/interp/sae.py top     --run runs/transcend/sae/chess-pgn-2400plus-L8
+    python transcend/interp/sae.py all     --model Arisp/chess-pgn-2400plus --layer 8        # the three in a row
 
 collect  Runs the model (eval.load: a Hugging Face repo or a local .pt) over game positions
          and keeps one vector per position: the state at the prompt's last character, the
@@ -47,9 +47,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev                                                 # load (HF or .pt), board_of, device
 from pgn_model import SPACE, VOCAB, encode, prompt
 from pgn_probe import parse_movetext

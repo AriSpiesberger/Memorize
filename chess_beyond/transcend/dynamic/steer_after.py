@@ -15,17 +15,18 @@ summary (CPU) steer_concepts.py's decision rule, unchanged, at --primary (r = 0.
        transfer (Bonferroni over the strengths): self-check passes when +v raises the target more than every random v,
        -v lowers it, and Benjamini-Hochberg q < --fdr over concepts (p from the rise's z against the random v's).
 
-    python transcend/steer_after.py diag --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197 --device cuda
-    python transcend/steer_after.py prep --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
-    python transcend/steer_after.py run --device cuda
-    python transcend/steer_after.py summary
+    python transcend/dynamic/steer_after.py diag --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197 --device cuda
+    python transcend/dynamic/steer_after.py prep --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
+    python transcend/dynamic/steer_after.py run --device cuda
+    python transcend/dynamic/steer_after.py summary
 -> results/transcend/divergence/<tag>/mine/steer-diag.md, steer-after.md (.json)"""
 import argparse, json, sys, time
 from pathlib import Path
 from collections import Counter
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import steer_concepts as sc
 from concept_mine import load_pos, mu_of, PL
 

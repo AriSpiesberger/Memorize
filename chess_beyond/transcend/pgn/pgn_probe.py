@@ -25,9 +25,9 @@ cross-validated linear probe reads each label from the full vector (R^2). Each c
 with the previous snapshot in the same folder, so colours and positions are
 comparable across training, and the same probe set serves every model.
 
-  python transcend/pgn_probe.py build --data data/transcend/pgn-1000-1300 data/transcend/pgn-2400+ \\
+  python transcend/pgn/pgn_probe.py build --data data/transcend/pgn-1000-1300 data/transcend/pgn-2400+ \\
       --labelled-pgn data/lichess/bands/2025-06-probe/1600-1800.pgn       # -> data/pgn_probe/
-  python transcend/pgn_probe.py snapshot --ckpt runs/transcend/pgn-1000-1300.pt
+  python transcend/pgn/pgn_probe.py snapshot --ckpt runs/transcend/pgn-1000-1300.pt
 train_pgn.py calls snapshot() at every eval when data/pgn_probe/ exists (--probe).
 """
 import argparse
@@ -42,9 +42,8 @@ import chess.pgn
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/: pgn_model
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/: paths, probe
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from pgn_model import SPACE, VOCAB, encode, prompt
 from probe import corr, probe_r2
 
@@ -369,7 +368,7 @@ def snapshot(model, step, out_dir, probe=DEFAULT, title="PGN model", every_n=200
     probe = str(probe)
     if not os.path.exists(os.path.join(probe, "population.jsonl")):
         if probe not in _cache:
-            print(f"[pgn probe] no probe set at {probe}; skipping (python transcend/pgn_probe.py build)")
+            print(f"[pgn probe] no probe set at {probe}; skipping (python transcend/pgn/pgn_probe.py build)")
             _cache[probe] = None
         return None
     pop_all, lab = load(probe)

@@ -14,13 +14,14 @@ strength picked per model from a grid by the same folds. Gain = R^2(board + e_pr
 positions (the out-of-fold predictions held fixed). Null: the same, end to end (its own targets and nodes), for each of
 the job's random directions (random latents of matching firing rate, the same weights): their median and 95th.
 
-    python transcend/lookahead.py --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
+    python transcend/dynamic/lookahead.py --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
 -> results/transcend/divergence/<tag>/mine/lookahead.md, .json"""
 import argparse, json, sys
 from pathlib import Path
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from concept_mine import load_pos, mu_of, RUNS, RESULTS, PL
 
 
@@ -96,7 +97,7 @@ def test(dirs, E, Ech, Y, Xb, pos, a, rng, boot):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tag", default="p16-r1024-T0.4-s0-L11-4k")
-    ap.add_argument("--source", default=str(Path(__file__).resolve().parents[1] / "runs/transcend/manypositions/p16-r1024-T0.4-s0"))
+    ap.add_argument("--source", default=str(Path(__file__).resolve().parents[2] / "runs/transcend/manypositions/p16-r1024-T0.4-s0"))
     ap.add_argument("--only", default="")
     ap.add_argument("--node", type=int, default=20, help="rollouts through a node")
     ap.add_argument("--spread", type=float, default=0.5, help="children's expressions must spread by this much (units of mu)")

@@ -2,8 +2,8 @@
 of readings.py, their disagree / agree labels and fit / held-out halves, and its two contrast directions v_S, v_W,
 followed along lines both models play.
 
-    python transcend/plies.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal               # both stages
-    python transcend/plies.py --stage analyse                                                             # CPU only
+    python transcend/dynamic/plies.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal               # both stages
+    python transcend/dynamic/plies.py --stage analyse                                                             # CPU only
 
 1. play     from each position, --lines rollouts by S and --lines by W, --plies plies each, temperature --T, the
             model writing both colours' moves. At every position of every line (ply 0 = the root) both models'
@@ -35,9 +35,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import readings as rd
 import shared as gd

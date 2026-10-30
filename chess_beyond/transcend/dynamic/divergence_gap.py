@@ -3,8 +3,8 @@ branching point's rollouts, at least --min-node rollouts pass through that point
 --min-subpar rollouts (so a share is not 3 of 4). Everything else is divergence.py's, unchanged; its arguments pass
 through.
 
-    python transcend/divergence_gap.py lp --model S --cc-run runs/transcend/crosscoder/mixed-L11 --cc L11-4096 --tag <tag>
-    python transcend/divergence_gap.py report --cc-run ... --cc L11-4096 --tag <tag>
+    python transcend/dynamic/divergence_gap.py lp --model S --cc-run runs/transcend/crosscoder/mixed-L11 --cc L11-4096 --tag <tag>
+    python transcend/dynamic/divergence_gap.py report --cc-run ... --cc L11-4096 --tag <tag>
 
 play does not depend on the pairs, so a new tag can reuse another tag's codes: copy runs/transcend/divergence/<tag>/<S|W>/
 pos-*.npz and mu.json into the new tag's folders, then run lp and report here. The filter's settings are written to
@@ -15,7 +15,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import divergence as dv
 
 ap = argparse.ArgumentParser(add_help=False)

@@ -2,12 +2,12 @@
 ranked, and described by what they measurably do on the board. S only: S plays every move of every rollout (W's
 activations are read too, because the crosscoder encodes the pair). The per-position method is manypositions'.
 
-    python transcend/recurring.py pick    --positions 1000             # GPU: the positions, split A / B by game
-    python transcend/recurring.py play    --shard 0 --shards 50        # GPU: rollouts, codes, board facts per position
-    python transcend/recurring.py groups  --shard 0 --shards 50        # CPU: per-position groups
-    python transcend/recurring.py match                                # CPU: patterns on A, found again on B, nulls
-    python transcend/recurring.py search  --shard 0 --shards 50        # CPU: coherence, carry rate, board facts
-    python transcend/recurring.py report                               # the table, histograms, boards
+    python transcend/dynamic/recurring.py pick    --positions 1000             # GPU: the positions, split A / B by game
+    python transcend/dynamic/recurring.py play    --shard 0 --shards 50        # GPU: rollouts, codes, board facts per position
+    python transcend/dynamic/recurring.py groups  --shard 0 --shards 50        # CPU: per-position groups
+    python transcend/dynamic/recurring.py match                                # CPU: patterns on A, found again on B, nulls
+    python transcend/dynamic/recurring.py search  --shard 0 --shards 50        # CPU: coherence, carry rate, board facts
+    python transcend/dynamic/recurring.py report                               # the table, histograms, boards
 (Shards of the same stage can run side by side, e.g. 4 play processes on one GPU: playing is bound by python-chess on
 the CPU, so one process leaves the GPU mostly idle.)
 
@@ -51,9 +51,8 @@ from pathlib import Path
 import chess
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import shared as gd
 import shared as mp

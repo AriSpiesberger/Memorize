@@ -1,6 +1,6 @@
 """Scored explanations for crosscoder latents, in plain chess terms, and what the layer knows.
 
-    python transcend/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc L15
+    python transcend/interp/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc L15
 
 The claim being tested: the latents (and the concept paths built from them in concepts.py) are
 tangible chess ideas. An explanation is a fact, or two joined by "and", and it is only as good as
@@ -51,8 +51,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import chess
 import eval as ev                                                 # device
 import predicates

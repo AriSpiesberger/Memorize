@@ -22,14 +22,14 @@ Tiers:
             (repeats a move, checks, captures, king moves, castling, repeated queen/rook/pawn/knight/bishop moves, quiet)
 
 Stages (each caches its output, so they can run one at a time):
-  python transcend/concept_mine.py lp --model S --seed 0      # and --seed 1, and for W
-  python transcend/concept_mine.py plant --model S            # planted check of the LP and the families (and W)
-  python transcend/concept_mine.py screen --model S           # board probe per latent (and W)
-  python transcend/concept_mine.py families --model S
-  python transcend/concept_mine.py score --model S
-  python transcend/concept_mine.py examples --model S
-  python transcend/concept_mine.py report                      # both models: concepts.json, concepts.md
-  python transcend/concept_mine.py all                         # everything above, both models
+  python transcend/dynamic/concept_mine.py lp --model S --seed 0      # and --seed 1, and for W
+  python transcend/dynamic/concept_mine.py plant --model S            # planted check of the LP and the families (and W)
+  python transcend/dynamic/concept_mine.py screen --model S           # board probe per latent (and W)
+  python transcend/dynamic/concept_mine.py families --model S
+  python transcend/dynamic/concept_mine.py score --model S
+  python transcend/dynamic/concept_mine.py examples --model S
+  python transcend/dynamic/concept_mine.py report                      # both models: concepts.json, concepts.md
+  python transcend/dynamic/concept_mine.py all                         # everything above, both models
 
 Inputs: runs/transcend/divergence/<tag>/<S|W>/pos-*.npz and mu.json (from divergence.py play), for --tag and --tag1.
 Outputs: runs/transcend/divergence/<tag>/mine/ (caches), results/transcend/divergence/<tag>/mine/ (concepts.json, .md).
@@ -40,7 +40,7 @@ from collections import Counter
 import numpy as np
 from scipy import sparse
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "runs" / "transcend" / "divergence"
 RESULTS = ROOT / "results" / "transcend" / "divergence"
 PL = 16

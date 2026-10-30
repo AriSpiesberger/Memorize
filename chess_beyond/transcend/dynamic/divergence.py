@@ -3,11 +3,11 @@ rollouts branch, the sparsest set of latents that separates the line it played m
 not at one ply but on every ply of a window after the split. Concepts are gathered first; how they recur across
 positions is measured afterwards, on held-out positions.
 
-    python transcend/divergence.py play   --model S        # GPU: S's cached manypositions lines, re-encoded with values
-    python transcend/divergence.py play   --model W        # GPU: W's own rollouts at the same positions, encoded
-    python transcend/divergence.py plant                   # CPU, S: the planted check (run it before lp)
-    python transcend/divergence.py lp     --model S        # CPU: divergence pairs and the LP, every k
-    python transcend/divergence.py report                  # CPU: families, recurrence, persistence, examples (S, W)
+    python transcend/dynamic/divergence.py play   --model S        # GPU: S's cached manypositions lines, re-encoded with values
+    python transcend/dynamic/divergence.py play   --model W        # GPU: W's own rollouts at the same positions, encoded
+    python transcend/dynamic/divergence.py plant                   # CPU, S: the planted check (run it before lp)
+    python transcend/dynamic/divergence.py lp     --model S        # CPU: divergence pairs and the LP, every k
+    python transcend/dynamic/divergence.py report                  # CPU: families, recurrence, persistence, examples (S, W)
 
 0. data      the 50 positions of the manypositions run (--source). S: its cached lines (1,024 rollouts of 16 plies at
              T = 0.4, S both colours) re-encoded through the crosscoder with activation values kept. W: --rollouts
@@ -60,9 +60,8 @@ from pathlib import Path
 import chess
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import shared as gd
 import oneposition as op

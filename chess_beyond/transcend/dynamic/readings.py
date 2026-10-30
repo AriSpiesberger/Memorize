@@ -1,7 +1,7 @@
 """Each model's own reading of the shared latents, at the same positions: where S and W pick different moves, does
 S's reading differ from W's more than where they agree?
 
-    python transcend/readings.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
+    python transcend/dynamic/readings.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
 
 1. positions  --positions held-out middlegame positions, one per game (seeded random order); S's and W's top moves
               (their policies' most likely move); a position disagrees when they differ, agrees when not.
@@ -36,9 +36,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import shared as gd
 from pgn_model import MAX_MOVE_CHARS, prompt

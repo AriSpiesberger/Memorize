@@ -1,7 +1,7 @@
 """Concept graphs from self-play rollouts: which crosscoder latents turn on after which.
 
-    python transcend/concepts.py rollout --cc-run runs/transcend/crosscoder/everything-3m --cc L15
-    python transcend/concepts.py graph   --run runs/transcend/concepts/everything-3m-L15
+    python transcend/interp/concepts.py rollout --cc-run runs/transcend/crosscoder/everything-3m --cc L15
+    python transcend/interp/concepts.py graph   --run runs/transcend/concepts/everything-3m-L15
 
 rollout  Start positions: random plies (one per game) of games from --pgn-data (default every
          rating). Each player model (default both models of the crosscoder) plays itself from each
@@ -61,8 +61,8 @@ modes    The graph summarised: truncated SVD (--modes components) of the excess-
          -> results/transcend/concepts/<run>/modes.md, modes.json; <run>/modes.html (one card per
             mode, the latents' top positions drawn as boards).
 
-    python transcend/concepts.py modes   --run runs/transcend/concepts/everything-3m-L15
-    python transcend/concepts.py score   --run runs/transcend/concepts/everything-3m-L15   # after examples
+    python transcend/interp/concepts.py modes   --run runs/transcend/concepts/everything-3m-L15
+    python transcend/interp/concepts.py score   --run runs/transcend/concepts/everything-3m-L15   # after examples
 """
 import argparse
 import html
@@ -79,9 +79,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev                                                 # load, board_of, device
 from crosscoder import RESULTS as CC_RESULTS
 from crosscoder import FOLDERS, Corpus, CrossCoder, pick_positions, position

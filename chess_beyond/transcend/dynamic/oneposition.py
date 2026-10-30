@@ -1,7 +1,7 @@
 """At one position, a concept (a set of latents firing together) that some of S's rollouts carry out and others don't.
 S only: S plays every move of every rollout (W's activations are read too, because the crosscoder encodes the pair).
 
-    python transcend/oneposition.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
+    python transcend/dynamic/oneposition.py --cc-run runs/transcend/crosscoder/everything-3m --cc Lfinal
 
 1. position   one middlegame position from a held-out game with at least two reasonable moves: the first candidate (in a
               seeded random order) where S gives >= 2 moves >= --reasonable and none more than --max-top.
@@ -42,9 +42,8 @@ import chess
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import shared as gd
 from concepts import room

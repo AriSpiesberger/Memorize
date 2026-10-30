@@ -2,7 +2,7 @@
 those from a seed-1 crosscoder, whatever latents each seed built them from. CPU, after divergence.py report has run on
 both crosscoders.
 
-    python transcend/conceptseed.py --tag0 p16-r1024-T0.4-s0-L11-4k --cc0 L11-4096 --tag1 p16-r1024-T0.4-s0-L11-4k-s1 --cc1 L11-4096-s1
+    python transcend/dynamic/conceptseed.py --tag0 p16-r1024-T0.4-s0-L11-4k --cc0 L11-4096 --tag1 p16-r1024-T0.4-s0-L11-4k-s1 --cc1 L11-4096-s1
 
 direction  a family's v (its mean v over latents, |v|_1 = 1, from report.json) becomes a direction in both models' L11
            space through its own crosscoder's decoder: u = sum_j v_j mu_j d_j (mu_j: the divergence run's mean activation
@@ -40,9 +40,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from crosscoder import CrossCoder
 from crossmix import held_out_human, held_out_roll
 

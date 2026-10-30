@@ -1,7 +1,7 @@
 """Rate the Stockfish levels eval.py plays, against Maia-2 at known human ratings.
 
-    python transcend/calibrate_levels.py                       # -> results/transcend/eval/level_ratings.json
-    python transcend/eval.py rerate --model Arisp/chess-pgn-1000-1300 --level-ratings results/transcend/eval/level_ratings.json
+    python transcend/pgn/calibrate_levels.py                       # -> results/transcend/eval/level_ratings.json
+    python transcend/pgn/eval.py rerate --model Arisp/chess-pgn-1000-1300 --level-ratings results/transcend/eval/level_ratings.json
 
 eval.py's `games` plays Lichess's AI levels (Fairy-Stockfish with Lichess's skill,
 depth and move time, eval.LEVELS) but rated them with Transcendence's numbers for a
@@ -34,10 +34,9 @@ import chess.engine
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
-import paths
-import eval as ev                                                 # transcend/eval.py: LEVELS, openings
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
+import eval as ev                                                 # transcend/pgn/eval.py: LEVELS, openings
 from maia import elo_cat, encode, mirror_move
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

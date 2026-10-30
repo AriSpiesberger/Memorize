@@ -1,7 +1,7 @@
 """A look at chosen divergence.py concepts: where each holds across its window and where it does not, and how often it
 fires in S's rollouts against W's at the same positions. CPU, on a divergence run's cached codes.
 
-    python transcend/conceptlook.py --tag p16-r1024-T0.4-s0-L11-4k --concepts 4:1193,262 6:1752,603
+    python transcend/dynamic/conceptlook.py --tag p16-r1024-T0.4-s0-L11-4k --concepts 4:1193,262 6:1752,603
 
 concept    k:latents, a family of --model's report.json at that k with exactly those latents (its weights from there).
 with       the model's branch pairs at that k (its lp pairs, both halves) where the concept holds: v . (z^chosen_tau -
@@ -26,8 +26,8 @@ from pathlib import Path
 import chess
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import divergence as dv
 import oneposition as op
 import recurring as rc

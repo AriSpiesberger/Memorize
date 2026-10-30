@@ -68,8 +68,8 @@ runs too:
 | calls | scripts |
 | --- | --- |
 | `modal_app.py` | `rating_bands/collect_games.py` |
-| `modal_train.py` | `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/make_pgn_data.py`, `transcend/pgn_probe.py`, `transcend/train_pgn.py`, `transcend/rl_pgn_games.py` |
-| imported by those | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `intervals.py`, `transcend/pgn_model.py` |
+| `modal_train.py` | `rating_bands/collect_games.py`, `rating_bands/puzzle_strata.py`, `transcend/pgn/make_pgn_data.py`, `transcend/pgn/pgn_probe.py`, `transcend/pgn/train_pgn.py`, `transcend/pgn/rl_pgn_games.py` |
+| imported by those | `paths.py`, `common.py`, `probe.py`, `lichess_ids.py`, `intervals.py`, `transcend/pgn/pgn_model.py` |
 
 Everything else in `chess_beyond/` is not used by Modal. See
 [where code runs](../README.md#where-code-runs) for the full map.

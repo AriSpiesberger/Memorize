@@ -1,8 +1,8 @@
 """A crosscoder at one layer (default L11, where the layer probe put the models' future moves) of both models, trained on
 human-game positions and the models' own rollouts, about half each, at several dictionary sizes.
 
-    python transcend/crossmix.py all                         # human, rollouts, then train each --sizes
-    python transcend/crossmix.py train --sizes 16384         # one size again (the data are cached)
+    python transcend/dynamic/crossmix.py all                         # human, rollouts, then train each --sizes
+    python transcend/dynamic/crossmix.py train --sizes 16384         # one size again (the data are cached)
 
 human     --human positions from human games (crosscoder.py's collect: pgn-everything, random plies from ply 10 on),
           both models' states after block --layer at the prompt's last character. -> <run>/human/.
@@ -36,9 +36,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import crosscoder as cx
 import shared as gd

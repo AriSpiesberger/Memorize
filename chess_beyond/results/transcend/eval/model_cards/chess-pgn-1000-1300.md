@@ -57,13 +57,13 @@ Illegal moves, on 3,000 held-out positions per band:
 
 ## Evaluation
 
-All evaluations sample moves at temperature T, as in Transcendence: every legal move is scored by the product of its characters' tempered probabilities and one is drawn, renormalised over the legal moves (so illegal moves are never played; "illegal mass" is how much probability the model put on strings that are not a legal move). Code: `chess_beyond/transcend/eval.py` in [AriSpiesberger/Memorize](https://github.com/AriSpiesberger/Memorize).
+All evaluations sample moves at temperature T, as in Transcendence: every legal move is scored by the product of its characters' tempered probabilities and one is drawn, renormalised over the legal moves (so illegal moves are never played; "illegal mass" is how much probability the model put on strings that are not a legal move). Code: `chess_beyond/transcend/pgn/eval.py` in [AriSpiesberger/Memorize](https://github.com/AriSpiesberger/Memorize).
 
 ### Games against Stockfish
 
 The model played Lichess's AI levels (Lichess's skill, depth and move time per level, on Fairy-Stockfish 14 LB) from 50 openings taken from held-out games, each with both colours: 100 games per level and temperature. Score = (wins + draws / 2) / games.
 
-**Ratings.** Transcendence rated its Stockfish levels at 1552 / 1842 / 2142, but those numbers are for a different Stockfish setup and do not fit these levels. Each level was therefore rated here against Maia-2 (rapid) set to 1100, 1300, 1500, 1700, 1900, 2100 (50 openings x 2 colours per pair; `transcend/calibrate_levels.py`):
+**Ratings.** Transcendence rated its Stockfish levels at 1552 / 1842 / 2142, but those numbers are for a different Stockfish setup and do not fit these levels. Each level was therefore rated here against Maia-2 (rapid) set to 1100, 1300, 1500, 1700, 1900, 2100 (50 openings x 2 colours per pair; `transcend/pgn/calibrate_levels.py`):
 
 | level | 1 | 2 | 3 | 4 | 5 | 6 |
 |---|---|---|---|---|---|---|

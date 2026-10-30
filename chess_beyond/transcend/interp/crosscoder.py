@@ -1,11 +1,11 @@
 """A crosscoder between the two PGN models: one dictionary of latents, read from and written to both
 models' states on the same positions, so each latent is either shared or belongs to one model.
 
-    python transcend/crosscoder.py collect                       # both HF models, layers 4 8 12 15 final
-    python transcend/crosscoder.py train --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --layers 12
-    python transcend/crosscoder.py top   --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --cc L12
-    python transcend/crosscoder.py all                           # collect, then train + top for each layer (a sweep)
-    python transcend/crosscoder.py sweep --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus
+    python transcend/interp/crosscoder.py collect                       # both HF models, layers 4 8 12 15 final
+    python transcend/interp/crosscoder.py train --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --layers 12
+    python transcend/interp/crosscoder.py top   --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus --cc L12
+    python transcend/interp/crosscoder.py all                           # collect, then train + top for each layer (a sweep)
+    python transcend/interp/crosscoder.py sweep --run runs/transcend/crosscoder/chess-pgn-1000-1300__chess-pgn-2400plus
 
 collect  Samples random games from make_pgn_data.py folders (default pgn-everything: Lichess games
          of every rating) and, per game, --per-game random plies from
@@ -57,9 +57,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # transcend/
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # chess_beyond/
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev                                                 # load, board_of, score, device
 from pgn_model import SPACE, VOCAB, prompt
 from pgn_probe import parse_movetext

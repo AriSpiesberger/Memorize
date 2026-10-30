@@ -1,7 +1,7 @@
 """Offline RL for a PGN model on database games, rewarded only by who won: +1 for the winner's
 moves, and (optionally) a penalty for the loser's.
 
-    python transcend/rl_pgn_games.py --init Arisp/chess-pgn-1000-1300 --data data/transcend/pgn-1000-1300 \
+    python transcend/pgn/rl_pgn_games.py --init Arisp/chess-pgn-1000-1300 --data data/transcend/pgn-1000-1300 \
         --out runs/transcend/rl-pgn-1000-1300.pt --games 500000
 
 --init is a Hugging Face repo or a local .pt (eval.load); it is also the frozen KL reference.
@@ -55,7 +55,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from eval import load
 from pgn_model import VOCAB, save_pgn_model
 

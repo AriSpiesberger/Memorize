@@ -1,6 +1,6 @@
 """Character-level PGN data for pgn_model.py, from band PGN files.
 
-    python transcend/make_pgn_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn --out data/transcend/pgn-all
+    python transcend/pgn/make_pgn_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn --out data/transcend/pgn-all
 
 Each game becomes ';1.e4 e5 2.Nf3 ... <result>' (pgn_model.movetext): the moves as
 SAN, with clocks, evaluations, annotations and move numbers like '1...' removed.
@@ -31,7 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from lichess_ids import game_id
 from pgn_model import STOI, movetext
 

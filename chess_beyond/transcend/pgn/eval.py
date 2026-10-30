@@ -1,8 +1,8 @@
 """Evaluate PGN models at several sampling temperatures, as in Transcendence (Zhang et al., 2024).
 
-    python transcend/eval.py games     --model Arisp/chess-pgn-1000-1300
-    python transcend/eval.py positions --model Arisp/chess-pgn-1000-1300
-    python transcend/eval.py puzzles   --model Arisp/chess-pgn-1000-1300
+    python transcend/pgn/eval.py games     --model Arisp/chess-pgn-1000-1300
+    python transcend/pgn/eval.py positions --model Arisp/chess-pgn-1000-1300
+    python transcend/pgn/eval.py puzzles   --model Arisp/chess-pgn-1000-1300
 
 --model is a Hugging Face repo (model.safetensors + config.json) or a local .pt checkpoint.
 Stockfish comes from tools/stockfish/ or $STOCKFISH (paths.stockfish()).
@@ -51,8 +51,8 @@ import chess.engine
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from intervals import wilson
 from pgn_model import MAX_MOVE_CHARS, PGNTransformer, encode, load_pgn_model, prompt
 from pgn_probe import DEFAULT as PROBE, parse_movetext, subset

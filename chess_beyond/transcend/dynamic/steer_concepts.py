@@ -25,11 +25,11 @@ that model has no representation of those latents, a different finding from "rep
 Note: the codes are the joint crosscoder's (both models read every line), so "S's concepts" and "W's concepts" differ in
 which lines each model plays; whether a concept is shared is what this test decides.
 
-  python transcend/steer_concepts.py prep        # CPU: runs/.../<tag>/mine/steer-jobs.json
-  python transcend/steer_concepts.py run --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197     # the pilot first
-  python transcend/steer_concepts.py summary --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
-  python transcend/steer_concepts.py run         # GPU (or CPU, slowly): steer-results.jsonl
-  python transcend/steer_concepts.py summary     # results/.../<tag>/mine/steer.md, steer.json
+  python transcend/dynamic/steer_concepts.py prep        # CPU: runs/.../<tag>/mine/steer-jobs.json
+  python transcend/dynamic/steer_concepts.py run --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197     # the pilot first
+  python transcend/dynamic/steer_concepts.py summary --only S141,S8,W29,S14,W25,S29,W138,W30,S58,W197
+  python transcend/dynamic/steer_concepts.py run         # GPU (or CPU, slowly): steer-results.jsonl
+  python transcend/dynamic/steer_concepts.py summary     # results/.../<tag>/mine/steer.md, steer.json
   modal run --detach modal/modal_train.py::steer_concepts     # prep locally, upload, run on a GPU, download
 """
 import argparse, json, sys, time
@@ -37,8 +37,9 @@ from pathlib import Path
 from collections import Counter
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).resolve().parent)); sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 RUNS = ROOT / "runs" / "transcend" / "divergence"
 RESULTS = ROOT / "results" / "transcend" / "divergence"
 PL = 16

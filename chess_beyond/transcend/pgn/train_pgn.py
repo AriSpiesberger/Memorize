@@ -1,6 +1,6 @@
 """Train the character-level PGN transformer with the "Transcendence" recipe.
 
-    python transcend/train_pgn.py --data data/transcend/pgn-all --out runs/transcend/pgn-all.pt
+    python transcend/pgn/train_pgn.py --data data/transcend/pgn-all --out runs/transcend/pgn-all.pt
 
 Recipe from the paper (ChessFormer): AdamW, lr 3e-4, 2000 warmup steps then cosine
 decay, weight decay 0.1, ~125K tokens per optimizer step, 100K steps; model 16
@@ -43,8 +43,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 from pgn_model import PGNTransformer, save_pgn_model
 from pgn_probe import DEFAULT as PROBE_DEFAULT, snapshot
 

@@ -1,9 +1,9 @@
 """Where does a model carry its own future? At every layer, how much do its activations at a position say about the
 moves it will play there next, beyond the board and the move it is about to play?
 
-    python transcend/layerprobe.py                     # GPU: futures and activations (cached), then the probes
-    python transcend/layerprobe.py --stage probe       # the probes alone
-    python transcend/layerprobe.py --model W           # the same for W
+    python transcend/dynamic/layerprobe.py                     # GPU: futures and activations (cached), then the probes
+    python transcend/dynamic/layerprobe.py --stage probe       # the probes alone
+    python transcend/dynamic/layerprobe.py --model W           # the same for W
 
 1. positions    --positions held-out middlegame positions, one per game (readings.py's choice and order: its 1,000 are
                 the first 1,000 here). Split by game: 70% train, 10% validation, 20% test.
@@ -44,9 +44,8 @@ import chess
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
+import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import readings as rd
 import shared as gd

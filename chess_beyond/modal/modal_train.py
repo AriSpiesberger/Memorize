@@ -28,7 +28,7 @@ prepare (CPU, runs on Modal end to end), in this order so no test puzzle can lea
                      (round-robin, so the per-eval 20,000 cover every game) + 10 labelled
                      1600-1800 positions
                      -> data/pgn_probe/
-train (GPU): transcend/train_pgn.py with --compile --resume, so every eval writes
+train (GPU): transcend/pgn/train_pgn.py with --compile --resume, so every eval writes
   runs/transcend/pgn-<band>.pt (best held-out loss), _log.jsonl, _state.pt and
   _pgn_probe/step<N>.png (the same 20,000 held-out
   positions at every eval; their raw vectors too at step 0 and every 10th eval). Training follows
@@ -163,7 +163,7 @@ def make_pgn(band: str):
 
 
 def make_pgn_cmd(band, extra, out, puzzles):
-    return [sys.executable, "transcend/make_pgn_data.py", "--pgn", f"data/lichess/bands/upsampled/{band}.pgn", str(extra),
+    return [sys.executable, "transcend/pgn/make_pgn_data.py", "--pgn", f"data/lichess/bands/upsampled/{band}.pgn", str(extra),
             "--out", str(out), "--exclude-puzzles", *map(str, puzzles), "--games", str(SFT_GAMES),
             "--val-games", str(HELD_OUT)]
 
@@ -196,7 +196,7 @@ def probe_games():
 @app.function(image=image, volumes={DATA: data}, cpu=2.0, memory=8192, timeout=2 * 60 * 60)
 def build_probe():
     data.reload()
-    sh([sys.executable, "transcend/pgn_probe.py", "build",
+    sh([sys.executable, "transcend/pgn/pgn_probe.py", "build",
         "--data", *[f"data/transcend/pgn-{b}" for b in BANDS], "--names", *BANDS, "--per-band", str(PROBE_PER_BAND),
         "--per-game", str(PER_GAME),
         "--labelled-pgn", f"data/lichess/bands/{PROBE_MONTH}-probe/1600-1800.pgn", "--labelled-name", "1600-1800"])
@@ -231,7 +231,7 @@ def train(band: str, stop_step: int = 0, eval_every: int = 1000, name: str = "",
     if not (Path(DATA) / "pgn_probe" / "population.jsonl").exists():
         raise RuntimeError("no probe set on the volume yet, so there would be no plots: run prepare first")
     out = f"runs/transcend/pgn-{band}{name}.pt"
-    cmd = [sys.executable, "transcend/train_pgn.py", "--data", f"data/transcend/pgn-{band}", "--out", out,
+    cmd = [sys.executable, "transcend/pgn/train_pgn.py", "--data", f"data/transcend/pgn-{band}", "--out", out,
            "--eval-every", str(eval_every), "--compile", "--resume", "--lr", LR, "--min-lr", MIN_LR,
            "--micro", str(micro), "--compile-mode", compile_mode]
     if stop_step:
@@ -334,10 +334,10 @@ def train_band(band: str = "1000-1300", name: str = "", steps: int = 0, lr: str 
 @app.function(image=image, gpu=GPU, volumes={DATA: data, RUNS: runs}, cpu=4.0, memory=32 * 1024,
               timeout=12 * 60 * 60)
 def rl(band: str, games: int = 500_000, name: str = "", extra: list = []):
-    """transcend/rl_pgn_games.py: the band's Hugging Face model on --games of the band's own training
+    """transcend/pgn/rl_pgn_games.py: the band's Hugging Face model on --games of the band's own training
     games -> runs/transcend/rl-pgn-<band><name>.pt (+ _log, _step<N>). Needs info.npz (rl_band builds it first)."""
     data.reload()
-    cmd = [sys.executable, "transcend/rl_pgn_games.py", "--init", HF_MODELS[band], "--data", f"data/transcend/pgn-{band}",
+    cmd = [sys.executable, "transcend/pgn/rl_pgn_games.py", "--init", HF_MODELS[band], "--data", f"data/transcend/pgn-{band}",
            "--out", f"runs/transcend/rl-pgn-{band}{name}.pt", "--games", str(games), "--compile",
            *[str(x) for x in extra]]
     print("$", " ".join(cmd), flush=True)
@@ -381,13 +381,13 @@ steer_image = lab_image("torch==2.11.*", "numpy", "scipy", "chess", "zstandard",
 
 @app.function(image=steer_image, gpu=GPU, volumes={RUNS: runs}, cpu=4.0, memory=32 * 1024, timeout=6 * 60 * 60)
 def steer(tag: str = STEER_TAG, extra: list = []):
-    """transcend/steer_concepts.py run on the uploaded steer-jobs.json and crosscoder; results stream to
+    """transcend/dynamic/steer_concepts.py run on the uploaded steer-jobs.json and crosscoder; results stream to
     runs/transcend/divergence/<tag>/mine/steer-results.jsonl (resumable), committed every 2 minutes."""
     runs.reload()
     stop = threading.Event()
     threading.Thread(target=commit_every, args=(runs, 120, stop), daemon=True).start()
     try:
-        sh([sys.executable, "transcend/steer_concepts.py", "run", "--tag", tag, *[str(x) for x in extra]])
+        sh([sys.executable, "transcend/dynamic/steer_concepts.py", "run", "--tag", tag, *[str(x) for x in extra]])
     finally:
         stop.set()
         runs.commit()
@@ -395,7 +395,7 @@ def steer(tag: str = STEER_TAG, extra: list = []):
 
 @app.local_entrypoint()
 def steer_concepts(tag: str = STEER_TAG, extra: str = "", only: str = ""):
-    """Upload the crosscoder and steer-jobs.json (make it first: python transcend/steer_concepts.py prep), run
+    """Upload the crosscoder and steer-jobs.json (make it first: python transcend/dynamic/steer_concepts.py prep), run
     the steering on a GPU, and download steer-results.jsonl next to the jobs; then run steer_concepts.py summary."""
     root = Path(__file__).resolve().parents[1]
     mine = f"transcend/divergence/{tag}/mine"
@@ -410,4 +410,4 @@ def steer_concepts(tag: str = STEER_TAG, extra: str = "", only: str = ""):
     with open(out, "wb") as fh:
         for chunk in runs.read_file(f"{mine}/{name}"):
             fh.write(chunk)
-    print(f"downloaded {out}; now: python transcend/steer_concepts.py summary" + (f" --only {only}" if only else ""), flush=True)
+    print(f"downloaded {out}; now: python transcend/dynamic/steer_concepts.py summary" + (f" --only {only}" if only else ""), flush=True)
