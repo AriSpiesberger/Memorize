@@ -1,213 +1,233 @@
 <title>L11 Concept Map</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
 <style>
-/* layout: one column; header facts, view tabs, the 3D map full width, then the diff table */
+/* layout: the map fills the screen; one frosted control bar top left, a key bottom left, cards float by the pointer */
 :root {
-  --bg: #fbfbfa; --panel: #f2f2ef; --fg: #161614; --fg2: #55544f; --muted: #8b8a84; --rule: #dcdbd5;
-  --node: #a9a8a1; --s-edge: #1baf7a; --w-edge: #eb6834; --none: #c9c8c1;
-  --seq0: #86b6ef; --seq1: #3987e5; --seq2: #1c5cab; --seq3: #0d366b;
-  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
+  --ink: #e2e8f5; --ink2: #94a3c7; --glass: rgba(12,17,32,.66); --edge: rgba(148,163,209,.2);
+  --s: #38bdf8; --w: #fb7185; --both: #c4b5fd; --p0: #9a3412; --p1: #f59e0b; --p2: #fde68a; --card: #fbfaf6; --card-ink: #1d2230;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #181817; --panel: #222220; --fg: #f0efec; --fg2: #c3c2b7; --muted: #8f8e86; --rule: #3a3a37;
-  --node: #6f6e68; --s-edge: #199e70; --w-edge: #d95926; --none: #4a4a46;
-  --seq0: #184f95; --seq1: #2a78d6; --seq2: #6da7ec; --seq3: #cde2fb; color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: #181817; --panel: #222220; --fg: #f0efec; --fg2: #c3c2b7; --muted: #8f8e86; --rule: #3a3a37;
-  --node: #6f6e68; --s-edge: #199e70; --w-edge: #d95926; --none: #4a4a46;
-  --seq0: #184f95; --seq1: #2a78d6; --seq2: #6da7ec; --seq3: #cde2fb; color-scheme: dark }
-body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
-.wrap { max-width: 1200px; margin: 0 auto; padding-block: 24px 48px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  display: grid; gap: 20px; }
-h1 { font-size: 24px; font-weight: 600; margin: 0; text-wrap: balance; }
-h2 { font-size: 17px; font-weight: 600; margin: 0; }
-p { margin: 0; max-width: 72ch; color: var(--fg2); }
-.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; font-family: var(--mono); font-size: 13px; color: var(--fg2); }
-.facts b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
-.bar { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
-.tabs { display: flex; gap: 4px; background: var(--panel); padding: 4px; border-radius: 8px; }
-.tabs button { font: 500 14px var(--sans); color: var(--fg2); background: none; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-.tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--rule); }
-.tabs button:focus-visible, input:focus-visible { outline: 2px solid var(--seq1); outline-offset: 2px; }
-label { font-size: 13px; color: var(--fg2); display: flex; gap: 8px; align-items: center; }
-input[type=range] { width: 140px; }
-.out { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); min-width: 2ch; }
-#plot { width: 100%; height: min(78vh, 820px); min-height: 420px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); }
-.note { font-size: 13px; color: var(--muted); max-width: 90ch; }
-.key { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--fg2); align-items: center; }
-.sw { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
-.ramp { display: inline-block; width: 90px; height: 8px; border-radius: 2px; vertical-align: middle; margin: 0 6px;
-  background: linear-gradient(90deg, var(--seq0), var(--seq1), var(--seq2), var(--seq3)); }
-.tablebox { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font-weight: 500; color: var(--fg2); background: var(--panel); position: sticky; top: 0; cursor: pointer; }
-td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-td.lat { font-family: var(--mono); white-space: normal; min-width: 260px; }
+html, body { height: 100%; overflow: hidden; }
+body { margin: 0; color: var(--ink); font: 13px/1.45 var(--sans);
+  background: radial-gradient(ellipse at 50% 40%, #16203a 0%, #0b1022 45%, #04060d 100%) #04060d; }
+#g { position: fixed; inset: 0; }
+.panel { position: fixed; z-index: 5; padding: 12px 16px; border-radius: 12px; background: var(--glass);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--edge); box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+#bar { top: calc(14px + env(safe-area-inset-top, 0px)); left: calc(14px + env(safe-area-inset-left, 0px));
+  max-width: min(640px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))); display: grid; gap: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.title { font-size: 16px; font-weight: 600; letter-spacing: .03em; margin-right: 6px; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(30,40,68,.6); border: 1px solid var(--edge); }
+.seg button { background: none; border: 0; color: var(--ink2); font: 500 13px var(--sans); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: rgba(165,180,252,.18); color: var(--ink); }
+.btn, select, input[type=search] { background: rgba(30,40,68,.8); color: var(--ink); border: 1px solid rgba(148,163,209,.3); border-radius: 6px;
+  padding: 3px 9px; font: inherit; }
+.btn { cursor: pointer; } .btn:hover, select:hover { border-color: #a5b4fc; }
+input[type=search] { width: 150px; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
+.facts { color: var(--ink2); font-variant-numeric: tabular-nums; }
+.facts b { color: var(--ink); font-weight: 500; }
+#hint { color: #8b97b8; font-size: 12px; }
+#key { bottom: calc(14px + env(safe-area-inset-bottom, 0px)); left: calc(14px + env(safe-area-inset-left, 0px));
+  max-width: min(640px, calc(100vw - 28px)); display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 12px; color: var(--ink2); padding: 9px 14px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 8px currentColor; }
+.ramp { display: inline-block; width: 70px; height: 8px; border-radius: 4px; margin: 0 5px; vertical-align: -1px;
+  background: linear-gradient(90deg, var(--p0), var(--p1), var(--p2)); }
+#tip { position: fixed; display: none; max-width: min(520px, calc(100vw - 24px)); max-height: 80vh; overflow-y: auto; background: var(--card); color: var(--card-ink);
+  border-radius: 10px; padding: 10px 12px; box-shadow: 0 10px 40px rgba(0,0,0,.55); z-index: 10; font-size: 12.5px; }
+#tip.pinned { outline: 2px solid #a5b4fc; }
+#tip h3 { margin: 0 0 4px; font-size: 14px; }
+#tip .meta { color: #5b6275; margin-bottom: 6px; }
+#tip .mv { font-family: var(--mono); font-size: 12px; margin: 3px 0; line-height: 1.5; }
+#tip .mv b { background: #fde68a; font-weight: 600; border-radius: 2px; padding: 0 1px; }
+#tip .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #7a8194; margin-top: 8px; }
+#tip .chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; background: #eceae2; border-radius: 4px; padding: 0 5px; margin: 2px 3px 0 0; }
+#list { top: calc(14px + env(safe-area-inset-top, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); width: min(440px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: auto; padding: 10px 12px; }
+#list table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+#list th, #list td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+#list th { color: var(--ink2); font-weight: 500; cursor: pointer; position: sticky; top: -10px; background: #0e1427; }
+#list tbody tr { cursor: pointer; } #list tbody tr:hover { background: rgba(165,180,252,.1); }
+#list .num { text-align: right; font-family: var(--mono); }
+@media (max-width: 560px) { #key { display: none; } #hint { display: none; } }
 </style>
 
-<div class="wrap">
-  <header style="display:grid;gap:8px">
-    <h1>L11 concept map: S and W concepts on one latent layout</h1>
-    <p>Each point is a seed-stable latent of the L11 4k crosscoder, placed by how often play turns it on together with the others (PPMI over rollout plies, S and W pooled, 3D SVD). Each star is a mined concept, joining its latents. Drag to rotate, scroll to zoom, hover for details.</p>
-  </header>
-  <div class="facts" id="facts"></div>
-  <div class="bar">
-    <div class="tabs" role="tablist" id="tabs">
-      <button role="tab" id="tab-gs" data-v="gs" aria-selected="true">G_S: S's concepts</button>
-      <button role="tab" id="tab-gw" data-v="gw" aria-selected="false">G_W: W's concepts</button>
-      <button role="tab" id="tab-gdiff" data-v="gdiff" aria-selected="false">G_diff</button>
-    </div>
-    <label for="minpos">Seen at ≥ <span class="out" id="minpos-out">5</span> positions
-      <input type="range" id="minpos" min="2" max="60" step="1" value="5"></label>
-    <label for="dedge" id="dedge-label"><input type="checkbox" id="dedge" checked> ΔPMI edges</label>
+<div id="g" aria-label="3D map of latents and concepts"></div>
+<div id="bar" class="panel">
+  <div class="row"><span class="title">L11 concept map</span>
+    <span class="seg" role="group" aria-label="View">
+      <button id="v-gs" data-v="gs" aria-pressed="true">G_S</button><button id="v-gw" data-v="gw" aria-pressed="false">G_W</button><button id="v-gdiff" data-v="gdiff" aria-pressed="false">G_diff</button>
+    </span>
+    <label for="minpos" class="facts">seen at ≥</label>
+    <select id="minpos"><option>2</option><option selected>5</option><option>10</option><option>20</option><option>40</option></select>
+    <span class="facts">positions</span>
   </div>
-  <div id="plot"></div>
-  <div class="key" id="key"></div>
-  <p class="note" id="method"></p>
-  <section style="display:grid;gap:10px">
-    <h2>Concepts present in one model only</h2>
-    <p class="note">The best match in the other model is below the cosine cut, by centroid cosine over the 4,096 latents. Click a column to sort.</p>
-    <div class="tablebox"><table id="tbl"><thead></thead><tbody></tbody></table></div>
-  </section>
+  <div class="row">
+    <input type="search" id="find" placeholder="latent or concept id" aria-label="Find a latent or concept">
+    <button class="btn" id="rot">pause rotation</button><button class="btn" id="fit">re-centre</button><button class="btn" id="tbl">list</button>
+    <span class="facts" id="n"></span>
+  </div>
+  <div id="hint">Small points are latents, tinted by which model's play turns them on more. Large amber points are concepts, brighter the longer they persist, joined to their latents. Hover for a card, click to pin it and fly there, drag to orbit, scroll to zoom.</div>
 </div>
+<div id="key" class="panel"></div>
+<div id="list" class="panel" hidden></div>
+<div id="tip"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.27.0/plotly.min.js"></script>
 <script type="application/json" id="data">/*DATA*/</script>
 <script>
-const G = JSON.parse(document.getElementById("data").textContent);
-const N = G.nodes, C = G.concepts;
-const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const fmt = (x, d = 2) => x == null ? "–" : Number(x).toFixed(d);
+const D = JSON.parse(document.getElementById("data").textContent);
+const N = D.nodes, C = D.concepts.filter(c => c.p);
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, f) => a.map((x, i) => Math.round(x + (b[i] - x) * f));
+const rgb = (c, al) => al == null ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${al})`;
+const S_ = hex(cssv("--s")), W_ = hex(cssv("--w")), B_ = hex(cssv("--both")), P = [hex(cssv("--p0")), hex(cssv("--p1")), hex(cssv("--p2"))];
+const PMAX = 6, NONE = [124, 134, 162], DIM_NODE = "#1a2138", DIM_LINK = "rgba(60,72,110,0.10)";
+// latent tint: the share of its firing that comes from S's play, 0.4 (coral, W) -> 0.5 (lilac) -> 0.6 (sky, S)
+function tint(s) { const t = Math.max(0, Math.min(1, (s - 0.4) / 0.2)); return t < 0.5 ? mix(W_, B_, t * 2) : mix(B_, S_, t * 2 - 1); }
+function pcol(p) { if (p == null) return NONE; const t = Math.min(1, p / PMAX); return t < 0.5 ? mix(P[0], P[1], t * 2) : mix(P[1], P[2], t * 2 - 1); }
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const inC = new Map(); C.forEach(c => c.lat.forEach(k => { if (!inC.has(k)) inC.set(k, []); inC.get(k).push(c.id); }));
+const byId = new Map(C.map(c => [c.id, c]));
+N.forEach((n, i) => { n.i = i; });
+
 let view = ["gs", "gw", "gdiff"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "gs";
-try { const v = localStorage.getItem("cg-minpos"); if (v) document.getElementById("minpos").value = v; } catch (e) {}
+const sel = document.getElementById("minpos"), tip = document.getElementById("tip");
+try { const v = localStorage.getItem("cg-minpos-3d"); if (v && [...sel.options].some(o => o.value === v)) sel.value = v; } catch (e) {}
 
-const pers = C.map(c => c.persistence).filter(x => x != null);
-const pmax = Math.min(8, Math.max(4, ...pers));
-const cut = G.settings.absent_cos;
-document.getElementById("facts").innerHTML = [
-  ["positions", G.n_positions], ["nodes", N.length + " of " + G.n_matched + " seed-matched"],
-  ["S concepts", C.filter(c => c.model === "S").length], ["W concepts", C.filter(c => c.model === "W").length],
-  ["S only", C.filter(c => c.model === "S" && c.absent).length], ["W only", C.filter(c => c.model === "W" && c.absent).length],
-  ["ΔPMI edges", G.dedges.length + " (|z| > " + G.dpmi_cut + ")"]].map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("");
-document.getElementById("method").textContent =
-  `On: z > 0.5·mu (mean of the two models' mu). Plies: every ply of every rollout line, weighted by its rollout count (S ${Math.round(G.plies.S).toLocaleString()}, W ${Math.round(G.plies.W).toLocaleString()}). ` +
-  `Concepts: night1 discovery families that replicate across seeds; their latents covering 95% of the squared weight, drawn where they are nodes. ` +
-  `Persistence: plies in a row from the split with v·(z_chosen − z_subpar) ≥ 0.5, median over branch points where the concept is on at the split. ` +
-  `G_diff: concepts whose best match in the other model has cosine < ${cut}; ΔPMI = PMI_S − PMI_W (counts + 0.5) for pairs with ≥ ${G.settings.min_pair} co-occurring plies, ` +
-  `over its sd when S and W are swapped at random positions (analytic, over all positions), and kept when |z| beats the 95th percentile of the largest |z| over all ${G.pairs_supported.toLocaleString()} pairs in ${G.settings.perms} actual swaps. Singular values: ${G.sv.slice(0, 4).join(", ")}.`;
-
-function centre(c) {
-  let x = [0, 0, 0], s = 0;
-  c.lat.forEach((k, i) => { const w = c.w[i] * c.w[i]; s += w; for (let d = 0; d < 3; d++) x[d] += w * N[k].x[d]; });
-  return x.map(v => v / s);
+let last = { clientX: innerWidth / 2, clientY: innerHeight / 2 }, pinned = false;
+addEventListener("mousemove", e => { last = e; }, { passive: true });
+function place(ev) {
+  const r = tip.getBoundingClientRect(); let x = ev.clientX + 16, y = ev.clientY + 12;
+  if (x + r.width > innerWidth - 8) x = Math.max(8, ev.clientX - r.width - 16);
+  if (y + r.height > innerHeight - 8) y = Math.max(8, innerHeight - r.height - 8);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
 }
-C.forEach(c => { if (c.lat.length) c.ctr = centre(c); });
-
-function traces() {
-  const minpos = +document.getElementById("minpos").value;
-  const scale = [[0, css("--seq0")], [0.33, css("--seq1")], [0.66, css("--seq2")], [1, css("--seq3")]];
-  const show = C.filter(c => c.ctr && c.positions >= minpos &&
-    (view === "gs" ? c.model === "S" : view === "gw" ? c.model === "W" : c.absent));
-  const T = [{
-    type: "scatter3d", mode: "markers", name: "latent", showlegend: false,
-    x: N.map(n => n.x[0]), y: N.map(n => n.x[1]), z: N.map(n => n.x[2]),
-    marker: { size: N.map(n => 1.5 + 0.6 * Math.log10(n.rate * 1e5)), color: css("--node"), opacity: 0.55 },
-    text: N.map(n => `latent ${n.latent}<br>on at ${(100 * n.rate).toFixed(2)}% of plies<br>seed-1 decoder cosine ${n.seed_cos}`),
-    hoverinfo: "text"
-  }];
-  // star segments, three width bins by the latent's weight in v
-  [[0.5, 1.01, 5], [0.25, 0.5, 3], [0, 0.25, 1.5]].forEach(([lo, hi, wd]) => {
-    const x = [], y = [], z = [], col = [];
-    show.forEach(c => c.lat.forEach((k, i) => {
-      if (c.w[i] < lo || c.w[i] >= hi) return;
-      const p = c.persistence == null ? -1 : c.persistence;
-      x.push(c.ctr[0], N[k].x[0], null); y.push(c.ctr[1], N[k].x[1], null); z.push(c.ctr[2], N[k].x[2], null); col.push(p, p, p);
-    }));
-    T.push({ type: "scatter3d", mode: "lines", showlegend: false, hoverinfo: "skip", x, y, z,
-      line: { width: wd, color: col.map(p => p < 0 ? 0 : p), colorscale: scale, cmin: 0, cmax: pmax }, opacity: 0.7 });
-  });
-  const hov = c => `<b>${c.id}</b> (${c.model}, ${c.tier}${c.theme ? ", " + c.theme : ""})<br>` +
-    `seen at ${c.positions} positions · persistence ${c.persistence == null ? "never on at split" : c.persistence + " plies"} (${c.on_at_split} branch points)<br>` +
-    `best match ${c.match}, cosine ${fmt(c.match_cos, 3)}<br>latents: ` +
-    c.latent.map((j, i) => `${j} (${fmt(c.w[i])})`).join(", ") + `<br>${c.lat.length} of ${c.k95} keep95 latents are nodes, ${Math.round(100 * c.covered)}% of the weight`;
-  const groups = view === "gdiff" ? [["S", "circle", "S-only concept"], ["W", "diamond", "W-only concept"]] : [[view === "gs" ? "S" : "W", "circle", "concept"]];
-  groups.forEach(([m, sym, nm], gi) => {
-    const g = show.filter(c => c.model === m);
-    T.push({ type: "scatter3d", mode: "markers", name: nm, showlegend: view === "gdiff",
-      x: g.map(c => c.ctr[0]), y: g.map(c => c.ctr[1]), z: g.map(c => c.ctr[2]),
-      marker: { symbol: sym, size: g.map(c => 3 + 1.6 * Math.sqrt(c.positions)),
-        color: g.map(c => c.persistence == null ? 0 : c.persistence), colorscale: scale, cmin: 0, cmax: pmax,
-        line: { color: css("--bg"), width: 1 },
-        colorbar: gi === 0 ? { title: { text: "persistence<br>(plies)", font: { color: css("--fg2"), size: 12 } }, thickness: 10, len: 0.5,
-          tickfont: { color: css("--fg2"), size: 11 }, outlinewidth: 0 } : undefined, showscale: gi === 0 },
-      text: g.map(hov), hoverinfo: "text" });
-  });
-  if (view === "gdiff" && document.getElementById("dedge").checked) {
-    [["S", d => d.d > 0, "--s-edge", "S combines more"], ["W", d => d.d < 0, "--w-edge", "W combines more"]].forEach(([m, f, tok, nm]) => {
-      const x = [], y = [], z = [], tx = [];
-      const mx = [], my = [], mz = [];
-      G.dedges.filter(f).forEach(d => {
-        const a = N[d.i].x, b = N[d.j].x;
-        x.push(a[0], b[0], null); y.push(a[1], b[1], null); z.push(a[2], b[2], null);
-        mx.push((a[0] + b[0]) / 2); my.push((a[1] + b[1]) / 2); mz.push((a[2] + b[2]) / 2);
-        tx.push(`latents ${N[d.i].latent} + ${N[d.j].latent}<br>ΔPMI ${d.d > 0 ? "+" : ""}${d.d} (z ${d.z})<br>${d.n.toLocaleString()} co-occurring plies, pooled`);
-      });
-      T.push({ type: "scatter3d", mode: "lines", name: `ΔPMI: ${nm}`, x, y, z, hoverinfo: "skip",
-        line: { width: 3, color: css(tok) }, opacity: 0.8 });
-      T.push({ type: "scatter3d", mode: "markers", showlegend: false, x: mx, y: my, z: mz, text: tx, hoverinfo: "text",
-        marker: { size: 3, color: css(tok), opacity: 0.9 } });
-    });
-  }
-  return [T, show.length];
+const lineHTML = (line, t, k) => line.map((m, i) => i >= t - 1 && i < t + k ? `<b>${esc(m)}</b>` : esc(m)).join(" ");
+function conceptCard(c) {
+  const other = c.model === "S" ? "W" : "S";
+  let h = `<h3>${esc(c.id)} <span style="font-weight:400;color:#5b6275">${c.model === "S" ? "2400+ model (S)" : "1000–1300 model (W)"}</span></h3>` +
+    `<div class="meta">${esc(c.tier)}${c.theme ? " · " + esc(c.theme) : ""} · seen at ${c.positions} discovery positions · persistence ` +
+    `${c.persistence == null ? "never on at the split" : c.persistence + " plies"} (${c.on_at_split} branch points)<br>` +
+    `best match in ${other}: ${esc(c.match)}, cosine ${c.match_cos.toFixed(3)}${c.absent ? " (absent in " + other + ")" : ""}</div>` +
+    `<div class="lab">latents (weight in v)</div>` + c.latent.map((j, i) => `<span class="chip">${j} · ${c.w[i].toFixed(2)}</span>`).join("") +
+    (c.lat.length < c.k95 ? `<div class="meta">${c.k95 - c.lat.length} more of its latents are not seed-stable, so not on the map</div>` : "");
+  if (c.bps && c.bps.length) h += `<div class="lab">branch points: chosen over subpar</div>` +
+    c.bps.map(b => `<div class="mv">${esc(b.chosen)} (${Math.round(100 * b.wc)}%) over ${esc(b.subpar)}<br>${lineHTML(b.cline, b.t, b.k)}</div>`).join("");
+  if (c.windows && c.windows.length) h += `<div class="lab">where it is most on (window in bold)</div>` +
+    c.windows.map(w => `<div class="mv">${lineHTML(w.line, w.t, w.k)} <span style="color:#7a8194">· ${esc(w.band)}</span></div>`).join("");
+  return h;
 }
+function latentCard(n) {
+  const cs = inC.get(n.i) || [];
+  return `<h3>latent ${n.latent}</h3><div class="meta">on at ${(100 * n.rate).toFixed(2)}% of plies · ${Math.round(100 * n.s_share)}% of its firing from S's play ` +
+    `· seed-1 decoder cosine ${n.seed_cos}</div>` + (cs.length ? `<div class="lab">in ${cs.length} concept${cs.length > 1 ? "s" : ""}</div>` +
+    cs.map(x => `<span class="chip">${esc(x)}</span>`).join("") : `<div class="meta">in no mined concept</div>`);
+}
+const edgeCard = e => `<h3>latents ${N[e.i].latent} + ${N[e.j].latent}</h3><div class="meta">${e.d > 0 ? "S" : "W"}'s play combines them more: ` +
+  `ΔPMI ${e.d > 0 ? "+" : ""}${e.d} (z ${e.z}), ${e.n.toLocaleString()} co-occurring plies pooled</div>`;
+const card = n => n.kind === "c" ? conceptCard(n.c_) : latentCard(n.n_);
+function showTip(html, ev) { tip.innerHTML = html; tip.style.display = "block"; place(ev); }
 
+let hl = new Set(), hlLinks = new Set(), focus = null, adj = new Map(), NODES = new Map();
+const G = ForceGraph3D({ controlType: "orbit" })(document.getElementById("g"))
+  .backgroundColor("rgba(0,0,0,0)").showNavInfo(false)
+  .nodeLabel(() => "").nodeOpacity(0.95).nodeResolution(10).nodeRelSize(2.4).nodeVal(n => n.val)
+  .nodeColor(n => hl.size ? (n.id === focus ? "#ffffff" : hl.has(n.id) ? n.c : DIM_NODE) : (n.on ? n.c : n.dim))
+  .linkWidth(l => l.wd).linkOpacity(0.75).linkHoverPrecision(3)
+  .linkColor(l => hl.size && !hlLinks.has(l) ? DIM_LINK : l.color)
+  .linkDirectionalParticles(l => l.p || 0).linkDirectionalParticleWidth(1.6).linkDirectionalParticleResolution(6)
+  .linkDirectionalParticleSpeed(0.004).linkDirectionalParticleColor(l => l.color)
+  .cooldownTicks(0).warmupTicks(0)
+  .onNodeHover(n => later(() => { setFocus(n ? n.id : null, null); if (pinned) return;
+    if (n) showTip(card(n), last); else tip.style.display = "none"; }))
+  .onLinkHover(l => later(() => { if (pinned) return; setFocus(null, l);
+    if (l && l.e) showTip(edgeCard(l.e), last); else tip.style.display = "none"; }))
+  .onNodeClick(n => { setFocus(n.id, null, true); pinned = true; tip.classList.add("pinned"); showTip(card(n), last); fly(n); })
+  .onBackgroundClick(() => { pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; setFocus(null, null, true); });
+G.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+let pending = 0;
+function later(f) { cancelAnimationFrame(pending); pending = requestAnimationFrame(f); }
+function setFocus(id, link, force) {                     // light up a node's neighbourhood, or one link
+  if (pinned && !force) return;
+  const key = id !== null ? "n" + id : link ? "l" + link.id : null;
+  if (key === setFocus.key) return; setFocus.key = key;
+  hl = new Set(); hlLinks = new Set(); focus = id;
+  if (id !== null) { hl.add(id); for (const l of adj.get(id) || []) { hlLinks.add(l); hl.add(l.source.id ?? l.source); hl.add(l.target.id ?? l.target); } }
+  if (link) { hlLinks.add(link); hl.add(link.source.id ?? link.source); hl.add(link.target.id ?? link.target); }
+  G.nodeColor(G.nodeColor()).linkColor(G.linkColor());
+}
+function fly(n) {
+  const d = 70, k = 1 + d / Math.max(1, Math.hypot(n.x, n.y, n.z));
+  G.cameraPosition({ x: n.x * k, y: n.y * k, z: n.z * k }, n, 1400);
+}
+const shown = () => C.filter(c => c.positions >= +sel.value && (view === "gs" ? c.model === "S" : view === "gw" ? c.model === "W" : c.absent));
 function draw() {
-  const [T, n] = traces();
-  const ax = t => ({ title: { text: t, font: { color: css("--muted"), size: 11 } }, showgrid: true, gridcolor: css("--rule"),
-    zeroline: false, showticklabels: false, showbackground: false, color: css("--muted") });
-  const layout = { paper_bgcolor: css("--bg"), font: { family: css("--sans"), color: css("--fg2") },
-    margin: { l: 0, r: 0, t: 8, b: 0 }, showlegend: view === "gdiff",
-    legend: { x: 0.01, y: 0.98, bgcolor: "rgba(0,0,0,0)", font: { size: 12, color: css("--fg2") } },
-    hoverlabel: { bgcolor: css("--panel"), bordercolor: css("--rule"), font: { family: css("--mono"), size: 12, color: css("--fg") } },
-    scene: { xaxis: ax("SVD 1"), yaxis: ax("SVD 2"), zaxis: ax("SVD 3"), aspectmode: "data", bgcolor: css("--bg") },
-    uirevision: "keep" };
-  Plotly.react("plot", T, layout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["toImage"] });
-  document.getElementById("key").innerHTML =
-    `<span><span class="ramp"></span>persistence 0 → ${fmt(pmax, 0)}${pmax === 8 ? "+" : ""} plies (grey points: latents)</span>` +
-    `<span>marker size: discovery positions</span><span>line width: the latent's weight in v (≥ 0.5, 0.25–0.5, < 0.25)</span>` +
-    (view === "gdiff" ? `<span><span class="sw" style="background:var(--s-edge)"></span>ΔPMI, S combines more</span><span><span class="sw" style="background:var(--w-edge)"></span>ΔPMI, W combines more</span><span>● S-only · ◆ W-only</span>` : "") +
-    `<span><b class="out">${n}</b> concepts shown</span>`;
-  document.getElementById("dedge-label").hidden = view !== "gdiff";
+  const cs = shown(), used = new Set(); cs.forEach(c => c.lat.forEach(k => used.add(k)));
+  const links = [];
+  cs.forEach(c => c.lat.forEach((k, i) => {
+    const col = view === "gdiff" ? (c.model === "S" ? S_ : W_) : pcol(c.persistence);
+    links.push({ id: c.id + "-" + k, source: "c" + c.id, target: "l" + k, wd: c.w[i] >= 0.5 ? 0.6 : 0, color: rgb(col, 0.55) });
+  }));
+  if (view === "gdiff") D.dedges.forEach(e => {
+    links.push({ id: "d" + e.i + "-" + e.j, source: "l" + e.i, target: "l" + e.j, wd: 0.9, p: 2, e, color: rgb(e.d > 0 ? S_ : W_, 0.9) });
+    used.add(e.i); used.add(e.j);
+  });
+  const nodes = N.map((n, i) => { const c = tint(n.s_share);
+    return { id: "l" + i, kind: "l", n_: n, x: n.p[0], y: n.p[1], z: n.p[2], fx: n.p[0], fy: n.p[1], fz: n.p[2], val: 0.25 + 0.35 * Math.log10(1 + n.rate * 1e4),
+      c: rgb(c), dim: rgb(mix([11, 16, 34], c, 0.35)), on: used.has(i) }; });
+  cs.forEach(c => nodes.push({ id: "c" + c.id, kind: "c", c_: c, x: c.p[0], y: c.p[1], z: c.p[2], fx: c.p[0], fy: c.p[1], fz: c.p[2],
+    val: 1.2 + 0.5 * Math.sqrt(c.positions), c: rgb(pcol(c.persistence)), on: true }));
+  adj = new Map();
+  for (const l of links) for (const j of [l.source, l.target]) { if (!adj.has(j)) adj.set(j, []); adj.get(j).push(l); }
+  pinned = false; tip.style.display = "none"; tip.classList.remove("pinned"); hl = new Set(); hlLinks = new Set(); focus = null; setFocus.key = null;
+  G.graphData({ nodes, links }); NODES = new Map(nodes.map(n => [n.id, n]));
+  document.getElementById("n").innerHTML = `<b>${cs.length}</b> concepts` + (view === "gdiff" ? ` · <b>${D.dedges.length}</b> ΔPMI pairs` : "");
+  document.getElementById("key").innerHTML = view === "gdiff"
+    ? `<span><span class="dot" style="color:var(--s);background:var(--s)"></span>S-only concepts, and pairs S combines more</span>` +
+      `<span><span class="dot" style="color:var(--w);background:var(--w)"></span>W-only concepts, and pairs W combines more</span>` +
+      `<span>one model only: best match cosine &lt; ${D.settings.absent_cos} · ΔPMI pairs: |z| &gt; ${D.dpmi_cut}, family-wise over ${D.pairs_supported.toLocaleString()} pairs</span>`
+    : `<span>concept persistence<span class="ramp"></span>0 → ${PMAX}+ plies</span><span>concept size: positions seen at</span>` +
+      `<span><span class="dot" style="color:var(--s);background:var(--s)"></span>S fires it more</span><span><span class="dot" style="color:var(--w);background:var(--w)"></span>W fires it more</span>` +
+      `<span>layout: a concept's latents sit ${D.layout.concept_spread}× random distance apart, play partners ${D.layout.neighbour_spread}×</span>`;
+  setTimeout(() => G.zoomToFit(0, 40), 50); setTimeout(() => G.zoomToFit(900, 40), 1200);
 }
-
 function setView(v) {
-  view = v;
-  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.v === v));
-  history.replaceState(null, "", "#" + v); draw();
+  view = v; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === v));
+  history.replaceState(null, "", "#" + v); draw(); if (!document.getElementById("list").hidden) list();
 }
-document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => setView(b.dataset.v)));
-const mp = document.getElementById("minpos");
-mp.addEventListener("input", () => { document.getElementById("minpos-out").textContent = mp.value; try { localStorage.setItem("cg-minpos", mp.value); } catch (e) {} draw(); });
-document.getElementById("minpos-out").textContent = mp.value;
-document.getElementById("dedge").addEventListener("change", draw);
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
-new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-
-// table of one-model-only concepts
-const cols = [["id", "concept"], ["model", "model"], ["positions", "positions"], ["persistence", "persistence"], ["match", "best match"],
-  ["match_cos", "cosine"], ["tier", "tier"], ["theme", "theme"], ["latent", "latents (weight)"]];
-let sortk = "positions", sdir = -1;
-function table() {
-  const rows = C.filter(c => c.absent).sort((a, b) => { const x = a[sortk], y = b[sortk]; return (x > y ? 1 : x < y ? -1 : 0) * sdir; });
-  document.querySelector("#tbl thead").innerHTML = "<tr>" + cols.map(([k, t]) => `<th data-k="${k}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("") + "</tr>";
-  document.querySelector("#tbl tbody").innerHTML = rows.map(c => `<tr><td>${c.id}</td><td>${c.model}</td><td class="num">${c.positions}</td>` +
-    `<td class="num">${c.persistence == null ? "–" : c.persistence}</td><td>${c.match}</td><td class="num">${fmt(c.match_cos, 3)}</td><td>${c.tier}</td><td>${c.theme || ""}</td>` +
-    `<td class="lat">${c.latent.map((j, i) => `${j} (${fmt(c.w[i])})`).join(", ") || "none are nodes"}</td></tr>`).join("");
-  document.querySelectorAll("#tbl th").forEach(th => th.addEventListener("click", () => { const k = th.dataset.k; sdir = k === sortk ? -sdir : -1; sortk = k; table(); }));
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setView(b.dataset.v)));
+sel.addEventListener("change", () => { try { localStorage.setItem("cg-minpos-3d", sel.value); } catch (e) {} draw(); if (!document.getElementById("list").hidden) list(); });
+let spin = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+G.controls().autoRotate = spin; G.controls().autoRotateSpeed = 0.4;
+document.getElementById("rot").textContent = spin ? "pause rotation" : "rotate";
+document.getElementById("rot").onclick = e => { spin = !spin; G.controls().autoRotate = spin; e.target.textContent = spin ? "pause rotation" : "rotate"; };
+document.getElementById("fit").onclick = () => G.zoomToFit(900, 40);
+function jump(id) {
+  const n = NODES.get(id); if (!n) return false;
+  setFocus(n.id, null, true); pinned = true; tip.classList.add("pinned");
+  showTip(card(n), { clientX: innerWidth * 0.6, clientY: innerHeight * 0.2 }); fly(n); return true;
 }
-table(); setView(view);
+document.getElementById("find").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return; const q = e.target.value.trim().toUpperCase(); if (!q) return;
+  const c = byId.get(q);
+  if (c) { if (!jump("c" + c.id)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); setTimeout(() => jump("c" + c.id), 400); } return; }
+  const k = N.findIndex(n => String(n.latent) === q); if (k >= 0) jump("l" + k);
+});
+let sortk = "positions", sdir = -1;                        // the concepts in view, as a table
+function list() {
+  const box = document.getElementById("list"), rows = shown().slice().sort((a, b) => { const x = a[sortk] ?? -1, y = b[sortk] ?? -1; return (x > y ? 1 : x < y ? -1 : 0) * sdir; });
+  const cols = [["id", "concept"], ["positions", "positions"], ["persistence", "persist."], ["match_cos", "best match"], ["theme", "theme"]];
+  box.innerHTML = `<table><thead><tr>${cols.map(([k, t]) => `<th data-k="${k}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td class="num">${c.positions}</td><td class="num">${c.persistence ?? "–"}</td>` +
+      `<td>${esc(c.match)} <span class="num">${c.match_cos.toFixed(2)}</span></td><td>${esc(c.theme || "")}</td></tr>`).join("") + `</tbody></table>`;
+  box.querySelectorAll("th").forEach(th => th.onclick = () => { const k = th.dataset.k; sdir = k === sortk ? -sdir : -1; sortk = k; list(); });
+  box.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => jump("c" + tr.dataset.id));
+}
+document.getElementById("tbl").onclick = () => { const b = document.getElementById("list"); b.hidden = !b.hidden; if (!b.hidden) list(); };
+addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
+document.addEventListener("visibilitychange", () => document.hidden ? G.pauseAnimation() : G.resumeAnimation());
+setView(view);
 </script>

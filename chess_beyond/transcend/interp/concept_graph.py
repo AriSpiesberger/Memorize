@@ -5,9 +5,11 @@ Nodes   latents of seed 0 that match a seed-1 latent (mutual best decoder cosine
         two models' mu (one threshold for both, so S and W counts compare).
 Layout  over every ply t >= 1 of every rollout line (weighted by how many rollouts played it) at every night1 position
         (discovery and confirmation), S and W pooled: P(i), P(i, j) = share of plies where i is on, where i and j are both
-        on; PPMI = max(0, log P(i, j) / P(i) P(j)) (diagonal 0); 3D embedding = the top 3 singular vectors x sqrt(s).
+        on; PPMI = max(0, log P(i, j) / P(i) P(j)). Placed by layout(): communities, then a stress layout within and
+        between them, of one graph holding the latents (each joined to its strongest play partners by PPMI) and every
+        concept of both models (joined to its latents), so every latent has one place in all three views.
 Edges   per model, the mined concepts that replicate across seeds (overnight_confirm.py choose's rule 1); each a star from
-        its centre (the weighted mean of its latents' places) to its latents, the concept being its centroid's top latents
+        its own node to its latents, the concept being its centroid's top latents
         covering 95% of the squared weight (keep95), restricted to the nodes. Colour: persistence (the old reports' rule:
         plies in a row from the split with v . (z_chosen - z_subpar) >= 0.5, |v|_1 = 1, median over its branch points where
         it is on at the split). Size: discovery positions it was found at.
@@ -18,6 +20,7 @@ G_diff  concepts whose best match in the other model (report()'s centroid cosine
         (maxT, family-wise over every pair).
 
     python transcend/interp/concept_graph.py build      # CPU, a few minutes: runs/transcend/overnight/<name>/graph.npz, .json
+    python transcend/interp/concept_graph.py layout     # CPU, under a minute: places the nodes (into graph.json)
     python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html
 """
 import argparse, json, sys, time
@@ -180,6 +183,83 @@ def build(a):
           f"median share of squared weight on nodes S {cov['S']:.2f}, W {cov['W']:.2f}; wrote {OV / a.name / 'graph.json'} ({time.time() - t0:.0f}s)", flush=True)
 
 
+def layout(a):
+    """The map. One graph holds every latent and every drawable concept of both models. Edges: each latent to its --knn
+    strongest partners in play (PPMI x log(1 + count), pooled; length 1.5 - strength / max) and each concept to its
+    latents (length --concept-len x (1.5 - weight)). A concept's latents rarely fire together (median PMI ~0 within a
+    concept), so co-occurrence alone scatters them; the concept edges are what keep them together. Louvain communities of
+    that graph (--resolution); each community laid out on its own shortest-path distances (classical MDS, then weighted
+    SMACOF, w = d^-2), as a ball of radius ~ size^(1/3); the communities placed by their mean distances to one another
+    and spread until no two balls overlap (--sep). Scored against random latent sets of the same size: the mean distance
+    within concepts (>= 3 latents) and between play partners, each over random."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import shortest_path
+    z = np.load(OV / a.name / "graph.npz"); g = json.loads((OV / a.name / "graph.json").read_text())
+    C = z["CS"] + z["CW"]; n = len(C); P = C / z["N"].sum(); pi = np.diag(P).copy()
+    with np.errstate(divide="ignore", invalid="ignore"): PMI = np.log(P / np.outer(pi, pi))
+    PMI[~np.isfinite(PMI)] = 0; np.fill_diagonal(PMI, 0)
+    M = np.maximum(PMI, 0) * np.log1p(C); np.fill_diagonal(M, 0)
+    knn = [(i, int(j), float(M[i, j])) for i in range(n) for j in np.argsort(-M[i])[:a.knn] if M[i, j] > 0]
+    mx = max(w for *_, w in knn)
+    cons = [k for k, c in enumerate(g["concepts"]) if c["lat"]]; m = n + len(cons)
+    r, c_, L = [], [], []
+    for i, j, w in knn: r.append(i); c_.append(j); L.append(1.5 - w / mx)
+    for q, k in enumerate(cons):
+        for kk, w in zip(g["concepts"][k]["lat"], g["concepts"][k]["w"]): r.append(n + q); c_.append(kk); L.append(a.concept_len * (1.5 - w))
+    A = csr_matrix((L, (r, c_)), shape=(m, m)); A = A.maximum(A.T)
+    D = shortest_path(A, directed=False); fin = np.isfinite(D); D[~fin] = D[fin].max() * 1.2
+    # communities of the same graph (Louvain, weight 1 / length)
+    import networkx as nx
+    Gx = nx.Graph(); Gx.add_nodes_from(range(m)); Ac = A.tocoo()
+    Gx.add_weighted_edges_from((int(i), int(j), 1 / w) for i, j, w in zip(Ac.row, Ac.col, Ac.data) if i < j)
+    comm = np.zeros(m, int)
+    for q, cs in enumerate(sorted(nx.community.louvain_communities(Gx, weight="weight", seed=a.seed, resolution=a.resolution), key=len, reverse=True)):
+        comm[list(cs)] = q
+    Q = nx.community.modularity(Gx, [set(np.flatnonzero(comm == q)) for q in range(comm.max() + 1)], weight="weight")
+    def stress(D_):
+        k_ = len(D_)
+        if k_ < 4: return np.random.default_rng(a.seed).normal(size=(k_, 3)) * 0.3
+        J = np.eye(k_) - 1 / k_; w_, V = np.linalg.eigh(-0.5 * J @ (D_ ** 2) @ J); X_ = V[:, -3:] * np.sqrt(np.maximum(w_[-3:], 0))
+        W = 1 / np.maximum(D_, 1e-9) ** 2; np.fill_diagonal(W, 0)
+        Vm = -W.copy(); np.fill_diagonal(Vm, W.sum(1)); Vp = np.linalg.pinv(Vm + 1 / k_) - 1 / k_
+        for _ in range(a.iters):
+            E = np.maximum(np.linalg.norm(X_[:, None] - X_[None], axis=-1), 1e-9)
+            B = -W * D_ / E; np.fill_diagonal(B, 0); np.fill_diagonal(B, -B.sum(1)); X_ = Vp @ (B @ X_)
+        return X_ - X_.mean(0)
+    # two levels: each community laid out on its own distances, as a ball of radius ~ size^(1/3); the communities placed
+    # by their mean distances to one another, spread until no two balls overlap (--sep: the gap, x the radii)
+    nq = comm.max() + 1; X = np.zeros((m, 3)); rad = np.zeros(nq)
+    for q in range(nq):
+        idx = np.flatnonzero(comm == q); Xq = stress(D[np.ix_(idx, idx)])
+        rad[q] = len(idx) ** (1 / 3); Xq *= rad[q] / max(np.percentile(np.linalg.norm(Xq, axis=1), 95), 1e-9); X[idx] = Xq
+    Dc = np.array([[D[np.ix_(comm == p, comm == q)].mean() if p != q else 0 for q in range(nq)] for p in range(nq)])
+    Yc = stress(Dc); dc = np.linalg.norm(Yc[:, None] - Yc[None], axis=-1); np.fill_diagonal(dc, np.inf)
+    X += Yc[comm] * float(np.max((1 + a.sep) * (rad[:, None] + rad[None]) / dc))
+    X = X - X[:n].mean(0); X *= 400 / np.percentile(np.linalg.norm(X[:n], axis=1), 95)
+    rng = np.random.default_rng(a.seed); Dn = np.linalg.norm(X[:n, None] - X[None, :n], axis=-1); base = Dn[np.triu_indices(n, 1)].mean()
+    spread = lambda L_: Dn[np.ix_(L_, L_)][np.triu_indices(len(L_), 1)].mean()
+    big = [g["concepts"][k]["lat"] for k in cons if len(g["concepts"][k]["lat"]) >= 3]
+    sc = float(np.median([spread(L_) / np.mean([spread(list(rng.choice(n, len(L_), replace=False))) for _ in range(5)]) for L_ in big]))
+    sk = float(np.mean([Dn[i, j] for i, j, _ in knn]) / base)
+    wi = [np.mean([PMI[x, y] for i, x in enumerate(L_) for y in L_[i + 1:]]) for L_ in big]
+    for k, nd in enumerate(g["nodes"]): nd["p"] = [round(float(v), 2) for v in X[k]]; nd["comm"] = int(comm[k])
+    rate = {m_: np.diag(z["C" + m_]) / z["N"][q] for q, m_ in enumerate("SW")}
+    for k, nd in enumerate(g["nodes"]): nd["s_share"] = round(float(rate["S"][k] / max(rate["S"][k] + rate["W"][k], 1e-12)), 3)
+    for q, k in enumerate(cons): g["concepts"][k]["p"] = [round(float(v), 2) for v in X[n + q]]; g["concepts"][k]["comm"] = int(comm[n + q])
+    rep = json.loads((paths.ROOT / "results" / "transcend" / "divergence" / f"{a.prefix}-disc-s0" / "mine" / "concepts.json").read_text())
+    src = {f["id"]: f for m_ in "SW" for f in rep[m_]["concepts"]}
+    for c in g["concepts"]:
+        f = src[c["id"]]
+        c["windows"] = [dict(line=x["line"], t=x["t"], k=x["k"], band=x["band"]) for x in f.get("activating", [])[:3]]
+        c["bps"] = [dict(chosen=b["chosen"], subpar=b["subpar"], wc=b["wc"], cline=b["cline"][:b["t"] + b["k"]], t=b["t"], k=b["k"])
+                    for b in f.get("branch_points", [])[:2]]
+    g["layout"] = dict(knn=a.knn, concept_len=a.concept_len, iters=a.iters, sep=a.sep, communities=int(comm.max() + 1), modularity=round(Q, 3), concept_spread=round(sc, 3), neighbour_spread=round(sk, 3),
+                       pmi_within_concepts=round(float(np.median(wi)), 3), knn_edges=len(knn))
+    (OV / a.name / "graph.json").write_text(json.dumps(g))
+    print(f"layout: {m} nodes ({n} latents, {len(cons)} concepts), {len(knn)} play edges, {comm.max() + 1} communities (Q {Q:.2f}); concept spread {sc:.2f} of random, "
+          f"play partners {sk:.2f} of random; median PMI within concepts {np.median(wi):.3f}", flush=True)
+
+
 def page(a):
     g = (OV / a.name / "graph.json").read_text()
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
@@ -189,7 +269,7 @@ def page(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["build", "page"])
+    ap.add_argument("command", choices=["build", "layout", "page"])
     ap.add_argument("--name", default="night1")
     ap.add_argument("--prefix", default="ov1")
     ap.add_argument("--match-cos", type=float, default=0.9)
@@ -198,8 +278,14 @@ def main():
     ap.add_argument("--perms", type=int, default=40)
     ap.add_argument("--absent-cos", type=float, default=0.5, help="G_diff: best match in the other model below this")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--knn", type=int, default=6, help="layout: play partners per latent")
+    ap.add_argument("--concept-len", type=float, default=0.25, help="layout: concept-to-latent edge length, against 1 for play partners")
+    ap.add_argument("--iters", type=int, default=80, help="layout: SMACOF iterations")
+    ap.add_argument("--sep", type=float, default=0.3, help="layout: gap between community balls, x their radii")
+    ap.add_argument("--resolution", type=float, default=0.5, help="layout: Louvain resolution")
     a = ap.parse_args()
     if a.command == "build": build(a)
+    elif a.command == "layout": layout(a)
     else:
         page(a)
 
