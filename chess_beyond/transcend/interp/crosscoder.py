@@ -11,7 +11,7 @@ collect  Samples random games from make_pgn_data.py folders (default pgn-everyth
          of every rating) and, per game, --per-game random plies from
          --min-ply on. One forward pass per game gives every ply's state, so a million positions
          take ~60k games. At each ply the state is the one at the prompt's last character, just
-         before the model writes its move (as in sae.py), from both models, at every --layers entry
+         before the model writes its move, from both models, at every --layers entry
          (a block index 0-15, the residual stream after that block, or 'final', after the last
          LayerNorm). -> <run>/acts/<model>-L<layer>.npy (float16, one row per position),
          <run>/rows.npy (folder, game, ply, character index) and <run>/collect.json.
@@ -62,7 +62,6 @@ import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev                                                 # load, board_of, score, device
 from pgn_model import SPACE, VOCAB, prompt
 from pgn_probe import parse_movetext
-from sae import last_moves, lichess
 
 RUNS = paths.RUNS / "transcend" / "crosscoder"
 RESULTS = paths.ROOT / "results" / "transcend" / "crosscoder"
@@ -93,6 +92,16 @@ class Corpus:
     def ids(self, f, g, n):
         s, _ = self.span(f, g)
         return torch.from_numpy(self.tokens[f][s:s + n].astype(np.int64))
+
+
+def last_moves(text, n=8):
+    """The last n moves of a prompt, with move numbers, for display."""
+    toks = text.lstrip(";").split()
+    return " ".join(toks[-n:]) if toks else ""
+
+
+def lichess(fen):
+    return "https://lichess.org/analysis/" + fen.replace(" ", "_")
 
 
 def ply_ends(text, ctx, min_ply):

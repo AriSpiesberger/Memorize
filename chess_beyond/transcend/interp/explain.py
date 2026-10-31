@@ -2,8 +2,7 @@
 
     python transcend/interp/explain.py --cc-run runs/transcend/crosscoder/everything-3m --cc L15
 
-The claim being tested: the latents (and the concept paths built from them in concepts.py) are
-tangible chess ideas. An explanation is a fact, or two joined by "and", and it is only as good as
+The claim being tested: the latents are tangible chess ideas. An explanation is a fact, or two joined by "and", and it is only as good as
 its score: how well it predicts, on positions it was not chosen on, when the latent fires. Three
 kinds of facts:
   board facts (predicates.py)   what is on the board: a hanging piece, a pin, a check, a passed pawn
@@ -38,7 +37,6 @@ square facts), measured on held-out games.
               which model uses them.
 
 -> results/transcend/crosscoder/<run>/<cc>/explanations.jsonl (one line per latent) and explain.md.
-   concepts.py graph picks the explanations up for its node and path cards.
 """
 import argparse
 import json

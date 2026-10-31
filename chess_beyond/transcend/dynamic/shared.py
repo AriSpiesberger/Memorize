@@ -14,11 +14,83 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
-from concepts import Cache, extend, pad
 from crosscoder import CrossCoder
 from pgn_model import MAX_MOVE_CHARS, SPACE, encode, prompt
 from pgn_probe import DEFAULT as PROBE
 from pgn_probe import parse_movetext
+
+
+# ------------------------------------------------------------------ batched decoding with a KV cache (from the
+# retired interp/concepts.py): each start's prompt cached once, shared by its rollouts
+class Cache:
+    """KV cache in two parts: each start's prompt once, shared by its R rollouts, and each rollout's own
+    continuation. Attention reads the prompt once per start, not once per rollout: the prompt is most of
+    the context, and reading the cache is what a decoding step costs."""
+
+    def __init__(self, model, S, R, Lp, Ls, dev):
+        heads, d = model.blocks[0].heads, model.ln.normalized_shape[0]
+        dt = torch.bfloat16 if dev == "cuda" else torch.float32
+        self.pk = [torch.zeros((S, heads, Lp, d // heads), dtype=dt, device=dev) for _ in model.blocks]
+        self.pv = [torch.zeros_like(k) for k in self.pk]
+        self.sk = [torch.zeros((S * R, heads, Ls, d // heads), dtype=dt, device=dev) for _ in model.blocks]
+        self.sv = [torch.zeros_like(k) for k in self.sk]
+        self.S, self.R, self.plen, self.plen_rep, self.pmask = S, R, None, None, None
+
+
+def attend(q, cache, l, spos, Ls):
+    """q (B, heads, T, dh) at continuation positions spos (B, T): attention over the start's prompt
+    and the first Ls continuation positions up to spos, one softmax over both."""
+    B, H, T, dh = q.shape
+    S, R = cache.S, cache.R
+    Lp = cache.pk[l].shape[2]
+    qg = q.reshape(S, R, H, T, dh).transpose(1, 2).reshape(S, H, R * T, dh)
+    sp = (qg @ cache.pk[l].transpose(-1, -2)).float() * dh ** -0.5
+    sp = sp.masked_fill(~cache.pmask[:, None, None, :], -float("inf"))
+    sp = sp.view(S, H, R, T, Lp).transpose(1, 2).reshape(B, H, T, Lp)
+    ss = (q @ cache.sk[l][:, :, :Ls].transpose(-1, -2)).float() * dh ** -0.5
+    ss = ss.masked_fill(~(torch.arange(Ls, device=q.device)[None, None, :] <= spos[:, :, None])[:, None], -float("inf"))
+    w = torch.softmax(torch.cat([sp, ss], -1), -1).to(q.dtype)
+    wp = w[..., :Lp].reshape(S, R, H, T, Lp).transpose(1, 2).reshape(S, H, R * T, Lp)
+    yp = (wp @ cache.pv[l]).view(S, H, R, T, dh).transpose(1, 2).reshape(B, H, T, dh)
+    return yp + w[..., Lp:] @ cache.sv[l][:, :, :Ls]
+
+
+def extend(model, x, spos, cache, layers=(), Ls=None):
+    """Continuation characters x (B, T) at positions spos (B, T) through the model, writing their cache;
+    attention covers the first Ls continuation positions (default spos.max() + 1, which syncs).
+    -> logits at the last position and {layer: (B, T, d)} states."""
+    B, T = x.shape
+    d = model.ln.normalized_shape[0]
+    Ls = Ls or int(spos.max()) + 1
+    rows = torch.arange(B, device=x.device)[:, None]
+    h = model.tok(x) + model.pos(cache.plen_rep[:, None] + spos)
+    out = {}
+    for l, blk in enumerate(model.blocks):
+        q, k, v = (z.view(B, T, blk.heads, d // blk.heads).transpose(1, 2) for z in blk.qkv(blk.ln1(h)).split(d, dim=2))
+        cache.sk[l][rows, :, spos] = k.transpose(1, 2).to(cache.sk[l].dtype)
+        cache.sv[l][rows, :, spos] = v.transpose(1, 2).to(cache.sv[l].dtype)
+        y = attend(q, cache, l, spos, Ls)
+        h = h + blk.proj(y.transpose(1, 2).reshape(B, T, d))
+        h = h + blk.mlp(blk.ln2(h))
+        if str(l) in layers:
+            out[str(l)] = h.float()
+    f = model.ln(h)
+    if "final" in layers:
+        out["final"] = f.float()
+    return model.head(f[:, -1]).float(), out
+
+
+def room(plies):
+    """Characters a rollout of `plies` plies can add: each move, a space and every other ply ' <n>.'."""
+    return plies * (MAX_MOVE_CHARS + 1) + (plies // 2 + 1) * 5 + 4
+
+
+def pad(prompts, dev):
+    plen = torch.tensor([len(p) for p in prompts], device=dev)
+    x = torch.full((len(prompts), int(plen.max())), SPACE, dtype=torch.long, device=dev)
+    for s, p in enumerate(prompts):
+        x[s, :len(p)] = torch.tensor(p)
+    return x, plen
 
 
 def load_cc(cc_run, cc, strong, dev, name=None):

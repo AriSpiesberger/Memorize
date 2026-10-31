@@ -622,8 +622,6 @@ def page(a):
     g = (src if src.exists() else keep).read_text()
     if src.exists(): RES.mkdir(parents=True, exist_ok=True); keep.write_text(g)
     from pages import BOARD_DEFS, BOARD_JS, MOVE_HEAD
-    bjs = BOARD_JS.split("function explHTML")[0].replace('const q = cls === "sm" ? 16 : 32', 'const q = cls === "sm" ? 16 : cls === "md" ? 22 : 32')
-    assert "function board" in bjs and '"md" ? 22' in bjs
     gd = json.loads(g)                                        # the page shows only what it needs: concept pairs, no latent examples
     gd.pop("examples", None)
     # how strongly each concept is defined: its margins over the nulls in the seed check (concept_mine.py score), summed:
@@ -640,7 +638,7 @@ def page(a):
         for q in c.get("pairs", []): q.pop("lk", None); q.pop("lg", None)
     g = json.dumps(gd)
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
-    html = html.replace("<!--BOARDS-->", BOARD_DEFS + MOVE_HEAD).replace("/*BOARD_JS*/", bjs)
+    html = html.replace("<!--BOARDS-->", BOARD_DEFS + MOVE_HEAD).replace("/*BOARD_JS*/", BOARD_JS)
     # the 3D library inside the page (vendor/), so it runs where outside scripts are blocked and offline
     tag = '<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>'
     lib = Path(__file__).with_name("vendor") / "3d-force-graph-1.73.4.min.js"

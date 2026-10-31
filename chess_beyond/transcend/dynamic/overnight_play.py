@@ -74,7 +74,7 @@ def candidates(a, Sm, dev, used, rng):
     """Positions in a seeded random order, bands alternated -> (root, S's legal moves, S's log-probabilities)."""
     import eval as ev
     import shared as gd
-    from concepts import room
+    from shared import room
     from pgn_model import MAX_MOVE_CHARS, prompt
     from pgn_probe import parse_movetext
     pop = [json.loads(l) for l in open(paths.DATA / "pgn_probe" / "population.jsonl", encoding="utf-8")]

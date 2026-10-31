@@ -193,8 +193,6 @@ function board(fen, uci, cls) {
   }
   return h + "</svg>";
 }
-// A latent's explanation (explain.py): the predicate that predicts its firing and its held-out
-// score, facts nearly always true when it fires, then what its top positions share (d.why)
 
 const D = JSON.parse(document.getElementById("data").textContent);
 D.dpmi_cut = D.dpmi_cut ?? D.dppmi_cut;

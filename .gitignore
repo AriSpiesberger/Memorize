@@ -268,8 +268,6 @@ chess_beyond/*.bat
 chess_beyond/_to_delete/
 # chess_beyond/results keeps reports; raw dumps (over ~1 MB) stay local, rebuilt by the scripts
 chess_beyond/results/**/explanations.jsonl
-chess_beyond/results/**/path_examples.json
-chess_beyond/results/**/path_scores.json
 chess_beyond/results/transcend/divergence/**/report.json
 chess_beyond/results/transcend/divergence/**/candidates-view.json
 chess_beyond/results/transcend/divergence/**/concept-graph.json
