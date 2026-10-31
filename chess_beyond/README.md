@@ -4,10 +4,10 @@
 
 | folder | question | where it stands |
 | --- | --- | --- |
-| [transcend/](transcend/) | Imitate 1100-level players, then RL on easy puzzles only. Does it solve 2400-rated puzzles its teachers can't? | done: RL lifts easy puzzles, barely moves 2400s, and costs ~400 game Elo |
+| [transcend/board/](transcend/board/) | Imitate 1100-level players, then RL on easy puzzles only. Does it solve 2400-rated puzzles its teachers can't? | done: RL lifts easy puzzles, barely moves 2400s, and costs ~400 game Elo |
 | [transcend/pgn/](transcend/pgn/) | The Transcendence paper's character-level PGN model, one per rating band | near-greedy, the 1000-1300 model plays ~350 above its data; the 2400+ model stays far below its data |
-| [transcend/interp/](transcend/interp/) | What do the two PGN models represent, and which paths between concepts does only one take? | layer-15 crosscoder, explanations and path graphs built |
-| [transcend/dynamic/](transcend/dynamic/) | Within each model, which latent patterns separate the line it plays from the one it doesn't, and do they steer it? | concepts mined; steering under test |
+| [transcend/interp/](transcend/interp/) | What do the two PGN models represent, and do they share it? | layer-15 crosscoder and scored latent explanations built; the concept map |
+| [transcend/dynamic/](transcend/dynamic/) | Within each model, which latent patterns separate the line it plays from the one it doesn't, and do they steer it? | concepts replicate across seeds; preregistered steering: 0 of 37 move the model |
 | [rating_bands/](rating_bands/) | Which moves does each rating band *never* find, as opposed to finding less often? Builds the puzzle strata. | strata built |
 | [filter_experiment/](filter_experiment/) | Remove humans' excellent moves in hard positions from training. Can imitation, RL or search recover them? | runs end to end; needs far more data |
 
@@ -19,7 +19,7 @@ Numbers and figures: [results/transcend/summary.md](results/transcend/summary.md
 ```
 chess_beyond/
 ├── paths.py, common.py, search.py, probe.py, intervals.py, lichess_ids.py   shared helpers
-├── transcend/          board-model experiment; pgn/, interp/, dynamic/ inside it
+├── transcend/          board/, pgn/ (the two model families), interp/, dynamic/, clean/
 ├── rating_bands/       games by rating band, puzzle strata
 ├── filter_experiment/  remove excellent moves, try to recover them
 ├── modal/              the cloud side (Modal apps only)

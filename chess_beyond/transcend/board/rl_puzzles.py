@@ -1,6 +1,6 @@
 """RL on easy puzzles: rewarded only for solving 900-1200 rated puzzles.
 
-    python transcend/rl_puzzles.py --init runs/transcend/imitation.pt
+    python transcend/board/rl_puzzles.py --init runs/transcend/imitation.pt
 
 The reward only says "you found the whole line" on problems that 900-1200 players
 solve, so it carries roughly that level of knowledge; the question is whether
@@ -28,7 +28,7 @@ from pathlib import Path
 import torch
 import zstandard
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from common import load_model, masked_logits, save_model
 from puzzles import fit_elo, ladder, load, report, solve

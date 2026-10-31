@@ -1,6 +1,6 @@
 """Playing strength in games: checkpoints vs Maia-2 at fixed ratings, fitted to an Elo.
 
-    python transcend/play_elo.py --ckpt runs/transcend/imitation-clean.pt runs/transcend/rl-clean.pt
+    python transcend/board/play_elo.py --ckpt runs/transcend/imitation-clean.pt runs/transcend/rl-clean.pt
 
 Puzzle Elo measures tactics on puzzles; this measures whole games. Each
 checkpoint plays Maia-2 (rapid model) set to each --anchors rating. Maia samples
@@ -34,7 +34,7 @@ import chess.pgn
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from common import MOVES, encode_board, legal_mask, load_model, masked_logits, model_move_to_real
 from maia import elo_cat, encode, mirror_move

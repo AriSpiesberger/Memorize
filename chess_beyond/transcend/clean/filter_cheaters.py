@@ -1,6 +1,6 @@
 """Drop games involving accounts Lichess has marked for cheating.
 
-    python transcend/filter_cheaters.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
+    python transcend/clean/filter_cheaters.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
 
 Every player name in the PGN is looked up with Lichess's public bulk-user API
 (POST https://lichess.org/api/users, 300 names per request). Lichess marks

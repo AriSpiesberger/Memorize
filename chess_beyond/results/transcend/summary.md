@@ -1,6 +1,6 @@
 # transcend results
 
-Made by `python transcend/plot_results.py` from `runs/transcend/*_log.jsonl`.
+Made by `python transcend/board/plot_results.py` from `runs/transcend/*_log.jsonl`.
 
 ## imitation
 

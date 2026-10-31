@@ -1,6 +1,6 @@
 """Does RL teach new solutions or sharpen old ones? pass@k by stratum, per checkpoint.
 
-    python transcend/pass_at_k.py --ckpt runs/transcend/imitation-clean.pt runs/transcend/rl-clean.pt
+    python transcend/board/pass_at_k.py --ckpt runs/transcend/imitation-clean.pt runs/transcend/rl-clean.pt
 
 Each checkpoint samples --samples attempts at every puzzle (temperature 1, the
 policy's own distribution); a puzzle counts as solved at k if any of k attempts
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from common import load_model
 from puzzles import load, solve

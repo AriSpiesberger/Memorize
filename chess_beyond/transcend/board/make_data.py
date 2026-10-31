@@ -1,6 +1,6 @@
 """Imitation data from rating-band games: every position, encoded for the network.
 
-    python transcend/make_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
+    python transcend/board/make_data.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
 
 Each position becomes (board tokens, the move the player made, the game result
 for the mover), stored as int8/int16 arrays in shards of --shard-games games:
@@ -24,7 +24,7 @@ import chess
 import chess.pgn
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: common.py, paths.py
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/: common.py, paths.py
 import paths
 from common import MOVE_TO_ID, encode_board, move_to_model_frame
 

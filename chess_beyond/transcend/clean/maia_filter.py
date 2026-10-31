@@ -1,6 +1,6 @@
 """Drop games where a player looks far stronger, or far weaker, than their rating.
 
-    python transcend/maia_filter.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
+    python transcend/clean/maia_filter.py --pgn data/lichess/bands/2025-06-train/1000-1300.pgn
 
 For every player in every game, Maia-2 (a model of how humans at each rating
 move) scores their moves twice: as a 2000+ player would play them and as a
@@ -38,7 +38,7 @@ import chess
 import chess.pgn
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/: paths.py
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/: paths.py
 import paths
 from maia import elo_cat, encode
 

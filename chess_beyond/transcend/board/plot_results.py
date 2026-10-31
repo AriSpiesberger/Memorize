@@ -1,6 +1,6 @@
 """Figures and a summary of every transcend run so far; safe to rerun at any time.
 
-    python transcend/plot_results.py            # -> results/transcend/
+    python transcend/board/plot_results.py            # -> results/transcend/
 
 Reads runs/transcend/*_log.jsonl (written by train.py and rl_puzzles.py) and writes
 to results/transcend/, which git tracks (runs/ is ignored):
@@ -22,7 +22,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from intervals import wilson
 
@@ -76,7 +76,7 @@ def main():
                          "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK})
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "logs").mkdir(exist_ok=True)
-    md = ["# transcend results", "", "Made by `python transcend/plot_results.py` from `runs/transcend/*_log.jsonl`.", ""]
+    md = ["# transcend results", "", "Made by `python transcend/board/plot_results.py` from `runs/transcend/*_log.jsonl`.", ""]
 
     # ---------------------------------------------------------------- imitation
     imit = {n: load(n) for n in ("imitation-clean", "imitation-all", "imitation-2200-400k", "imitation-2200", "imitation")}

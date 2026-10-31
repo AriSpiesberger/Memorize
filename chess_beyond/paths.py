@@ -6,8 +6,8 @@
     ├── models/   third-party weights, Maia-2 (gitignored)
     └── tools/    Stockfish binary            (gitignored)
 
-Importing it also puts transcend/ and its script folders on sys.path, since those scripts
-import one another by module name across folders.
+Importing it also puts transcend/'s script folders on sys.path, since those scripts import one
+another by module name across folders.
 """
 import glob
 import os
@@ -26,7 +26,8 @@ FILTER_RUNS = RUNS / "filter"       # ckpt/, logs/, results.json
 MAIA2 = MODELS / "maia2"            # pass as save_root to maia2.model.from_pretrained
 
 TRANSCEND = ROOT / "transcend"
-for _d in (TRANSCEND, TRANSCEND / "pgn", TRANSCEND / "interp", TRANSCEND / "dynamic"):
+for _d in ("board", "clean", "pgn", "interp", "dynamic"):
+    _d = TRANSCEND / _d
     if str(_d) not in sys.path:
         sys.path.insert(1, str(_d))
 

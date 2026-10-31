@@ -1,7 +1,7 @@
 """Score a checkpoint on the puzzle strata: the 1100 control and the 2400+ tests.
 
-    python transcend/eval_puzzles.py --ckpt runs/transcend/imitation.pt
-    python transcend/eval_puzzles.py --ckpt runs/transcend/*.pt --strata all --n 2000 --save-dir results/transcend/strata
+    python transcend/board/eval_puzzles.py --ckpt runs/transcend/imitation.pt
+    python transcend/board/eval_puzzles.py --ckpt runs/transcend/*.pt --strata all --n 2000 --save-dir results/transcend/strata
 
 Solved = every solver move in the line (opponent replies given), greedy policy,
 no search. Each stratum is printed with a 95% interval and what an 1100-rated
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from common import load_model
 from puzzles import fit_elo, load, report, solve

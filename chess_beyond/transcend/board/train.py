@@ -1,6 +1,6 @@
 """Imitation: learn the moves 1100-level players make, from make_data.py shards.
 
-    python transcend/train.py                    # data/transcend/imitation -> runs/transcend/imitation.pt
+    python transcend/board/train.py                    # data/transcend/imitation -> runs/transcend/imitation.pt
 
 Plain cross-entropy over all 1880 moves, so illegal moves are penalised rather
 than masked; the value head learns the game result. The last --val-shards shards
@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # chess_beyond/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths
 from common import ChessNet, save_model
 import json
