@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>L11 Concept Map</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
@@ -52,6 +53,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #tip .ln { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; overflow-wrap: anywhere; }
 #tip .ln .pre { color: #9aa0ad; }
 #tip .ln .on { background: #99f6e4; color: #0f3d3a; border-radius: 2px; padding: 0 1px; }
+#tip .ln .st { color: #0f3d3a; border-radius: 2px; padding: 0 1px; }
 #tip .ln .win { box-shadow: inset 0 -2px 0 #8b7cf6; }
 #tip .ln .sp { outline: 1px solid #1d2230; outline-offset: 0; border-radius: 2px; }
 #tip .ln .tg { display: inline-block; min-width: 86px; font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; }
@@ -84,31 +86,78 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #featured .ft { font-weight: 600; } #featured .fm { color: var(--ink2); font-size: 11.5px; font-family: var(--mono); }
 #tip .feat { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 10px; margin: 4px 0 8px; }
 #tip .feat .ft { font-weight: 600; font-size: 13.5px; color: #065f46; }
+.sub { color: var(--ink2); font-size: 12px; }
+#tip .lead { margin: 2px 0 8px; } #tip .peek { color: #4c3fb4; font-size: 12px; margin-top: 6px; }
+#tip a.twin { display: inline-block; margin: 6px 0 2px; padding: 4px 10px; border-radius: 6px; background: #ede9fe; color: #3b2f9e; font-weight: 600; font-size: 12px; text-decoration: none; }
+#tip a.twin:hover { background: #ddd6fe; }
+#tip details { margin-top: 10px; border-top: 1px solid #e4e2da; padding-top: 6px; } #tip summary { cursor: pointer; color: #5b6275; font-size: 12px; }
+#tip .how { background: #f3f1ea; border-radius: 6px; padding: 6px 8px; color: #464c5c; font-size: 12px; margin: 8px 0 4px; }
+/* the guide: what the page shows and how to read it, open on a first visit */
+#intro { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(4,6,13,.6); padding: 16px; }
+#intro[hidden] { display: none; }
+#intro .box { background: var(--card); color: var(--card-ink); border-radius: 14px; max-width: 620px; max-height: calc(100vh - 32px); overflow: auto; padding: 20px 24px; box-shadow: 0 20px 60px rgba(0,0,0,.6); font-size: 13.5px; line-height: 1.5; }
+#intro h2 { margin: 0 0 4px; font-size: 18px; } #intro h4 { margin: 14px 0 4px; font-size: 13.5px; }
+#intro p { margin: 4px 0; } #intro ul { margin: 4px 0; padding-left: 20px; } #intro li { margin: 3px 0; }
+#intro .go { margin-top: 14px; background: #4c3fb4; color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; font: 600 13.5px var(--sans); cursor: pointer; }
+#intro .sw { display: inline-block; width: 22px; height: 4px; border-radius: 2px; vertical-align: 3px; margin-right: 4px; }
+#intro .dt { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
 @media (max-width: 560px) { #key { display: none; } #hint { display: none; } }
 </style>
 
 <div id="g" aria-label="3D map of latents and concepts"></div>
 <div id="bar" class="panel">
-  <div class="row"><span class="title">L11 concept map</span>
-    <span class="seg" role="group" aria-label="View">
-      <button id="v-gs" data-v="gs" aria-pressed="true">G_S</button><button id="v-gw" data-v="gw" aria-pressed="false">G_W</button><button id="v-gdiff" data-v="gdiff" aria-pressed="false">G_diff</button>
-    </span>
-    <label for="minpos" class="facts">seen at ≥</label>
-    <select id="minpos"><option value="2" selected>2 (all)</option><option>5</option><option>10</option><option>20</option><option>40</option></select>
-    <span class="facts">positions</span>
-    <select id="share" aria-label="Which concepts"><option value="all" selected>all concepts</option><option value="shared">shared with the other model</option><option value="only">this model only</option></select>
+  <div class="row"><span class="title">Chess concept map</span><span class="sub">what two chess models weigh when they choose a move</span>
+    <button class="btn" id="help" aria-haspopup="dialog">? guide</button>
   </div>
   <div class="row">
-    <input type="search" id="find" placeholder="latent or concept id" aria-label="Find a latent or concept">
-    <button class="btn" id="rot">pause rotation</button><button class="btn" id="fit">re-centre</button><button class="btn" id="tbl">list</button><button class="btn" id="feat" aria-expanded="true">featured</button>
+    <span class="seg" role="group" aria-label="Which model">
+      <button id="v-gs" data-v="gs" aria-pressed="true" title="G_S: concepts mined from the model trained on 2400+ games">2400+ model</button><button id="v-gw" data-v="gw" aria-pressed="false" title="G_W: concepts mined from the model trained on 1000–1300 games">1000–1300 model</button><button id="v-gdiff" data-v="gdiff" aria-pressed="false" title="G_diff: concepts with no close match in the other model">only one model has it</button>
+    </span>
+  </div>
+  <div class="row">
+    <label for="minpos" class="facts" title="How many different starting positions the concept was found at. Higher = more general, fewer on the map.">seen at ≥</label>
+    <select id="minpos"><option value="5" selected>5</option><option>10</option><option>20</option><option>40</option></select>
+    <span class="facts">positions</span>
+    <select id="share" aria-label="Which concepts"><option value="all" selected>all concepts</option><option value="shared">shared with the other model</option><option value="only">this model only</option></select>
+    <input type="search" id="find" placeholder="find, e.g. S21 or 3477" aria-label="Find a concept (e.g. S21) or a latent (a number)">
+  </div>
+  <div class="row">
+    <button class="btn" id="feat" aria-expanded="true">start here</button><button class="btn" id="tbl">list</button><button class="btn" id="rot">rotate</button><button class="btn" id="fit">re-centre</button>
     <span class="facts" id="n"></span>
   </div>
-  <div id="hint">Points are latents, heated by how often they fire. Each concept is a hyperedge joining its latents (a spur for one latent, an edge for two, a triangle for three), heated by how strongly it is defined (its margins over the nulls in the seed check). Only latents a concept in view uses are shown. Hover a point or an edge for its card and examples, click to pin and fly there, drag to orbit, scroll to zoom.</div>
+  <div id="hint">Hover a line or dot for a preview · click it to open its examples · drag to turn · scroll to zoom · click empty space to close.</div>
 </div>
 <div id="key" class="panel"></div>
 <div id="list" class="panel" hidden></div>
 <div id="featured" class="panel"></div>
 <div id="tip"></div>
+<div id="intro" role="dialog" aria-modal="true" aria-labelledby="intro-h" hidden><div class="box">
+  <h2 id="intro-h">Chess concept map</h2>
+  <p>Two copies of one chess model that reads games as text, never shown the board: one trained on games between
+  <b>2400+</b> players, one on games between <b>1000–1300</b> players. This map shows the <b>concepts</b> found inside them,
+  and which concepts one model has and the other lacks.</p>
+  <h4>Lines are concepts</h4>
+  <p>Each model played many games from the same starting positions. Where it could go two ways, we looked inside it
+  (its internal state halfway through, at layer 11) for what separates the move it usually plays from one it plays less.
+  That small, repeatable difference is a <b>concept</b>. Many have a plain chess meaning: trade queens, double rooks, go for a draw.</p>
+  <ul>
+    <li><span class="sw" style="background:linear-gradient(90deg,#0f3d3a,#14b8a6,#d5fbf1)"></span>colour: how reliably the concept was found (it comes back when the search is rerun from scratch); brighter = more reliable</li>
+    <li>thickness: how many positions it was found at</li>
+  </ul>
+  <h4>Dots are latents</h4>
+  <p>A latent is one small feature of the model's internal state; a concept is built from a few of them, so its line joins
+  the latents it uses (two latents: a line, three: a triangle, one: a short spur).
+  <span class="dt" style="background:#8b7cf6"></span>Brighter dots fire more often.</p>
+  <h4>Reading a concept's examples</h4>
+  <p>Each example shows one position twice. <b style="color:#0f766e">Left</b>: the move the model usually plays there, and how the
+  game goes on. <b style="color:#be123c">Right</b>: a move it plays less often. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal shading</span>
+  on a move = how strongly the concept is on after it. A good concept is shaded on the left and not on the right.
+  Each side opens on Lichess.</p>
+  <h4>Where to start</h4>
+  <p>Pick a concept under <b>start here</b>: those are labelled by hand and easy to see. Then hover around the map, or switch to
+  <b>only one model has it</b> to see what the two models do not share.</p>
+  <button class="go" id="go">Start exploring</button>
+</div></div>
 <!--BOARDS-->
 
 <script type="application/json" id="data">/*DATA*/</script>
@@ -185,40 +234,100 @@ function oneBoard(fen, uci, col) {
     `<line x1="${x1 + c}" y1="${y1 + c}" x2="${x2 + c}" y2="${y2 + c}" stroke="${col}" stroke-width="${q / 6}" stroke-opacity="0.85" stroke-linecap="round"/>` +
     `<circle cx="${x2 + c}" cy="${y2 + c}" r="${q / 4.5}" fill="${col}" fill-opacity="0.9"/></svg>`);
 }
-function side(fen, uci, line, act, t, n, lk, label, move, pct, col, cls) {
-  const ms = fromBoard(line, t).slice(0, n).map((m, j) => `<span class="${act && act[t - 1 + j] >= 0.5 ? "on" : ""}${j === 0 ? " sp" : ""}">${esc(m)}</span>`).join(" ");
-  return `<div class="sd"><div class="sdh"><span class="tg ${cls}">${label}</span> <b style="color:${col}">${esc(move)}</b> <span class="dim">${pct}%</span></div>` +
-    oneBoard(fen, uci, col) + `<div class="ln">${ms}</div><a href="${lk}" target="_blank" rel="noopener">open on Lichess</a></div>`;
+// a Lichess analysis link whose game starts at fen and plays exactly `moves` (SAN, move numbers stripped)
+function lichessLine(fen, moves) {
+  const f = fen.split(" "); let n = +f[5] || 1, white = f[1] === "w";
+  const out = moves.map((m, i) => { const s = white ? `${n}.${m}` : i === 0 ? `${n}...${m}` : m; if (!white) n++; white = !white; return s; });
+  return "https://lichess.org/analysis/pgn/" + encodeURIComponent(`[SetUp "1"]\n[FEN "${fen}"]\n\n${out.join(" ")}`);
 }
+const bare = m => m.replace(/^\d+\.(\.\.)?/, "");
+// a move shaded by the concept's strength after it (its projection onto v): opacity in proportion, on one scale per pair
+const shade = (x, mx) => x > 0 ? ` style="background:rgba(45,212,191,${(0.9 * Math.min(x / mx, 1)).toFixed(2)})"` : "";
+function side(fen, uci, line, act, t, n, label, move, pct, col, cls, mx, pctTitle) {
+  const shown = fromBoard(line, t).slice(0, n);
+  const ms = shown.map((m, j) => { const x = act ? act[t - 1 + j] : null;
+    return `<span class="st${j === 0 ? " sp" : ""}"${x != null ? shade(x, mx) + ` title="concept ${x.toFixed(2)}"` : ""}>${esc(m)}</span>`; }).join(" ");
+  return `<div class="sd"><div class="sdh"><span class="tg ${cls}">${label}</span> <b style="color:${col}">${esc(move)}</b> <span class="dim" title="${pctTitle}">${pct}% of its games</span></div>` +
+    oneBoard(fen, uci, col) + `<div class="ln">${ms}</div><a href="${lichessLine(fen, shown.map(bare))}" target="_blank" rel="noopener">open on Lichess</a></div>`;
+}
+// one example over the window the concept was found on: the branch move and the k half-moves after it (at least as long
+// as the concept stays ahead), so a concept that comes on a move or two after the branch is shown coming on
 function pairHTML(p) {
-  return `<div class="pair2"><div class="ph">${p.split} position ${p.pos} · ${esc(p.band)} · ${p.node} games reach this position · the concept persists ${p.persist} pl${p.persist === 1 ? "y" : "ies"}${p.gap != null ? ` · gap ${p.gap}` : ""}</div>` +
-    `<div class="sides">` + side(p.fen, p.uc, p.cline, p.cact, p.t, p.persist, p.lkc, "concept on", p.chosen, Math.round(100 * p.wc), "#0f766e", "c") +
-    side(p.fen, p.us, p.sline, p.sact, p.t, p.persist, p.lks, "off", p.subpar, Math.round(100 * p.ws), "#be123c", "s") + `</div></div>`;
+  const n = Math.max(p.persist, (p.k ?? 0) + 1);
+  const w = a => (a || []).slice(p.t - 1, p.t - 1 + n), mx = Math.max(0.5, ...w(p.cact), ...w(p.sact));
+  const tt = "Share of the model's games from this position that play this move";
+  return `<div class="pair2"><div class="ph" title="${p.split} position ${p.pos} · ${esc(p.band)} games · the concept stays ahead for ${p.persist} half-move${p.persist === 1 ? "" : "s"} from the branch${p.gap != null ? ` · gap ${p.gap}` : ""}">` +
+    `${esc(p.band)} starting position · the model reached it in ${p.node} games · ${n} half-move${n === 1 ? "" : "s"} shown</div>` +
+    `<div class="sides">` + side(p.fen, p.uc, p.cline, p.cact, p.t, n, "usual move", p.chosen, Math.round(100 * p.wc), "#0f766e", "c", mx, tt) +
+    side(p.fen, p.us, p.sline, p.sact, p.t, n, "alternative", p.subpar, Math.round(100 * p.ws), "#be123c", "s", mx, tt) + `</div></div>`;
 }
+// concepts labelled by hand, and their twins in the other model (mutual best match, cosine >= 0.85), which carry the
+// label with a note that it was written from the other model's examples; so each model's view has its own list
 const FEAT = new Map((D.featured || []).map(f => [f.id, f]));
+for (const f of D.featured || []) {
+  const c = D.concepts.find(x => x.id === f.id), t = c && D.concepts.find(x => x.id === c.match);
+  if (!c || !t || c.absent || t.match !== c.id || c.match_cos < 0.85 || FEAT.has(t.id)) continue;
+  FEAT.set(t.id, { id: t.id, title: f.title, look: f.look, via: f.id,
+    also: `Label written from ${f.id} in the ${c.model === "S" ? "2400+" : "1000–1300"} model; this is its closest match here (similarity ${c.match_cos.toFixed(2)}). Check it against the examples below.` });
+}
+const MODEL = { S: "2400+ model", W: "1000–1300 model" };
+// what the other model has: the same concept, something like it, or nothing close
+const otherHas = c => { const o = MODEL[c.model === "S" ? "W" : "S"];
+  return c.absent ? `the ${o} has nothing like it (closest: ${esc(c.match)}, similarity ${c.match_cos.toFixed(2)})`
+    : c.match_cos >= 0.9 ? `the ${o} has the same concept (${esc(c.match)})` : `the ${o} has a similar one (${esc(c.match)}, similarity ${c.match_cos.toFixed(2)})`; };
+const TIER = { best: "reliable, and not just a reading of the board", clean: "fairly reliable, and not just a reading of the board",
+               board: "reliable, but its latents mostly read off the board itself (which pieces stand where)" };
+// jump to the same concept in the other model (or, for a one-model concept, the closest one there)
+const isTwin = c => !c.absent && c.match_cos >= 0.85;
+const twinButton = c => { const t = D.concepts.find(x => x.id === c.match); if (!t || !t.lat.length) return "";
+  return `<a class="twin" href="#" data-jump="${esc(t.id)}">${isTwin(c) ? "see its twin" : "see the closest concept"} in the ${MODEL[t.model]}: ${FEAT.has(t.id) ? esc(FEAT.get(t.id).title) + " · " : ""}${esc(t.id)} →</a>`; };
+const conceptTitle = c => { const fe = FEAT.get(c.id); return fe ? esc(fe.title) : `Concept ${esc(c.id)}`; };
+// hover: a short preview; click opens the full card
+function conceptPeek(c) {
+  const fe = FEAT.get(c.id);
+  return `<h3>${conceptTitle(c)}</h3><div class="meta">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]} · seen at ${c.positions} positions</div>` +
+    (fe ? `<div>${esc(fe.look)}</div>` : c.theme ? `<div>Its lines often have: ${esc(c.theme)}.</div>` : "") +
+    `<div class="meta" style="margin-top:4px">${otherHas(c)}</div><div class="peek">Click to see its examples${isTwin(c) ? " and its twin" : ""}.</div>`;
+}
 function conceptCard(c) {
-  const other = c.model === "S" ? "W" : "S", fe = FEAT.get(c.id);
-  let h = (fe ? `<div class="feat"><div class="ft">${esc(fe.title)}</div><div>${esc(fe.look)}</div>${fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>` : "") + `<h3>${esc(c.id)} <span style="font-weight:400;color:#5b6275">${c.model === "S" ? "2400+ model (S)" : "1000–1300 model (W)"}</span></h3>` +
-    `<div class="meta">${esc(c.tier)}${c.theme ? " · " + esc(c.theme) : ""} · seen at ${c.positions} discovery positions · persistence ` +
-    `${c.persistence == null ? "never on at the split" : c.persistence + " plies"} (${c.on_at_split} branch points) · strength ${c.strength ?? "–"}<br>` +
-    `best match in ${other}: ${esc(c.match)}, cosine ${c.match_cos.toFixed(3)}${c.absent ? " (absent in " + other + ")" : ""}</div>` +
-    `<div class="lab">latents (weight in v)</div>` + c.latent.map((j, i) => `<span class="chip">${j} · ${c.w[i].toFixed(2)}</span>`).join("") +
-    (c.lat.length < c.k95 ? `<div class="meta">${c.k95 - c.lat.length} more of its latents are not seed-stable, so not on the map</div>` : "");
+  const fe = FEAT.get(c.id);
+  let h = `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]}</span></h3>` +
+    (fe ? `<div class="feat"><div>${esc(fe.look)}</div>${fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>`
+        : `<div class="lead">Not labelled by hand: read it from the examples below.${c.theme ? ` Its lines often have: <b>${esc(c.theme)}</b>.` : ""}</div>`) +
+    `<div class="meta">Seen at ${c.positions} positions · ${c.persistence == null ? "not on right after the branch move" : `usually stays on for ${c.persistence} half-moves`} · ${otherHas(c)}</div>` +
+    twinButton(c);
   if (c.pairs && c.pairs.length) {
     const mined = c.pairs.filter(p => p.kind === "mined"), held = c.pairs.filter(p => p.kind === "held-out");
-    h += `<div class="lab">each example: the same branch position twice, with the move that turns the concept on (left) and the alternative (right), each followed for as long as the concept persists. Shaded: the concept is on. Each Lichess link starts at the branch and plays exactly those moves.</div>`;
-    if (mined.length) h += `<div class="lab kindm">at the branch points it was mined from</div>` + mined.map(pairHTML).join("");
-    if (held.length) h += `<div class="lab kindh">held out: positions it was not mined from, where it comes on in one line and not the other</div>` + held.map(pairHTML).join("");
-  } else if (c.bps && c.bps.length) h += `<div class="lab">branch points: chosen over subpar</div>` +
+    h += `<div class="how">Each example is one position twice: <b style="color:#0f766e">left</b>, the move the model usually plays and how the game goes on;
+      <b style="color:#be123c">right</b>, a move it plays less often. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal</span> = how strongly
+      the concept is on after each move (hover a move for the number). Read the whole line: a concept can come on a move or two after the branch.</div>`;
+    if (mined.length) h += `<div class="lab kindm">positions it was found at</div>` + mined.map(pairHTML).join("");
+    if (held.length) h += `<div class="lab kindh">new positions, not used to find it</div>` + held.map(pairHTML).join("");
+  } else if (c.bps && c.bps.length) h += `<div class="lab">where it was found: usual move over the alternative</div>` +
     c.bps.map(b => `<div class="mv">${esc(b.chosen)} (${Math.round(100 * b.wc)}%) over ${esc(b.subpar)}<br>${lineHTML(b.cline, b.t, b.k)}</div>`).join("");
+  h += `<details><summary>details</summary><div class="meta" style="margin-top:6px">` +
+    `How it was found: ${TIER[c.tier] || esc(c.tier)} (tier: ${esc(c.tier)}) · reliability ${c.strength ?? "–"} (how far its seed-check scores clear chance; higher is better) · ` +
+    `on right after the branch at ${c.on_at_split} of its branch points` + (c.persistence != null ? `, for a median ${c.persistence} half-moves` : "") +
+    ` · closest in the other model: ${esc(c.match)}, cosine ${c.match_cos.toFixed(3)}</div>` +
+    `<div class="lab">latents it is built from (weight)</div>` + c.latent.map((j, i) => `<span class="chip">${j} · ${c.w[i].toFixed(2)}</span>`).join("") +
+    (c.lat.length < c.k95 ? `<div class="meta">${c.k95 - c.lat.length} more of its latents did not come back when the crosscoder was retrained, so they are not on the map</div>` : "") +
+    `</details>`;
   return h;
+}
+function latentPeek(n) {
+  const cs = inC.get(n.i) || [];
+  return `<h3>Latent ${n.latent}</h3><div class="meta">one feature of the model's internal state · on after ${(100 * n.rate).toFixed(2)}% of moves</div>` +
+    `<div>Part of ${cs.length} concept${cs.length === 1 ? "" : "s"}${cs.length ? ": " + cs.slice(0, 6).map(esc).join(", ") + (cs.length > 6 ? ", …" : "") : ""}.</div>` +
+    `<div class="peek">Click to pin, then pick a concept.</div>`;
 }
 function latentCard(n) {
   const cs = inC.get(n.i) || [];
-  return `<h3>latent ${n.latent}</h3><div class="meta">on at ${(100 * n.rate).toFixed(2)}% of plies · ${Math.round(100 * n.s_share)}% of its firing from S's play ` +
-    `· seed-1 decoder cosine ${n.seed_cos}</div>` + (cs.length ? `<div class="lab">in ${cs.length} concept${cs.length > 1 ? "s" : ""}</div>` +
-    cs.map(x => `<a class="chip" href="#" data-jump="${esc(x)}">${esc(x)}</a>`).join("") : `<div class="meta">in no mined concept</div>`) +
-    (cs.length ? `<div class="meta" style="margin-top:6px">Click a concept to see its branching examples.</div>` : "");
+  return `<h3>Latent ${n.latent}</h3><div class="meta">One feature of the model's internal state at layer 11. On after ${(100 * n.rate).toFixed(2)}% of moves; ` +
+    `${Math.round(100 * n.s_share)}% of its firing is in the 2400+ model's games, the rest in the 1000–1300 model's.</div>` +
+    (cs.length ? `<div class="lab">concepts built from it: click one for its examples</div>` +
+      cs.map(x => { const c = byId.get(x); return `<a class="chip" href="#" data-jump="${esc(x)}">${c && FEAT.has(x) ? esc(FEAT.get(x).title) + " · " : ""}${esc(x)}</a>`; }).join("")
+      : `<div class="meta">Not part of any concept.</div>`) +
+    `<details><summary>details</summary><div class="meta" style="margin-top:6px">crosscoder latent ${n.latent} · decoder cosine to its match in a retrained crosscoder (seed 1): ${n.seed_cos}</div></details>`;
 }
 // one rollout ply: the line from the position, the ply's move in bold
 const tag = e => `<span style="color:#7a8194">${e.model} · ${esc(e.band)}</span>`;
@@ -243,18 +352,24 @@ function examplesHTML(k) {
 function linkCard(l) {                                   // a concept (an edge): only its branching paths, never its latents' examples
   return conceptCard(l.c_);
 }
+function edgePeek(e) {
+  const m = e.d > 0 ? "2400+" : "1000–1300";
+  return `<h3>Latents ${N[e.i].latent} + ${N[e.j].latent}</h3><div>The ${m} model's play turns these two on together more often than the other model's does.</div>` +
+    `<div class="peek">Click to see examples.</div>`;
+}
 function edgeCard(e) {
   const ex = e.examples || {}, li = N[e.i].latent, lj = N[e.j].latent;
   const block = (key, title) => (ex[key] || []).length ? `<div class="lab">${title}</div>` + ex[key].map(x =>
     `<div class="exr">${boardHTML(x, `${li}: ${x.vi} · ${lj}: ${x.vj}`)}${plyHTML(x)}<div class="meta" style="margin:0">${tag(x)}</div></div>`).join("") : "";
-  return `<h3>latents ${li} + ${lj}</h3><div class="meta">${e.d > 0 ? "S" : "W"}'s play combines them more: ` +
+  return `<h3>Latents ${li} + ${lj}</h3><div class="lead">The ${e.d > 0 ? "2400+" : "1000–1300"} model's play turns these two on together more often than the other model's does.</div><div class="meta">${e.d > 0 ? "S" : "W"}'s play combines them more: ` +
     `ΔPMI ${e.d > 0 ? "+" : ""}${e.d} (z ${e.z}), ${e.n.toLocaleString()} co-occurring plies pooled; examples from ${e.d > 0 ? "S" : "W"}'s rollouts</div>` +
     block("both", "both on") + block("only_i", `${li} on, ${lj} off`) + block("only_j", `${lj} on, ${li} off`);
 }
 const card = n => n.kind === "s" ? linkCard(byConcept.get(n.c_.id)[0]) : latentCard(n.n_);
+const peek = n => n.kind === "s" ? conceptPeek(n.c_) : latentPeek(n.n_);
 function showTip(html, ev) { tip.innerHTML = html; tip.style.display = "block"; place(ev);
   tip.querySelectorAll("[data-jump]").forEach(a => a.onclick = e => { e.preventDefault(); const c = byId.get(a.dataset.jump);
-    if (c && !jumpConcept(c)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); } }); }
+    if (c) openConcept(c); }); }
 
 let hl = new Set(), hlLinks = new Set(), focus = null, adj = new Map(), NODES = new Map();
 const G = ForceGraph3D({ controlType: "orbit" })(document.getElementById("g"))
@@ -268,9 +383,9 @@ const G = ForceGraph3D({ controlType: "orbit" })(document.getElementById("g"))
   .linkDirectionalParticleSpeed(0.004).linkDirectionalParticleColor(l => l.color)
   .cooldownTicks(0).warmupTicks(0)
   .onNodeHover(n => later(() => { if (n && n.kind === "s") setFocus(null, byConcept.get(n.c_.id)[0]); else setFocus(n ? n.id : null, null); if (pinned) return;
-    if (n) showTip(card(n), last); else tip.style.display = "none"; }))
+    if (n) showTip(peek(n), last); else tip.style.display = "none"; }))
   .onLinkHover(l => later(() => { if (pinned) return; setFocus(null, l);
-    if (l) showTip(l.e ? edgeCard(l.e) : linkCard(l), last); else tip.style.display = "none"; }))
+    if (l) showTip(l.e ? edgePeek(l.e) : conceptPeek(l.c_), last); else tip.style.display = "none"; }))
   .onLinkClick(l => { setFocus(null, l, true); pinned = true; tip.classList.add("pinned"); showTip(l.e ? edgeCard(l.e) : linkCard(l), last); })
   .onNodeClick(n => { setFocus(n.id, null, true); pinned = true; tip.classList.add("pinned"); showTip(card(n), last); fly(n); })
   .onBackgroundClick(() => { pinned = false; tip.classList.remove("pinned"); tip.style.display = "none"; setFocus(null, null, true); });
@@ -293,7 +408,7 @@ function fly(n) {
 }
 const shr = document.getElementById("share");
 const OPTS = { own: [["all", "all concepts"], ["shared", "shared with the other model"], ["only", "this model only"]],
-               diff: [["all", "S-only and W-only"], ["S", "S-only"], ["W", "W-only"]] };
+               diff: [["all", "either model"], ["S", "only the 2400+ model"], ["W", "only the 1000–1300 model"]] };
 function setOpts(kind) { if (shr.dataset.kind === kind) return; shr.dataset.kind = kind; shr.innerHTML = OPTS[kind].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); }
 const shown = () => C.filter(c => c.positions >= +sel.value && (view === "gdiff"
   ? c.absent && (shr.value === "all" || c.model === shr.value)
@@ -331,28 +446,27 @@ function draw() {
   pinned = false; tip.style.display = "none"; tip.classList.remove("pinned"); hl = new Set(); hlLinks = new Set(); focus = null; setFocus.key = null;
   G.graphData({ nodes, links }); NODES = new Map(nodes.map(n => [n.id, n]));
   const total = view === "gdiff" ? C.filter(c => c.absent).length : C.filter(c => c.model === (view === "gs" ? "S" : "W")).length;
-  document.getElementById("n").innerHTML = `<b>${cs.length}</b> of ${total} concepts` + (single ? ` (${single} with one latent on the map, drawn as spurs)` : "") +
-    (view === "gdiff" ? ` · <b>${D.dedges.length}</b> ΔPMI pairs` : "");
+  document.getElementById("n").innerHTML = view === "gdiff"
+    ? `<b>${cs.length}</b> concepts only one model has · <b>${D.dedges.length}</b> latent pairs`
+    : `<b>${cs.length}</b> of ${total} concepts in the ${MODEL[view === "gs" ? "S" : "W"]}`;
+  document.getElementById("n").title = single ? `${single} of them use one latent on the map, drawn as a short spur` : "";
   const bar = v => `<span class="dot" style="color:var(--${v});background:var(--${v});border-radius:2px;height:3px;width:18px"></span>`;
   document.getElementById("key").innerHTML =
     (view === "gdiff"
-      ? `<span>${bar("s")}S: its one-model-only concepts (thick) and the latent pairs its play combines more (thin)</span>` +
-        `<span>${bar("w")}W: the same for W</span>`
-      : `<span>concepts (edges), how strongly defined<span class="ramp e"></span>${SLO.toFixed(2)} → ${SHI.toFixed(2)} (seed-check margin) · width: positions seen at</span>`) +
-    `<span>latents, firing rate<span class="ramp r"></span>${pct(RLO)} → ${pct(RHI)} of plies</span>` +
-    (view === "gdiff"
-      ? 
-        `<span>one model only: best match cosine &lt; ${D.settings.absent_cos} · ΔPMI pairs: |z| &gt; ${D.dpmi_cut}, family-wise over ${D.pairs_supported.toLocaleString()} pairs</span>`
-      : `<span>layout: a concept's latents sit ${D.layout.concept_spread}× random distance apart, play partners ${D.layout.neighbour_spread}×</span>`);
+      ? `<span title="best match in the other model: cosine below ${D.settings.absent_cos}">${bar("s")}only the 2400+ model has it</span><span>${bar("w")}only the 1000–1300 model has it</span>` +
+        `<span title="ΔPMI pairs: |z| above ${D.dpmi_cut}, family-wise over ${D.pairs_supported.toLocaleString()} pairs">thick line: a concept · thin line with moving dots: two latents that model's play turns on together more often</span>`
+      : `<span title="seed-check margin, ${SLO.toFixed(2)} to ${SHI.toFixed(2)}">line = concept, colour: how reliably found<span class="ramp e"></span>less → more</span><span>thicker = found at more positions</span>`) +
+    `<span title="${pct(RLO)} to ${pct(RHI)} of moves">dot = latent, colour: how often it fires<span class="ramp r"></span>rarely → often</span>`;
   setTimeout(() => G.zoomToFit(0, 40), 50); setTimeout(() => G.zoomToFit(900, 40), 1200);
 }
 function setView(v) {
   view = v; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === v));
   setOpts(v === "gdiff" ? "diff" : "own"); try { history.replaceState(null, "", "#" + v); } catch (e) {} draw(); if (!document.getElementById("list").hidden) list();
+  if ((D.featured || []).length) featured();
 }
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setView(b.dataset.v)));
-shr.addEventListener("change", () => { draw(); if (!document.getElementById("list").hidden) list(); });
 sel.addEventListener("change", () => { try { localStorage.setItem("cg-minpos-all", sel.value); } catch (e) {} draw(); if (!document.getElementById("list").hidden) list(); });
+shr.addEventListener("change", () => { draw(); if (!document.getElementById("list").hidden) list(); });
 let spin = false;                                          // no rotation until the viewer turns it on
 G.controls().autoRotate = spin; G.controls().autoRotateSpeed = 0.4;
 document.getElementById("rot").textContent = spin ? "pause rotation" : "rotate";
@@ -370,18 +484,28 @@ function jumpConcept(c) {                                 // light up the hypere
   const ps = c.lat.map(k => N[k].p), m = [0, 1, 2].map(d => ps.reduce((s, p) => s + p[d], 0) / ps.length);
   fly({ x: m[0], y: m[1], z: m[2] }); return true;
 }
+// open a concept from anywhere: in this view if it is drawn here, else in its own model's view; one seen at fewer
+// positions than the lowest "seen at" option is not drawn, so it gets its card alone
+function openConcept(c) {
+  if (jumpConcept(c)) return;
+  const lo = Math.min(...[...sel.options].map(o => +o.value));
+  if (c.positions >= lo) { sel.value = String(lo); setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); return; }
+  pinned = true; tip.classList.add("pinned"); setFocus(null, null, true);
+  showTip(`<div class="how">Seen at only ${c.positions} position${c.positions === 1 ? "" : "s"}, fewer than the map draws, so it is not on the map.</div>` + conceptCard(c), { clientX: innerWidth * 0.6, clientY: innerHeight * 0.2 });
+}
 document.getElementById("find").addEventListener("keydown", e => {
   if (e.key !== "Enter") return; const q = e.target.value.trim().toUpperCase(); if (!q) return;
   const c = byId.get(q);
-  if (c) { if (!jumpConcept(c)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); } return; }
+  if (c) { openConcept(c); return; }
   const k = N.findIndex(n => String(n.latent) === q); if (k >= 0) jump("l" + k);
 });
 let sortk = "positions", sdir = -1;                        // the concepts in view, as a table
 function list() {
   const box = document.getElementById("list"), rows = shown().slice().sort((a, b) => { const x = a[sortk] ?? -1, y = b[sortk] ?? -1; return (x > y ? 1 : x < y ? -1 : 0) * sdir; });
-  const cols = [["id", "concept"], ["strength", "strength"], ["positions", "positions"], ["persistence", "persist."], ["match_cos", "best match"], ["theme", "theme"]];
-  box.innerHTML = `<table><thead><tr>${cols.map(([k, t]) => `<th data-k="${k}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td class="num">${c.strength ?? "–"}</td><td class="num">${c.positions}</td><td class="num">${c.persistence ?? "–"}</td>` +
+  const cols = [["id", "concept", ""], ["strength", "reliability", "how far its seed-check scores clear chance; higher is better"], ["positions", "positions", "positions it was found at"],
+                ["persistence", "stays on", "median half-moves it stays on after the branch"], ["match_cos", "other model", "closest concept in the other model, and how similar (1 = the same)"], ["theme", "its lines often have", ""]];
+  box.innerHTML = `<table><thead><tr>${cols.map(([k, t, ti]) => `<th data-k="${k}" title="${ti}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(c => `<tr data-id="${esc(c.id)}"><td>${FEAT.has(c.id) ? `<b>${esc(FEAT.get(c.id).title)}</b> ` : ""}${esc(c.id)}</td><td class="num">${c.strength ?? "–"}</td><td class="num">${c.positions}</td><td class="num">${c.persistence ?? "–"}</td>` +
       `<td>${esc(c.match)} <span class="num">${c.match_cos.toFixed(2)}</span></td><td>${esc(c.theme || "")}</td></tr>`).join("") + `</tbody></table>`;
   box.querySelectorAll("th").forEach(th => th.onclick = () => { const k = th.dataset.k; sdir = k === sortk ? -sdir : -1; sortk = k; list(); });
   box.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => jumpConcept(byId.get(tr.dataset.id)));
@@ -389,18 +513,32 @@ function list() {
 document.getElementById("tbl").onclick = () => { const b = document.getElementById("list"); b.hidden = !b.hidden; if (!b.hidden) list(); };
 addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
 document.addEventListener("visibilitychange", () => document.hidden ? G.pauseAnimation() : G.resumeAnimation());
-function featured() {
-  const box = document.getElementById("featured"), F = D.featured || [];
-  box.innerHTML = `<h2>Featured concepts</h2><p>Labelled by hand: obvious from their branching examples and strongly defined. Click one to see it.</p>` +
+function featured() {                                    // the labelled concepts of the model in view (G_diff: those only one model has)
+  const box = document.getElementById("featured"), seen = new Set();
+  const F = (D.featured || []).map(f => { const c = byId.get(f.id); if (!c) return null;
+    if (view === "gdiff") return c.absent ? f : null;
+    const m = view === "gs" ? "S" : "W"; if (c.model === m) return f;
+    const t = [...FEAT.values()].find(x => x.via === f.id); return t ? t : null; }).filter(f => f && !seen.has(f.id) && seen.add(f.id));
+  const none = (D.featured || []).filter(f => !F.some(x => x.id === f.id || x.via === f.id));
+  box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand: each is easy to see in its examples.`} Click one to open it.</p>` +
     F.map(f => { const c = byId.get(f.id); return `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span>` +
-      `<span class="fm">${esc(f.id)} · ${c && c.model === "S" ? "2400+" : "1000–1300"} · strength ${c && c.strength != null ? c.strength : "–"}</span></button>`; }).join("");
+      `<span class="fm">${c ? MODEL[c.model] : ""} · ${esc(f.id)}${f.via ? ` · twin of ${esc(f.via)}` : ""}</span></button>`; }).join("") +
+    (view !== "gdiff" && none.length ? `<p>Not in this model: ${none.map(f => esc(f.title)).join("; ")} (see <b>only one model has it</b>).</p>` : "");
   box.querySelectorAll("button.fi").forEach(b => b.onclick = () => { const c = byId.get(b.dataset.id); if (!c) return;
     document.getElementById("list").hidden = true;
-    if (!jumpConcept(c)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); } });
+    openConcept(c); });
 }
 document.getElementById("feat").onclick = e => { const b = document.getElementById("featured"); b.hidden = !b.hidden; e.target.setAttribute("aria-expanded", !b.hidden);
   if (!b.hidden) document.getElementById("list").hidden = true; };
 document.getElementById("tbl").addEventListener("click", () => { if (!document.getElementById("list").hidden) document.getElementById("featured").hidden = true; });
 if ((D.featured || []).length) featured(); else document.getElementById("featured").hidden = true;
+// the guide: open on a first visit, and from "? guide"
+const intro = document.getElementById("intro");
+const closeIntro = () => { intro.hidden = true; try { localStorage.setItem("cg-intro-seen", "1"); } catch (e) {} };
+document.getElementById("help").onclick = () => { intro.hidden = false; document.getElementById("go").focus(); };
+document.getElementById("go").onclick = closeIntro;
+intro.addEventListener("click", e => { if (e.target === intro) closeIntro(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && !intro.hidden) closeIntro(); });
+try { if (!localStorage.getItem("cg-intro-seen")) intro.hidden = false; } catch (e) { intro.hidden = false; }
 setView(view);
 </script>
