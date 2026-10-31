@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths  # noqa: E402  also puts transcend/'s folders on sys.path
-import steer_concepts as sc
+import steer
 from concept_mine import load_pos, mu_of, pairs_of, PL
 
 OV = paths.RUNS / "transcend" / "overnight"
@@ -71,14 +71,13 @@ def gap_points(tag, m, members, R0, lat, w, mu, roots, n_pts):
         zc = Z[r["c"] * (PL + 1) + r["t"], lat].toarray().ravel(); zs = Z[r["s"] * (PL + 1) + r["t"], lat].toarray().ravel()
         gaps.append(float(np.array(w) @ (zc - zs)))
         if len(pts) < n_pts:
-            p_, fen = sc.prompt_at(roots[r["pos"]], D[r["c"]]["sans"], r["t"]); pts.append(dict(prompt=p_, fen=fen))
+            p_, fen = steer.prompt_at(roots[r["pos"]], D[r["c"]]["sans"], r["t"]); pts.append(dict(prompt=p_, fen=fen))
     return float(np.median(gaps)), pts
 
 
 # ------------------------------------------------------------------ choose
 def choose(a):
     import torch, chess
-    import steer_after as sa
     rng = np.random.default_rng(a.seed)
     rep = json.loads((paths.ROOT / "results/transcend/divergence" / disc_tag(a) / "mine" / "concepts.json").read_text())
     roots = json.loads((OV / a.name / "disc" / "positions.json").read_text(encoding="utf-8"))
@@ -110,13 +109,13 @@ def choose(a):
                       members=len(Fo["members"]), tier=Fo["tier"], board=Fo.get("board"), replication=Fo["replication"], agreement=Fo["agreement"],
                       ks=Fo["ks"], theme="two or more captures", activating=Fo.get("activating", []), pts=pts_o, default=True))
     # readback on the GPU
-    dev, gd, cc, models, idx = sa.setup(a)
+    dev, gd, cc, models, idx = steer.setup(a)
     for c in cands:
         mi = idx[c["model"]]; mo = 1 - mi
-        pts = sa.fits(models, c["pts"])
-        _, _, _, _, h, oh = sa.states(gd, cc, models, mi, mo, pts, a, dev)
-        u = sa.direction(cc, c["lat"], c["w"], c["mu"], cc.col[mi], dev); u = u / u.norm()
-        rise = sa.readback(gd, cc, mi, mo, h, oh, 0.25 * h.norm(dim=1, keepdim=True) * u[None], c, dev)
+        pts = steer.fits(models, c["pts"])
+        _, _, _, _, h, oh = steer.states(gd, cc, models, mi, mo, pts, a, dev)
+        u = steer.direction(cc, c["lat"], c["w"], c["mu"], cc.col[mi], dev); u = u / u.norm()
+        rise = steer.readback(gd, cc, mi, mo, h, oh, 0.25 * h.norm(dim=1, keepdim=True) * u[None], c, dev)
         c["readback"] = float(np.median(rise)); c["landed"] = bool(c["readback"] >= c["gap"])
         print(f"  {c['id']} ({c['model']}, {c['positions']} positions): readback {c['readback']:+.2f} against g {c['gap']:.2f} -> "
               f"{'lands' if c['landed'] else 'does not land'}", flush=True)
@@ -152,7 +151,7 @@ def prep(a):
                     ec = float(Z[r["c"] * (PL + 1) + row, c["lat"]].toarray().ravel() @ w)
                     es = float(Z[r["s"] * (PL + 1) + row, c["lat"]].toarray().ravel() @ w)
                     if ec - es <= a.min_gap: continue
-                    pc, fc = sc.prompt_at(roots[pos], sc_, row); ps, fs = sc.prompt_at(roots[pos], ss, row)
+                    pc, fc = steer.prompt_at(roots[pos], sc_, row); ps, fs = steer.prompt_at(roots[pos], ss, row)
                     if (pc, ps) in seen: continue
                     seen.add((pc, ps)); pairs.append(dict(pos=pos, step=d, gap=round(ec - es, 3), high=dict(prompt=pc, fen=fc), low=dict(prompt=ps, fen=fs)))
         if len(pairs) > a.max_pairs: pairs = [pairs[i] for i in sorted(rng.choice(len(pairs), a.max_pairs, replace=False))]
@@ -165,9 +164,8 @@ def prep(a):
 # ------------------------------------------------------------------ run
 def run(a):
     import torch, chess
-    import steer_after as sa
     stop = datetime.fromisoformat(a.stop_by)
-    dev, gd, cc, models, idx = sa.setup(a)
+    dev, gd, cc, models, idx = steer.setup(a)
     J = json.loads((OV / a.name / "confirm-jobs.json").read_text())
     out = OV / a.name / "confirm.jsonl"
     done = {json.loads(l)["id"] for l in out.read_text().splitlines()} if out.exists() else set()
@@ -176,17 +174,17 @@ def run(a):
         if jb["id"] in done: continue
         if datetime.now() >= stop: print(f"stop-by reached: {len(J) - n_} candidates untested", flush=True); break
         mi = idx[jb["model"]]; col = cc.col[mi]; model = models[mi]; L = str(cc.layer[mi])
-        P = [p for p in jb["pairs"] if sa.fits(models, [p["high"]]) and sa.fits(models, [p["low"]])]
+        P = [p for p in jb["pairs"] if steer.fits(models, [p["high"]]) and steer.fits(models, [p["low"]])]
         if not P: print(f"{jb['id']}: no pairs", flush=True); continue
         bh = [chess.Board(p["high"]["fen"]) for p in P]; bl = [chess.Board(p["low"]["fen"]) for p in P]
         ph_, pl_ = [p["high"]["prompt"] for p in P], [p["low"]["prompt"] for p in P]
         lh, base_h, sh = gd.policy(model, bh, dev, ph_, grab=(L,), batch=a.batch)
         ll, base_l, sl = gd.policy(model, bl, dev, pl_, grab=(L,), batch=a.batch)
         hh, hl = sh[L].to(dev), sl[L].to(dev)
-        u = sa.direction(cc, jb["lat"], jb["w"], jb["mu"], col, dev); u = u / u.norm()
+        u = steer.direction(cc, jb["lat"], jb["w"], jb["mu"], col, dev); u = u / u.norm()
         dirs = {"v": u}
         for r_i, rr in enumerate(jb["random"]):
-            d = sa.direction(cc, rr["lat"], jb["w"], rr["mu"], col, dev); dirs[f"rand{r_i}"] = d / d.norm()
+            d = steer.direction(cc, rr["lat"], jb["w"], rr["mu"], col, dev); dirs[f"rand{r_i}"] = d / d.norm()
         rec = dict(id=jb["id"], model=jb["model"], pairs=[dict(pos=p["pos"], step=p["step"], gap=p["gap"], high=p["high"]["fen"], low=p["low"]["fen"],
                    high_moves=[m.uci() for m in lh[i]], low_moves=[m.uci() for m in ll[i]], high_lp=rd(base_h[i]), low_lp=rd(base_l[i]))
                    for i, p in enumerate(P)], towards={}, away={})
@@ -209,7 +207,7 @@ def js(p, q):
 
 def measures(r):
     """-> {side: {direction: (JS gap closed, features projection)}}, plies used."""
-    from steer_match import feats
+    from steer import feats
     nrm = lambda q: q / max(q.sum(), 1e-12)
     out = {}; used = 0
     for side in ("towards", "away"):

@@ -3,9 +3,9 @@
 
 Positions: data/pgn_probe/population.jsonl, one per game, games not used by the manypositions run (nor earlier in this
 run), bands alternated, a seeded random order; kept when S's policy there has >= 2 moves >= --reasonable and none above
---max-top, the position is a middlegame and the rollouts fit the context (recurring.py's picking rule). Each position
+--max-top, the position is a middlegame and the rollouts fit the context (the old recurring.py's picking rule). Each position
 goes to discovery or confirmation by a hash of its game (--disc-share), as it is created.
-Rollouts: --rollouts lines of --plies plies at --temperature, each model playing both sides (oneposition.rollouts).
+Rollouts: --rollouts lines of --plies plies at --temperature, each model playing both sides (shared.rollouts).
 
 -> runs/transcend/overnight/{disc,conf}/positions.json, runs/transcend/divergence/<prefix>-{disc,conf}-s{0,1}/{S,W}/pos-k.npz,
    mu.json per folder once --mu-after discovery positions are done (confirmation uses discovery's), progress.log
@@ -45,7 +45,7 @@ def save_npz(f, D, P):
 
 
 def encode_both(a, ccs, models, root, D, dev):
-    """recurring.encode_values for both crosscoders from one pass of the models -> [sparse (lines * (plies + 1), latents)]."""
+    """shared.encode_values for both crosscoders from one pass of the models -> [sparse (lines * (plies + 1), latents)]."""
     import torch
     import shared as gd
     from scipy import sparse
@@ -111,13 +111,13 @@ def candidates(a, Sm, dev, used, rng):
 
 
 def write_mu(a, split_src="disc"):
-    import recurring as rc
+    import shared as gd
     n = len(json.loads((OV / a.name / "disc" / "positions.json").read_text(encoding="utf-8")))
     for s in (0, 1):
         for m in "SW":
             run = DIV / f"{a.prefix}-disc-s{s}" / m
             done = sum((run / f"pos-{k}.npz").exists() for k in range(n))
-            mu = rc.mu_of(run, n).tolist()
+            mu = gd.mu_counts(run, n).tolist()
             for split in ("disc", "conf"):
                 f = DIV / f"{a.prefix}-{split}-s{s}" / m / "mu.json"; f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(json.dumps(dict(positions=done, mu=mu, from_=f"{a.prefix}-disc-s{s}")), encoding="utf-8")
@@ -149,7 +149,6 @@ def main():
     a = ap.parse_args()
     import eval as ev
     import shared as gd
-    import oneposition as op
     deadline = datetime.fromisoformat(a.deadline)
     (OV / a.name).mkdir(parents=True, exist_ok=True)
     src = {sp: OV / a.name / sp for sp in ("disc", "conf")}
@@ -171,8 +170,8 @@ def main():
             if m == "S" and s_legal is not None: legal, lp = s_legal, s_lp
             else:
                 lg, lps, _ = gd.policy(models[who[m]], [b], dev, [root["prompt"]], batch=a.batch); legal, lp = lg[0], lps[0]
-            sans, ucis = op.rollouts(a, root, legal, lp, models[who[m]], dev, a.temperature, [a.seed, zlib.crc32(f"{root['band']}/{root['game']}".encode()), 0 if m == "S" else 1])
-            D = op.distinct(sans, ucis); P0, P1 = encode_both(a, ccs, models, root, D, dev)
+            sans, ucis = gd.rollouts(a, root, legal, lp, models[who[m]], dev, a.temperature, [a.seed, zlib.crc32(f"{root['band']}/{root['game']}".encode()), 0 if m == "S" else 1])
+            D = gd.distinct(sans, ucis); P0, P1 = encode_both(a, ccs, models, root, D, dev)
             save_npz(F[(1, m)] / f"pos-{k}.npz", D, P1); save_npz(F[(0, m)] / f"pos-{k}.npz", D, P0); lines[m] = len(D)
         return time.time() - t0, lines
     # positions whose files are incomplete (a restart): play again

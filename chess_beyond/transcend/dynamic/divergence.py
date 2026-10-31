@@ -35,7 +35,7 @@ positions is measured afterwards, on held-out positions.
              other pairs at that position pick up a planted latent.
 4. measure   per model and k. Positions split 25 / 25 by a hash of band and game. Families: within one half, the
              nonzero v's grouped greedily (largest support first) when their support has Jaccard >= --jaccard with a
-             family's core (the latents in at least half its members, as recurring.py); a family is its members'
+             family's core (the latents in at least half its members, shared.core_match); a family is its members'
              mean v, renormalised to |v|_1 = 1. Held-out recurrence: the share of the other half's pairs (same k) where
              v . (z^chosen_tau - z^subpar_tau) >= 0.5 at every ply of the window. Null: --null random v's per family
              with its weights on as many latents, each drawn from the latents that fire anywhere in that model's run
@@ -64,8 +64,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
 import shared as gd
-import oneposition as op
-import recurring as rc
 
 RUNS = paths.RUNS / "transcend" / "divergence"
 RESULTS = paths.ROOT / "results" / "transcend" / "divergence"
@@ -109,9 +107,9 @@ def play(a):
         else:
             b = ev.board_of(gd.parse_movetext(root["prompt"])[0])
             legal, lp, _ = gd.policy(me, [b], dev, [root["prompt"]], batch=a.batch)
-            sans, ucis = op.rollouts(a, root, legal[0], lp[0], me, dev, a.temperature, [a.seed, k, 0 if a.model == "S" else 1])
-            D = op.distinct(sans, ucis)
-        P = rc.encode_values(a, cc, models, root, D, dev)
+            sans, ucis = gd.rollouts(a, root, legal[0], lp[0], me, dev, a.temperature, [a.seed, k, 0 if a.model == "S" else 1])
+            D = gd.distinct(sans, ucis)
+        P = gd.encode_values(a, cc, models, root, D, dev)
         cnt = np.bincount(P.indices, minlength=P.shape[1])
         tot = np.bincount(P.indices, weights=P.data.astype(np.float64), minlength=P.shape[1])
         np.savez_compressed(run / f"pos-{k}.npz", D=json.dumps(D), data=P.data.astype(np.float16), indices=P.indices,
@@ -126,8 +124,8 @@ def play(a):
 
 def load_on(run, k, mu, on):
     """A position's lines, weights and on-matrix (lines * (plies + 1), latents) bool sparse."""
-    D, P, w, _ = rc.load_pos(run, k)
-    return D, w, rc.on_matrix(P, mu, on).tocsr()
+    D, P, w, _ = gd.raw_pos(run, k)
+    return D, w, gd.on_matrix(P, mu, on).tocsr()
 
 
 def mu_for(a, run, K):
@@ -138,7 +136,7 @@ def mu_for(a, run, K):
         if m["positions"] < K:
             print(f"  mu from {m['positions']} positions (now {K} played): delete {f} to recompute", flush=True)
         return np.array(m["mu"])
-    mu = rc.mu_of(run, K)
+    mu = gd.mu_counts(run, K)
     f.write_text(json.dumps(dict(positions=sum((run / f"pos-{k}.npz").exists() for k in range(K)), mu=mu.tolist())),
                  encoding="utf-8")
     return mu
@@ -409,7 +407,7 @@ def measure(a, model, roots, side):
             G = [p for p in rows[kw][h] if p["latents"]]
             if not G or Dw[kw][o][0] is None:
                 continue
-            pats = rc.core_match([(p["position"], set(p["latents"])) for p in G], a.jaccard)
+            pats = gd.core_match([(p["position"], set(p["latents"])) for p in G], a.jaccard)
             V, NV = [], []
             for pt in pats:
                 acc = {}
@@ -525,7 +523,7 @@ def report(a):
                 r = roots[k]
                 out += [f"position {k} (`{r['fen']}`), split at ply {p['t']}: {p['chosen']} ({p['wc']:.0%} there) vs "
                         f"{p['subpar']} ({p['ws']:.0%})", "", "| chosen | subpar |", "|---|---|",
-                        f"| {op.mark(D[p['c']]['sans'], mc, r)} | {op.mark(D[p['s']]['sans'], ms, r)} |",
+                        f"| {gd.mark(D[p['c']]['sans'], mc, r)} | {gd.mark(D[p['s']]['sans'], ms, r)} |",
                         f"| [Lichess]({gd.lichess_line(r, D[p['c']]['sans'])}) | [Lichess]({gd.lichess_line(r, D[p['s']]['sans'])}) |", ""]
                 if len(seen) == 3:
                     break

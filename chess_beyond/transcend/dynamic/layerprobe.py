@@ -5,8 +5,8 @@ moves it will play there next, beyond the board and the move it is about to play
     python transcend/dynamic/layerprobe.py --stage probe       # the probes alone
     python transcend/dynamic/layerprobe.py --model W           # the same for W
 
-1. positions    --positions held-out middlegame positions, one per game (readings.py's choice and order: its 1,000 are
-                the first 1,000 here). Split by game: 70% train, 10% validation, 20% test.
+1. positions    --positions held-out middlegame positions, one per game, in a seeded random order
+                (shared.middlegame_roots). Split by game: 70% train, 10% validation, 20% test.
 2. futures      the model's greedy continuation for --plies plies, the model writing both colours. m1: the move it
                 plays at the position; m3, m5: the same side's next two moves, after the replies. Targets for each:
                 from-square and to-square (64 classes), piece type (6). Events within the plies, by the side to move
@@ -47,7 +47,6 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
-import readings as rd
 import shared as gd
 from pgn_model import MAX_MOVE_CHARS
 
@@ -118,7 +117,7 @@ def play(a, run, layers):
     if rpath.exists():
         roots = json.loads(rpath.read_text(encoding="utf-8"))
     else:
-        P = rd.positions(argparse.Namespace(seed=a.seed, population=a.population, positions=a.positions), model.ctx)
+        P = gd.middlegame_roots(argparse.Namespace(seed=a.seed, population=a.population, positions=a.positions), model.ctx)
         roots = [dict(prompt=r["prompt"], fen=b.fen(), band=r["band"], game=str(r["game"])) for r, b in P]
         rpath.write_text(json.dumps(roots), encoding="utf-8")
     print(f"{len(roots)} positions", flush=True)

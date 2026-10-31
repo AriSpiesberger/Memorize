@@ -1,6 +1,5 @@
-"""Helpers shared by readings.py, oneposition.py and recurring.py (kept from the retired graphdiff.py and
-manypositions.py): the crosscoder, both models' policies and states, rollouts, the lines' positions, and Schut's
-max-min LP."""
+"""Helpers for the dynamic-concept scripts: the crosscoder, both models' policies and states, rollouts and their cached
+codes, the lines' positions, and Schut's max-min LP."""
 
 import json
 import sys
@@ -15,14 +14,11 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # chess_beyond/
 import paths  # noqa: E402  also puts transcend/'s folders on sys.path
 import eval as ev
-from concepts import Cache, extend, pad, room
+from concepts import Cache, extend, pad
 from crosscoder import CrossCoder
 from pgn_model import MAX_MOVE_CHARS, SPACE, encode, prompt
 from pgn_probe import DEFAULT as PROBE
 from pgn_probe import parse_movetext
-
-RUNS = paths.RUNS / "transcend" / "graphdiff"
-RESULTS = paths.ROOT / "results" / "transcend" / "graphdiff"
 
 
 def load_cc(cc_run, cc, strong, dev, name=None):
@@ -228,78 +224,146 @@ def encode_states(cc, st):
     return cc.coder.encode(x)[0], x
 
 
-def maxmin(job):
-    """Schut et al.'s max-min LP, w >= 0 (or signed, w = w+ - w-, with signed=True):
-        max m - C sum(xi)   s.t.   D w + xi >= m,   sum(w) <= 1,   w, xi >= 0
-    nu = 0: the hard margin (xi = 0); nu > 0: C = 1 / (nu n), at most a share nu of the rows inside the
-    margin. Dual simplex, so the answer is a vertex: sparse. -> key, (columns, weights, m, share separated)."""
-    from scipy import sparse
-    from scipy.optimize import linprog
-    key, D, cols, nu, signed = job
-    n, k = D.shape
-    kk = 2 * k if signed else k
-    ns = n if nu > 0 else 0
-    c = np.zeros(kk + 1 + ns)
-    c[kk] = -1.0
-    if ns:
-        c[kk + 1:] = 1.0 / (nu * n)
-    top = ([-D, D] if signed else [-D]) + [sparse.csr_matrix(np.ones((n, 1)))] + ([-sparse.identity(n, format="csr")] if ns else [])
-    bot = sparse.hstack([sparse.csr_matrix(np.ones((1, kk))), sparse.csr_matrix((1, 1 + ns))])
-    A = sparse.vstack([sparse.hstack(top), bot]).tocsr()
-    b = np.zeros(n + 1)
-    b[-1] = 1.0
-    r = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None)] * kk + [(None, None)] + [(0, None)] * ns, method="highs-ds")
-    if r.status != 0:
-        return key, None
-    w = r.x[:k] - r.x[k:2 * k] if signed else r.x[:k]
-    nz = np.abs(w) > 1e-9
-    return key, (cols[nz], w[nz], float(r.x[kk]), float(np.mean(D @ w > 0)))
+# ------------------------------------------------------------------ rollouts and their codes (from the retired
+# oneposition.py, recurring.py and readings.py; divergence.py, overnight_play.py and layerprobe.py use them)
 
 
-def pick_positions(a, Sm, dev):
-    """Up to --positions positions from different games, each with >= 2 moves >= --reasonable and none above --max-top
-    (S's policy), in a seeded random order -> [(root, legal moves, log-probabilities)]."""
+def middlegame_roots(a, ctx):
+    """--positions middlegame positions from --population, one per game, in a seeded random order -> [(row, board)]."""
     rng = np.random.default_rng(a.seed)
     pop = [json.loads(l) for l in open(a.population, encoding="utf-8")]
     out, games = [], set()
-    order = rng.permutation(len(pop))
-    for s in range(0, len(order), a.scan):
-        cand = []
-        for i in order[s:s + a.scan]:
-            r = pop[i]
-            if (r["band"], r["game"]) in games or len(r["prompt"]) + room(a.plies) + MAX_MOVE_CHARS + 1 > Sm.ctx:
-                continue
-            b = ev.board_of(parse_movetext(r["prompt"])[0])
-            if prompt(b) != r["prompt"] or b.is_game_over() or not middlegame(b):
-                continue
-            cand.append((r, b))
-        if not cand:
+    for i in rng.permutation(len(pop)):
+        r = pop[i]
+        if (r["band"], r["game"]) in games or len(r["prompt"]) + MAX_MOVE_CHARS + 1 > ctx:
             continue
-        legal, lp, _ = policy(Sm, [b for _, b in cand], dev, [r["prompt"] for r, _ in cand], batch=a.batch)
-        for (r, b), mv, l in zip(cand, legal, lp):
-            if (r["band"], r["game"]) in games:
-                continue
-            p = np.exp(l - np.logaddexp.reduce(l))
-            if p.max() <= a.max_top and (p >= a.reasonable).sum() >= 2:
-                games.add((r["band"], r["game"]))
-                top = sorted(zip(p, mv), key=lambda x: -x[0])[:5]
-                out.append((dict(prompt=r["prompt"], fen=b.fen(), band=r["band"], game=r["game"],
-                                 top=[(b.san(m), float(q)) for q, m in top]), mv, l))
-                if len(out) >= a.positions:
-                    return out
+        b = ev.board_of(parse_movetext(r["prompt"])[0])
+        if prompt(b) != r["prompt"] or b.is_game_over() or not middlegame(b):
+            continue
+        games.add((r["band"], r["game"]))
+        out.append((r, b))
+        if len(out) >= a.positions:
+            break
     return out
 
 
-def x_of(P, D, plies, nlat):
-    """Per distinct line, the share of its plies where each latent fires, from the per-ply matrix."""
+def rollouts(a, root, legal, lp, Sm, dev, T, seed):
+    """--rollouts lines of S from the root at temperature T, S writing every move -> [tuple of SANs], [tuple of UCIs]."""
+    rng = np.random.default_rng(seed)
+    b0 = ev.board_of(parse_movetext(root["prompt"])[0])
+    L = []
+    for k in range(a.rollouts):
+        line = dict(board=b0.copy(), moves=[], sans=[], prompt=root["prompt"])
+        advance(line, legal[sample(lp, T, rng)])
+        L.append(line)
+    for ply in range(1, a.plies):
+        live = [l for l in L if len(l["moves"]) == ply and not l["board"].is_game_over()]
+        if live:
+            lg, lps, _ = policy(Sm, [l["board"] for l in live], dev, [l["prompt"] for l in live], batch=a.batch)
+            for l, mv, p in zip(live, lg, lps):
+                advance(l, mv[sample(p, T, rng)])
+    return [tuple(l["sans"]) for l in L], [tuple(l["moves"]) for l in L]
+
+
+def distinct(sans, ucis):
+    """The distinct lines, most common first -> [dict(sans, moves, n)]."""
+    from collections import Counter
+    cnt = Counter(zip(sans, ucis))
+    return [dict(sans=list(s), moves=list(u), n=n) for (s, u), n in cnt.most_common()]
+
+
+def mark(sans, plies, root):
+    """SAN with move numbers, the plies where the concept's latents fire in [brackets]."""
+    b = chess.Board(root["fen"])
+    n, white = b.fullmove_number, b.turn == chess.WHITE
+    out = []
+    for i, m in enumerate(sans):
+        w = white if i % 2 == 0 else not white
+        num = n + (i + (0 if white else 1)) // 2
+        s = (f"{num}." if w else (f"{num}..." if i == 0 else "")) + m
+        out.append(f"[{s}]" if (i + 1) in plies else s)
+    return " ".join(out)
+
+
+def encode_values(a, cc, models, root, D, dev):
+    """Every position's activations, values kept -> sparse (lines * (plies + 1), latents) float32 (row 0 of a line: its
+    root, left empty)."""
+    import torch
     from scipy import sparse
-    n = np.array([max(len(d["sans"]), 1) for d in D], float)
-    rows = np.repeat(np.arange(len(D)), plies + 1)
-    S = sparse.csr_matrix((np.ones(len(rows)), (rows, np.arange(len(rows)))), shape=(len(D), len(rows)))
-    return np.asarray((S @ (P > 0).astype(np.float32)).todense(), np.float32) / n[:, None]
+    Ld = dict(roots=[dict(prompt=root["prompt"], fen=root["fen"])], lines=[dict(root=0, moves=d["moves"]) for d in D])
+    seqs, ends, _, _, _, line_start = positions(Ld)
+    st = {m: line_states(models[m], seqs, ends, cc.layer[m], dev, a.max_tokens) for m in (0, 1)}
+    rows, cols, vals = [], [], []
+    with torch.no_grad():
+        for i in range(0, len(st[0]), 4096):
+            f, _ = encode_states(cc, {m: st[m][i:i + 4096].to(dev) for m in (0, 1)})
+            nz = (f > 0).nonzero()
+            rows.append(nz[:, 0].cpu().numpy() + i)
+            cols.append(nz[:, 1].cpu().numpy())
+            vals.append(f[nz[:, 0], nz[:, 1]].float().cpu().numpy())
+    rows, cols, vals = np.concatenate(rows), np.concatenate(cols), np.concatenate(vals)
+    pos_line = np.repeat(np.arange(len(D)), np.diff(line_start))
+    pos_t = np.concatenate([np.arange(n) for n in np.diff(line_start)])
+    keep = pos_t[rows] >= 1
+    r_ = rows[keep]
+    return sparse.csr_matrix((vals[keep], (pos_line[r_] * (a.plies + 1) + pos_t[r_], cols[keep])),
+                             shape=(len(D) * (a.plies + 1), cc.ck["latents"]))
 
 
-def wmed(v, w):
-    o = np.argsort(v)
-    cw = np.cumsum(w[o])
-    return float(v[o][min(int(np.searchsorted(cw, cw[-1] / 2)), len(v) - 1)])
+def raw_pos(run, k):
+    """A position's cached codes as saved (not divided by mu) -> lines, codes, line weights, the npz."""
+    from scipy import sparse
+    z = np.load(run / f"pos-{k}.npz")
+    D = json.loads(str(z["D"]))
+    P = sparse.csr_matrix((z["data"].astype(np.float32), z["indices"], z["indptr"]), shape=tuple(z["shape"]))
+    w = np.array([d["n"] for d in D], float)
+    return D, P, w / w.sum(), z
+
+
+def mu_counts(run, K):
+    """Each latent's mean value when on, over the cached positions 0..K-1 (their vcnt, vsum)."""
+    cnt, tot = 0, 0
+    for k in range(K):
+        if (run / f"pos-{k}.npz").exists():
+            z = np.load(run / f"pos-{k}.npz")
+            cnt, tot = cnt + z["vcnt"], tot + z["vsum"]
+    return tot / np.maximum(cnt, 1)
+
+
+def on_matrix(P, mu, frac):
+    """Activations above frac x mu_j, as a boolean sparse matrix of the same shape."""
+    Q = P.copy()
+    Q.data = (Q.data > frac * mu[Q.indices]).astype(np.float32)
+    Q.eliminate_zeros()
+    return Q
+
+
+def core_match(G, jac):
+    """Greedy, largest groups first: a group (position, set) joins the pattern whose core it matches best at Jaccard >=
+    jac, else starts one; a core is the latents in at least half of the pattern's members -> [dict(members, core)]."""
+    pats, index = [], {}
+    for i in sorted(range(len(G)), key=lambda i: -len(G[i][1])):
+        k, s = G[i]
+        cand = {p for j in s for p in index.get(j, ())}
+        best, bj = None, jac
+        for p in cand:
+            c = pats[p]["core"]
+            j_ = len(s & c) / len(s | c)
+            if j_ >= bj:
+                best, bj = p, j_
+        if best is None:
+            pats.append(dict(members=[i], counts={j: 1 for j in s}, core=set(s)))
+            p = len(pats) - 1
+        else:
+            p = best
+            P_ = pats[p]
+            P_["members"].append(i)
+            for j in s:
+                P_["counts"][j] = P_["counts"].get(j, 0) + 1
+            old = P_["core"]
+            P_["core"] = {j for j, n in P_["counts"].items() if n >= len(P_["members"]) / 2}
+            for j in old - P_["core"]:
+                index[j].discard(p)
+        for j in pats[p]["core"]:
+            index.setdefault(j, set()).add(p)
+    return pats

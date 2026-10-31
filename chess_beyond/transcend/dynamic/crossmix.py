@@ -50,8 +50,8 @@ LINES = paths.RUNS / "transcend" / "graphdiff" / "everything-3m-Lfinal" / "lines
 
 def excluded_games():
     """(band, game) of the positions the crosscoder's own analysis uses (divergence.py's: the manypositions positions),
-    so it never trains on them. (readings.py's and layerprobe.py's positions come from the same seeded order of the
-    same pool as the graphdiff roots, so excluding those would drop every root; neither analyses this crosscoder.)"""
+    so it never trains on them. (layerprobe.py's positions come from the same seeded order of the same pool as the
+    graphdiff roots, so excluding those would drop every root; it does not analyse this crosscoder.)"""
     out = set()
     for f in (paths.RUNS / "transcend" / "manypositions").glob("*/positions.json"):
         out |= {(str(r["band"]), str(r["game"])) for r in json.loads(f.read_text(encoding="utf-8"))}
