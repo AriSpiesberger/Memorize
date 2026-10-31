@@ -1,0 +1,29 @@
+{
+  "note": "Concepts labelled by hand for people to look through: obvious from their branch points and strongly defined (seed-check strength, many positions, held-out examples). Labels describe what the 'on' line does that the 'off' line does not.",
+  "concepts": [
+    {"id": "S21", "title": "Go for a draw by repetition",
+     "look": "The 'on' move starts a back-and-forth shuffle (Bd7-Be6, Nd4-Nf5, Bh4-Bg3) that repeats until the end of the line; the 'off' move plays on.",
+     "also": "W9 is the same concept in the 1000-1300 model (cosine 0.99)."},
+    {"id": "S1", "title": "Trade queens",
+     "look": "The 'on' move offers or forces the queen trade (...Qxd4 Bxd4, ...Qc4 Qe2, ...Qxf2 Rxf2); the 'off' move keeps the queens on. It stays on for the rest of the line, since the queens never come back.",
+     "also": "W3 is the same in the 1000-1300 model (cosine 1.00). It is board-tier: once the queens are gone, the board alone says so."},
+    {"id": "S103", "title": "Bring a rook to the e-file",
+     "look": "The 'on' move is a rook to the e-file (Re1+, ...Rfe8, Rfe1); the 'off' move is a queen, pawn or king move instead.",
+     "also": ""},
+    {"id": "S124", "title": "Rook to an open file, often doubling (2400+ only)",
+     "look": "The 'on' move brings a rook to a file to contest or double on it (Rae1, Rdb1, ...Rfd8, ...Rac8, ...Rd7 then ...Rfd8); the 'off' move cashes in with a capture or a trade.",
+     "also": "The 1000-1300 model has no counterpart (best match cosine 0.20): the clearest concept only the strong model has."},
+    {"id": "S97", "title": "Queenside pawn expansion",
+     "look": "The 'on' line advances the a- or b-pawn (a4, a5, b5, ...a6, ...a5) to gain space or open a file; the 'off' line plays elsewhere.",
+     "also": "W347 is the same in the 1000-1300 model (cosine 0.96); S32 is a close relative (the a-pawn push)."},
+    {"id": "S154", "title": "Kingside pawn advance",
+     "look": "The 'on' move pushes an h- or g-pawn (h3, h4, g4, ...h5, ...g6); the 'off' move is a central or tactical move.",
+     "also": "W157 is the same in the 1000-1300 model (cosine 0.91)."},
+    {"id": "S135", "title": "Pawn to g3 or ...g6",
+     "look": "The 'on' move is g3 or ...g6, covering the king's dark squares; the 'off' move is h3, ...f5, a knight or a bishop move.",
+     "also": "W175 is the same in the 1000-1300 model (cosine 0.99)."},
+    {"id": "W107", "title": "King steps to f8 or f1",
+     "look": "The 'on' move walks the uncastled or exposed king one square to f8 or f1 (...Kf8, Kf1), usually out of a check or a pin; the 'off' move blocks or goes elsewhere.",
+     "also": "S44 is the same in the 2400+ model (cosine 0.89)."}
+  ]
+}

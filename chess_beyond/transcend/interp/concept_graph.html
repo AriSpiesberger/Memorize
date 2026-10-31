@@ -45,6 +45,25 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #tip .mv b { background: #ddd6fe; font-weight: 600; border-radius: 2px; padding: 0 1px; }
 #tip .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #7a8194; margin-top: 8px; }
 #tip .exr { margin: 6px 0 12px; padding-bottom: 10px; border-bottom: 1px solid #e4e2da; }
+#tip .pair { margin: 8px 0 14px; padding-bottom: 12px; border-bottom: 1px solid #e4e2da; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-items: start; }
+#tip .pair .pb { grid-row: span 4; }
+#tip .pair .ph { font-size: 12px; color: #5b6275; }
+#tip .pair .ph b { color: #1d2230; }
+#tip .ln { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; overflow-wrap: anywhere; }
+#tip .ln .pre { color: #9aa0ad; }
+#tip .ln .on { background: #99f6e4; color: #0f3d3a; border-radius: 2px; padding: 0 1px; }
+#tip .ln .win { box-shadow: inset 0 -2px 0 #8b7cf6; }
+#tip .ln .sp { outline: 1px solid #1d2230; outline-offset: 0; border-radius: 2px; }
+#tip .ln .tg { display: inline-block; min-width: 86px; font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; }
+#tip .ln .tg.c { color: #0f766e; } #tip .ln .tg.s { color: #9f1239; }
+#tip .pair2 { margin: 8px 0 14px; padding-bottom: 12px; border-bottom: 1px solid #e4e2da; display: grid; gap: 6px; }
+#tip .sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+#tip .sd { display: grid; gap: 4px; align-content: start; min-width: 0; }
+#tip .sd svg { max-width: 100%; height: auto; }
+#tip .sdh { font-size: 12px; } #tip .dim { color: #7a8194; }
+#tip .ln .on { background: #99f6e4; color: #0f3d3a; border-radius: 2px; padding: 0 1px; }
+#tip .kindh { color: #0f766e; } #tip .kindm { color: #4c3fb4; }
+@media (max-width: 560px) { #tip .pair { grid-template-columns: minmax(0, 1fr); } #tip .pair .pb { grid-row: auto; } }
 #tip .boards { display: flex; flex-wrap: wrap; gap: 10px; }
 #tip figure.bx { margin: 0; } #tip figcaption { font-size: 11.5px; color: #5b6275; text-align: center; }
 #tip a { color: #4c3fb4; }
@@ -56,6 +75,15 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #list th { color: var(--ink2); font-weight: 500; cursor: pointer; position: sticky; top: -10px; background: #0e1427; }
 #list tbody tr { cursor: pointer; } #list tbody tr:hover { background: rgba(165,180,252,.1); }
 #list .num { text-align: right; font-family: var(--mono); }
+#featured { top: calc(14px + env(safe-area-inset-top, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); width: min(380px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: auto; padding: 12px 14px; display: grid; gap: 8px; }
+#featured h2 { margin: 0; font-size: 14px; font-weight: 600; }
+#featured p { margin: 0; color: var(--ink2); font-size: 12px; }
+#featured button.fi { text-align: left; background: rgba(30,40,68,.55); border: 1px solid var(--edge); border-radius: 8px; color: var(--ink); padding: 8px 10px; cursor: pointer; font: inherit; display: grid; gap: 2px; }
+#featured button.fi:hover { border-color: #a5b4fc; }
+#featured .ft { font-weight: 600; } #featured .fm { color: var(--ink2); font-size: 11.5px; font-family: var(--mono); }
+#tip .feat { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 10px; margin: 4px 0 8px; }
+#tip .feat .ft { font-weight: 600; font-size: 13.5px; color: #065f46; }
 @media (max-width: 560px) { #key { display: none; } #hint { display: none; } }
 </style>
 
@@ -72,13 +100,14 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
   </div>
   <div class="row">
     <input type="search" id="find" placeholder="latent or concept id" aria-label="Find a latent or concept">
-    <button class="btn" id="rot">pause rotation</button><button class="btn" id="fit">re-centre</button><button class="btn" id="tbl">list</button>
+    <button class="btn" id="rot">pause rotation</button><button class="btn" id="fit">re-centre</button><button class="btn" id="tbl">list</button><button class="btn" id="feat" aria-expanded="true">featured</button>
     <span class="facts" id="n"></span>
   </div>
-  <div id="hint">Points are latents, heated by how often they fire. Each concept is a hyperedge joining its latents (a spur for one latent, an edge for two, a triangle for three), heated by its persistence. Only latents a concept in view uses are shown. Hover a point or an edge for its card and examples, click to pin and fly there, drag to orbit, scroll to zoom.</div>
+  <div id="hint">Points are latents, heated by how often they fire. Each concept is a hyperedge joining its latents (a spur for one latent, an edge for two, a triangle for three), heated by how strongly it is defined (its margins over the nulls in the seed check). Only latents a concept in view uses are shown. Hover a point or an edge for its card and examples, click to pin and fly there, drag to orbit, scroll to zoom.</div>
 </div>
 <div id="key" class="panel"></div>
 <div id="list" class="panel" hidden></div>
+<div id="featured" class="panel"></div>
 <div id="tip"></div>
 <!--BOARDS-->
 
@@ -97,6 +126,10 @@ const PMAX = 6, NONE = [124, 134, 162], DIM_NODE = "#1a2138", DIM_LINK = "rgba(6
 const ramp = (R, t) => (t = Math.max(0, Math.min(1, t)), t < 0.5 ? mix(R[0], R[1], t * 2) : mix(R[1], R[2], t * 2 - 1));
 // edges: the concept's persistence, 0 -> PMAX+ plies; latents: firing rate, log scale between the 2nd and 98th percentile
 const pcol = p => p == null ? NONE : ramp(EH, p / PMAX);
+// edges: how strongly the concept is defined (seed-check margins), between the 5th and 95th percentile over all concepts
+const SV = D.concepts.filter(c => c.lat.length && c.strength != null).map(c => c.strength).sort((a, b) => a - b);
+const SLO = SV[Math.floor(0.05 * SV.length)], SHI = SV[Math.floor(0.95 * SV.length)];
+const scol = v => v == null ? NONE : ramp(EH, (v - SLO) / (SHI - SLO));
 const LR = D.nodes.map(n => Math.log10(n.rate)).sort((a, b) => a - b), RLO = LR[Math.floor(0.02 * LR.length)], RHI = LR[Math.floor(0.98 * LR.length)];
 const rcol = r => ramp(RH, (Math.log10(r) - RLO) / (RHI - RLO));
 const pct = x => { const v = 100 * 10 ** x; return v >= 1 ? v.toFixed(0) + "%" : v.toFixed(2) + "%"; };
@@ -118,25 +151,74 @@ function place(ev) {
   tip.style.left = x + "px"; tip.style.top = y + "px";
 }
 const lineHTML = (line, t, k) => line.map((m, i) => i >= t - 1 && i < t + k ? `<b>${esc(m)}</b>` : esc(m)).join(" ");
+// one pair: the starting board with both first moves (chosen green, other red), then each line with the concept marked
+function board2(fen, ua, ub) {
+  const q = 22, flip = fen.split(" ")[1] === "b";
+  const xy = sq => { const f = sq.charCodeAt(0) - 97, r = +sq[1] - 1; return flip ? [(7 - f) * q, r * q] : [f * q, (7 - r) * q]; };
+  const arrow = (u, col) => { const [x1, y1] = xy(u.slice(0, 2)), [x2, y2] = xy(u.slice(2, 4)), c = q / 2;
+    return `<line x1="${x1 + c}" y1="${y1 + c}" x2="${x2 + c}" y2="${y2 + c}" stroke="${col}" stroke-width="${q / 6}" stroke-opacity="0.85" stroke-linecap="round"/>` +
+      `<circle cx="${x2 + c}" cy="${y2 + c}" r="${q / 4.5}" fill="${col}" fill-opacity="0.9"/>`; };
+  return board(fen, null, "md").replace("</svg>", arrow(ub, "#be123c") + arrow(ua, "#0f766e") + "</svg>");
+}
+// a line shown from the starting board on: the moves from ply `from` (1-based), the first one numbered
+function fromBoard(line, from) {
+  const out = line.slice(from - 1);
+  if (out.length && !/^\d/.test(out[0])) {
+    for (let i = from - 2; i >= 0; i--) { const m = /^(\d+)\./.exec(line[i]); if (m) { out[0] = `${m[1]}...${out[0]}`; break; } }
+  }
+  return out;
+}
+function lineMarked(line, act, t, k, tg, cls, from) {
+  from = from || t;
+  return `<div class="ln"><span class="tg ${cls}">${tg}</span>` + fromBoard(line, from).map((m, j) => {
+    const i = from - 1 + j, p = i + 1, c = [];
+    if (act && act[i] >= 0.5) c.push("on"); if (p >= t && p <= t + k) c.push("win"); if (p === from) c.push("sp");
+    return `<span class="${c.join(" ")}">${esc(m)}</span>`; }).join(" ") + `</div>`;
+}
+// one pair: two boards of the same branch position, each with its own branch move, and below each its line for as long
+// as the concept persists (no longer), with a Lichess link that starts at the branch and plays exactly those moves
+function oneBoard(fen, uci, col) {
+  const q = 22, flip = fen.split(" ")[1] === "b";
+  const xy = sq => { const f = sq.charCodeAt(0) - 97, r = +sq[1] - 1; return flip ? [(7 - f) * q, r * q] : [f * q, (7 - r) * q]; };
+  const [x1, y1] = xy(uci.slice(0, 2)), [x2, y2] = xy(uci.slice(2, 4)), c = q / 2;
+  return board(fen, null, "md").replace("</svg>",
+    `<line x1="${x1 + c}" y1="${y1 + c}" x2="${x2 + c}" y2="${y2 + c}" stroke="${col}" stroke-width="${q / 6}" stroke-opacity="0.85" stroke-linecap="round"/>` +
+    `<circle cx="${x2 + c}" cy="${y2 + c}" r="${q / 4.5}" fill="${col}" fill-opacity="0.9"/></svg>`);
+}
+function side(fen, uci, line, act, t, n, lk, label, move, pct, col, cls) {
+  const ms = fromBoard(line, t).slice(0, n).map((m, j) => `<span class="${act && act[t - 1 + j] >= 0.5 ? "on" : ""}${j === 0 ? " sp" : ""}">${esc(m)}</span>`).join(" ");
+  return `<div class="sd"><div class="sdh"><span class="tg ${cls}">${label}</span> <b style="color:${col}">${esc(move)}</b> <span class="dim">${pct}%</span></div>` +
+    oneBoard(fen, uci, col) + `<div class="ln">${ms}</div><a href="${lk}" target="_blank" rel="noopener">open on Lichess</a></div>`;
+}
+function pairHTML(p) {
+  return `<div class="pair2"><div class="ph">${p.split} position ${p.pos} · ${esc(p.band)} · ${p.node} games reach this position · the concept persists ${p.persist} pl${p.persist === 1 ? "y" : "ies"}${p.gap != null ? ` · gap ${p.gap}` : ""}</div>` +
+    `<div class="sides">` + side(p.fen, p.uc, p.cline, p.cact, p.t, p.persist, p.lkc, "concept on", p.chosen, Math.round(100 * p.wc), "#0f766e", "c") +
+    side(p.fen, p.us, p.sline, p.sact, p.t, p.persist, p.lks, "off", p.subpar, Math.round(100 * p.ws), "#be123c", "s") + `</div></div>`;
+}
+const FEAT = new Map((D.featured || []).map(f => [f.id, f]));
 function conceptCard(c) {
-  const other = c.model === "S" ? "W" : "S";
-  let h = `<h3>${esc(c.id)} <span style="font-weight:400;color:#5b6275">${c.model === "S" ? "2400+ model (S)" : "1000–1300 model (W)"}</span></h3>` +
+  const other = c.model === "S" ? "W" : "S", fe = FEAT.get(c.id);
+  let h = (fe ? `<div class="feat"><div class="ft">${esc(fe.title)}</div><div>${esc(fe.look)}</div>${fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>` : "") + `<h3>${esc(c.id)} <span style="font-weight:400;color:#5b6275">${c.model === "S" ? "2400+ model (S)" : "1000–1300 model (W)"}</span></h3>` +
     `<div class="meta">${esc(c.tier)}${c.theme ? " · " + esc(c.theme) : ""} · seen at ${c.positions} discovery positions · persistence ` +
-    `${c.persistence == null ? "never on at the split" : c.persistence + " plies"} (${c.on_at_split} branch points)<br>` +
+    `${c.persistence == null ? "never on at the split" : c.persistence + " plies"} (${c.on_at_split} branch points) · strength ${c.strength ?? "–"}<br>` +
     `best match in ${other}: ${esc(c.match)}, cosine ${c.match_cos.toFixed(3)}${c.absent ? " (absent in " + other + ")" : ""}</div>` +
     `<div class="lab">latents (weight in v)</div>` + c.latent.map((j, i) => `<span class="chip">${j} · ${c.w[i].toFixed(2)}</span>`).join("") +
     (c.lat.length < c.k95 ? `<div class="meta">${c.k95 - c.lat.length} more of its latents are not seed-stable, so not on the map</div>` : "");
-  if (c.bps && c.bps.length) h += `<div class="lab">branch points: chosen over subpar</div>` +
+  if (c.pairs && c.pairs.length) {
+    const mined = c.pairs.filter(p => p.kind === "mined"), held = c.pairs.filter(p => p.kind === "held-out");
+    h += `<div class="lab">each example: the same branch position twice, with the move that turns the concept on (left) and the alternative (right), each followed for as long as the concept persists. Shaded: the concept is on. Each Lichess link starts at the branch and plays exactly those moves.</div>`;
+    if (mined.length) h += `<div class="lab kindm">at the branch points it was mined from</div>` + mined.map(pairHTML).join("");
+    if (held.length) h += `<div class="lab kindh">held out: positions it was not mined from, where it comes on in one line and not the other</div>` + held.map(pairHTML).join("");
+  } else if (c.bps && c.bps.length) h += `<div class="lab">branch points: chosen over subpar</div>` +
     c.bps.map(b => `<div class="mv">${esc(b.chosen)} (${Math.round(100 * b.wc)}%) over ${esc(b.subpar)}<br>${lineHTML(b.cline, b.t, b.k)}</div>`).join("");
-  if (c.windows && c.windows.length) h += `<div class="lab">where it is most on (window in bold)</div>` +
-    c.windows.map(w => `<div class="mv">${lineHTML(w.line, w.t, w.k)} <span style="color:#7a8194">· ${esc(w.band)}</span></div>`).join("");
   return h;
 }
 function latentCard(n) {
   const cs = inC.get(n.i) || [];
   return `<h3>latent ${n.latent}</h3><div class="meta">on at ${(100 * n.rate).toFixed(2)}% of plies · ${Math.round(100 * n.s_share)}% of its firing from S's play ` +
     `· seed-1 decoder cosine ${n.seed_cos}</div>` + (cs.length ? `<div class="lab">in ${cs.length} concept${cs.length > 1 ? "s" : ""}</div>` +
-    cs.map(x => `<span class="chip">${esc(x)}</span>`).join("") : `<div class="meta">in no mined concept</div>`) + examplesHTML(n.i);
+    cs.map(x => `<a class="chip" href="#" data-jump="${esc(x)}">${esc(x)}</a>`).join("") : `<div class="meta">in no mined concept</div>`) +
+    (cs.length ? `<div class="meta" style="margin-top:6px">Click a concept to see its branching examples.</div>` : "");
 }
 // one rollout ply: the line from the position, the ply's move in bold
 const tag = e => `<span style="color:#7a8194">${e.model} · ${esc(e.band)}</span>`;
@@ -148,19 +230,18 @@ const boardHTML = (e, cap) => e.fen ? `<figure class="bx">${board(e.fen, e.uci, 
 function examplesHTML(k) {
   const ex = (D.examples || {})[k] || [];
   if (!ex.length) return "";
-  return `<div class="lab">activating (left) and its minimal pair (right): same position and ply, a different line, latent off</div>` + ex.map(e =>
-    `<div class="exr"><div class="boards">${boardHTML(e, `on, ${e.value}×`)}${e.off ? boardHTML(e.off, "off") : ""}</div>` +
-    `<div style="padding-left:8px;border-left:3px solid #14b8a6">${plyHTML(e)}<div class="meta" style="margin:0">on, ${e.value}× its mean · ${tag(e)}</div></div>` +
-    (e.off ? `<div style="padding-left:8px;border-left:3px solid #c9ccd6">${plyHTML(e.off)}<div class="meta" style="margin:0">off · the lines part at ply ${e.off.diverge + 1}</div></div>` : "") + `</div>`).join("");
+  const P = ex.filter(e => e.pair);
+  if (!P.length) return "";
+  return `<div class="lab">where it comes on: one starting board (where the two lines part), the line where the latent is on and one where it is off at the same ply</div>` + P.map(e => {
+    const q = e.pair, onAt = l => l.map((_, i) => i + 1 === e.t ? 1 : 0), offAt = l => l.map(() => 0);
+    return `<div class="pair"><div class="pb">${board2(q.fen, q.ua, q.ub)}</div>` +
+      `<div class="ph">on at ${e.value}× its mean, ${e.t - q.start} plies after the lines part · ${tag(e)}</div>` +
+      lineMarked(q.la, onAt(q.la), e.t, 0, "latent on", "c", q.start) + lineMarked(q.lb, offAt(q.lb), e.t, 0, "off", "s", q.start) +
+      `<div class="ph"><a href="${q.lk}" target="_blank" rel="noopener"><b>open the branching point on Lichess</b></a>: starts at this board, the "on" line as the main line and the "off" line as a variation · <a href="${q.lg}" target="_blank" rel="noopener">the whole game</a></div></div>`;
+  }).join("");
 }
-function linkCard(l) {                                   // a concept, as the hyperedge over its latents
-  const c = l.c_;
-  let h = conceptCard(c);
-  if (c.bpv && c.bpv.length) h += `<div class="lab">its latents at the branch points (window mean, × the latent's mean): chosen · subpar</div>` + c.bpv.map(b =>
-    `<div class="mv"><b>${esc(b.chosen)}</b> (${Math.round(100 * b.wc)}%) over ${esc(b.subpar)}: ` +
-    c.latent.map(j => { const v = b.vals[j] || [0, 0]; return `${j} ${v[0]} · ${v[1]}`; }).join("; ") + `</div>`).join("");
-  for (const k of new Set([l.a, l.b])) h += `<div class="lab" style="margin-top:12px;color:#1d2230">latent ${N[k].latent} (weight ${c.w[c.lat.indexOf(k)].toFixed(2)})</div>` + examplesHTML(k);
-  return h;
+function linkCard(l) {                                   // a concept (an edge): only its branching paths, never its latents' examples
+  return conceptCard(l.c_);
 }
 function edgeCard(e) {
   const ex = e.examples || {}, li = N[e.i].latent, lj = N[e.j].latent;
@@ -171,7 +252,9 @@ function edgeCard(e) {
     block("both", "both on") + block("only_i", `${li} on, ${lj} off`) + block("only_j", `${lj} on, ${li} off`);
 }
 const card = n => n.kind === "s" ? linkCard(byConcept.get(n.c_.id)[0]) : latentCard(n.n_);
-function showTip(html, ev) { tip.innerHTML = html; tip.style.display = "block"; place(ev); }
+function showTip(html, ev) { tip.innerHTML = html; tip.style.display = "block"; place(ev);
+  tip.querySelectorAll("[data-jump]").forEach(a => a.onclick = e => { e.preventDefault(); const c = byId.get(a.dataset.jump);
+    if (c && !jumpConcept(c)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); } }); }
 
 let hl = new Set(), hlLinks = new Set(), focus = null, adj = new Map(), NODES = new Map();
 const G = ForceGraph3D({ controlType: "orbit" })(document.getElementById("g"))
@@ -220,7 +303,7 @@ function draw() {
   const cs = shown(), used = new Set(), links = []; byConcept = new Map(); let single = 0;
   const spurs = [];
   cs.forEach((c, ci) => {
-    const ls = [], wd = 0.35 + 0.28 * Math.sqrt(c.positions), col = rgb(view === "gdiff" ? (c.model === "S" ? S_ : W_) : pcol(c.persistence));
+    const ls = [], wd = 0.35 + 0.28 * Math.sqrt(c.positions), col = rgb(view === "gdiff" ? (c.model === "S" ? S_ : W_) : scol(c.strength));
     if (c.lat.length === 1) {
       const k = c.lat[0], p = N[k].p, r = Math.hypot(...p) || 1, h = (ci * 0.618) % 1;
       const d = [p[0] / r + Math.cos(6.28 * h) * 0.8, p[1] / r + Math.sin(6.28 * h) * 0.8, p[2] / r + (h - 0.5)];
@@ -255,7 +338,7 @@ function draw() {
     (view === "gdiff"
       ? `<span>${bar("s")}S: its one-model-only concepts (thick) and the latent pairs its play combines more (thin)</span>` +
         `<span>${bar("w")}W: the same for W</span>`
-      : `<span>concepts (edges), persistence<span class="ramp e"></span>0 → ${PMAX}+ plies · width: positions seen at</span>`) +
+      : `<span>concepts (edges), how strongly defined<span class="ramp e"></span>${SLO.toFixed(2)} → ${SHI.toFixed(2)} (seed-check margin) · width: positions seen at</span>`) +
     `<span>latents, firing rate<span class="ramp r"></span>${pct(RLO)} → ${pct(RHI)} of plies</span>` +
     (view === "gdiff"
       ? 
@@ -265,12 +348,12 @@ function draw() {
 }
 function setView(v) {
   view = v; document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === v));
-  setOpts(v === "gdiff" ? "diff" : "own"); history.replaceState(null, "", "#" + v); draw(); if (!document.getElementById("list").hidden) list();
+  setOpts(v === "gdiff" ? "diff" : "own"); try { history.replaceState(null, "", "#" + v); } catch (e) {} draw(); if (!document.getElementById("list").hidden) list();
 }
 document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setView(b.dataset.v)));
 shr.addEventListener("change", () => { draw(); if (!document.getElementById("list").hidden) list(); });
 sel.addEventListener("change", () => { try { localStorage.setItem("cg-minpos-all", sel.value); } catch (e) {} draw(); if (!document.getElementById("list").hidden) list(); });
-let spin = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+let spin = false;                                          // no rotation until the viewer turns it on
 G.controls().autoRotate = spin; G.controls().autoRotateSpeed = 0.4;
 document.getElementById("rot").textContent = spin ? "pause rotation" : "rotate";
 document.getElementById("rot").onclick = e => { spin = !spin; G.controls().autoRotate = spin; e.target.textContent = spin ? "pause rotation" : "rotate"; };
@@ -296,9 +379,9 @@ document.getElementById("find").addEventListener("keydown", e => {
 let sortk = "positions", sdir = -1;                        // the concepts in view, as a table
 function list() {
   const box = document.getElementById("list"), rows = shown().slice().sort((a, b) => { const x = a[sortk] ?? -1, y = b[sortk] ?? -1; return (x > y ? 1 : x < y ? -1 : 0) * sdir; });
-  const cols = [["id", "concept"], ["positions", "positions"], ["persistence", "persist."], ["match_cos", "best match"], ["theme", "theme"]];
+  const cols = [["id", "concept"], ["strength", "strength"], ["positions", "positions"], ["persistence", "persist."], ["match_cos", "best match"], ["theme", "theme"]];
   box.innerHTML = `<table><thead><tr>${cols.map(([k, t]) => `<th data-k="${k}">${t}${k === sortk ? (sdir < 0 ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td class="num">${c.positions}</td><td class="num">${c.persistence ?? "–"}</td>` +
+    rows.map(c => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td class="num">${c.strength ?? "–"}</td><td class="num">${c.positions}</td><td class="num">${c.persistence ?? "–"}</td>` +
       `<td>${esc(c.match)} <span class="num">${c.match_cos.toFixed(2)}</span></td><td>${esc(c.theme || "")}</td></tr>`).join("") + `</tbody></table>`;
   box.querySelectorAll("th").forEach(th => th.onclick = () => { const k = th.dataset.k; sdir = k === sortk ? -sdir : -1; sortk = k; list(); });
   box.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => jumpConcept(byId.get(tr.dataset.id)));
@@ -306,5 +389,18 @@ function list() {
 document.getElementById("tbl").onclick = () => { const b = document.getElementById("list"); b.hidden = !b.hidden; if (!b.hidden) list(); };
 addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
 document.addEventListener("visibilitychange", () => document.hidden ? G.pauseAnimation() : G.resumeAnimation());
+function featured() {
+  const box = document.getElementById("featured"), F = D.featured || [];
+  box.innerHTML = `<h2>Featured concepts</h2><p>Labelled by hand: obvious from their branching examples and strongly defined. Click one to see it.</p>` +
+    F.map(f => { const c = byId.get(f.id); return `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span>` +
+      `<span class="fm">${esc(f.id)} · ${c && c.model === "S" ? "2400+" : "1000–1300"} · strength ${c && c.strength != null ? c.strength : "–"}</span></button>`; }).join("");
+  box.querySelectorAll("button.fi").forEach(b => b.onclick = () => { const c = byId.get(b.dataset.id); if (!c) return;
+    document.getElementById("list").hidden = true;
+    if (!jumpConcept(c)) { sel.value = "2"; setView(c.model === "S" ? "gs" : "gw"); shr.value = "all"; draw(); setTimeout(() => jumpConcept(c), 400); } });
+}
+document.getElementById("feat").onclick = e => { const b = document.getElementById("featured"); b.hidden = !b.hidden; e.target.setAttribute("aria-expanded", !b.hidden);
+  if (!b.hidden) document.getElementById("list").hidden = true; };
+document.getElementById("tbl").addEventListener("click", () => { if (!document.getElementById("list").hidden) document.getElementById("featured").hidden = true; });
+if ((D.featured || []).length) featured(); else document.getElementById("featured").hidden = true;
 setView(view);
 </script>

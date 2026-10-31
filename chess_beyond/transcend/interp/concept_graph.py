@@ -22,6 +22,8 @@ G_diff  concepts whose best match in the other model (report()'s centroid cosine
     python transcend/interp/concept_graph.py build      # CPU, a few minutes: runs/transcend/overnight/<name>/graph.npz, .json
     python transcend/interp/concept_graph.py layout     # CPU, under a minute: places the nodes (into graph.json)
     python transcend/interp/concept_graph.py examples   # CPU, a few minutes: examples for the edges (into graph.json)
+    python transcend/interp/concept_graph.py pairs      # CPU, resumable: each concept's examples as pairs from one board (into graph.json)
+    python transcend/interp/concept_graph.py rank       # CPU, seconds: results/transcend/overnight/<name>-rank.md (concepts ranked for reading)
     python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html (and -graph.json, its data)
 
 The page is concept_graph.html with the data put in. To change the page only, edit concept_graph.html and run page: it
@@ -355,6 +357,265 @@ def examples(a):
           f"({sum(1 for v in ex.values() for e in v if e['off'])} with a minimal pair), {len(pairs)} dPMI pairs ({time.time() - t0:.0f}s)", flush=True)
 
 
+def lichess_pgn(root, sans, ply):
+    """A Lichess analysis link that loads the game up to the root, then the line, opened at ply `ply` (plies from the
+    game's start): the viewer steps forward through the moves from there."""
+    import re, chess
+    from urllib.parse import quote
+    pre = [t for t in (re.sub(r"^\d+\.(\.\.)?", "", x) for x in root["prompt"].lstrip(";").split()) if t]
+    b = chess.Board(); out = []
+    for i, m in enumerate(pre + list(sans)):
+        if b.turn == chess.WHITE: out.append(f"{b.fullmove_number}.{m}")
+        elif i == 0: out.append(f"{b.fullmove_number}...{m}")
+        else: out.append(m)
+        b.push_san(m)
+    return f"https://lichess.org/analysis/pgn/{quote(' '.join(out))}#{len(pre) + ply}"
+
+
+def lichess_branch(root, sa, sb, d):
+    """One Lichess analysis link with the whole game: the game up to the root, the rollout's shared moves sa[:d], then the
+    'on' line sa[d:] as the main line and the 'off' line sb[d:] as a variation from the same move, opened at the branch
+    point (the position both lines start from), so the two continuations sit side by side on one board."""
+    import re, chess
+    from urllib.parse import quote
+    pre = [t for t in (re.sub(r"^\d+\.(\.\.)?", "", x) for x in root["prompt"].lstrip(";").split()) if t]
+    def toks(b, moves):
+        b = b.copy(); out = []
+        for i, m in enumerate(moves):
+            out.append(f"{b.fullmove_number}.{m}" if b.turn == chess.WHITE else (f"{b.fullmove_number}...{m}" if i == 0 else m))
+            b.push_san(m)
+        return out
+    b = chess.Board(); head = toks(b, pre + list(sa[:d]))
+    for m in pre + list(sa[:d]): b.push_san(m)
+    main, alt = toks(b, sa[d:]), toks(b, sb[d:])
+    b1 = b.copy(); b1.push_san(sa[d]); rest = toks(b1, sa[d + 1:])
+    text = " ".join(head + [main[0], "(" + " ".join(alt) + ")"] + rest)
+    return f"https://lichess.org/analysis/pgn/{quote(text)}#{len(pre) + d}"
+
+
+def lichess_at_branch(fen, sa, sb):
+    """A Lichess analysis link that starts AT the branching point: a PGN whose starting position is the branch board
+    (SetUp/FEN headers), the 'on' line as the main line and the 'off' line as a variation from its first move. It opens
+    on the branch board with both continuations hanging from it, whatever Lichess does with ply anchors."""
+    import chess
+    from urllib.parse import quote
+    b = chess.Board(fen)
+    def toks(b, moves):
+        b = b.copy(); out = []
+        for i, m in enumerate(moves):
+            out.append(f"{b.fullmove_number}.{m}" if b.turn == chess.WHITE else (f"{b.fullmove_number}...{m}" if i == 0 else m))
+            b.push_san(m)
+        return out
+    alt = toks(b, sb); b1 = b.copy(); b1.push_san(sa[0]); rest = toks(b1, sa[1:])
+    text = f'[SetUp "1"]\n[FEN "{fen}"]\n\n' + " ".join([toks(b, sa[:1])[0], "(" + " ".join(alt) + ")"] + rest)
+    return f"https://lichess.org/analysis/pgn/{quote(text)}"
+
+
+def lichess_line_from(fen, moves):
+    """A Lichess analysis link whose game starts at fen (the branch board) and plays `moves`, nothing more."""
+    import chess
+    from urllib.parse import quote
+    b = chess.Board(fen); out = []
+    for i, m in enumerate(moves):
+        out.append(f"{b.fullmove_number}.{m}" if b.turn == chess.WHITE else (f"{b.fullmove_number}...{m}" if i == 0 else m))
+        b.push_san(m)
+    text = '[SetUp "1"]' + "\n" + '[FEN "' + fen + '"]' + "\n\n" + " ".join(out)
+    return "https://lichess.org/analysis/pgn/" + quote(text)
+
+
+def pairs(a):
+    """Every concept's examples as pairs from one starting board: the line where the concept comes on against the line
+    where it does not, both from the same branch point, the concept's activity marked ply by ply on each, and a Lichess
+    link per line that opens at the split and steps forward.
+      mined     its own branch points (the chosen line against the subpar one), up to --n-pairs at different positions.
+      held-out  decisive branch points (node >= 30 rollouts, chosen >= 75%, as concept_mine.py) at positions it was not
+                mined from, anywhere in its own model's rollouts (discovery and confirmation), where the concept stays
+                higher on the chosen line by >= 0.5 at every ply of its window (its most common k); the --n-pairs largest,
+                at different positions.
+    Activity: v . z, v the concept's keep95 weights with |v|_1 = 1, z in units of each latent's mu (capped at 3); on at a
+    ply when >= 0.5. Resumable: rerun until it says done (--budget seconds a call)."""
+    import chess
+    from types import SimpleNamespace
+    from concept_mine import nums
+    g = json.loads((OV / a.name / "graph.json").read_text())
+    rep = json.loads((paths.ROOT / "results" / "transcend" / "divergence" / f"{a.prefix}-disc-s0" / "mine" / "concepts.json").read_text())
+    src = {f["id"]: f for m_ in "SW" for f in rep[m_]["concepts"]}
+    roots = sum((json.loads((OV / a.name / s_ / "positions.json").read_text(encoding="utf-8")) for s_ in ("disc", "conf")), [])
+    n_disc = len(json.loads((OV / a.name / "disc" / "positions.json").read_text(encoding="utf-8")))
+    crit = SimpleNamespace(node=30, wc=0.75, min_share=0.02); t0 = time.time()
+    for m in "SW":
+        st_f = OV / a.name / f"pairs-state-{m}.json"
+        st = json.loads(st_f.read_text()) if st_f.exists() else dict(next=0, top={})
+        if st["next"] is None: continue
+        C = [c for c in g["concepts"] if c["model"] == m and c["lat"]]
+        mu = np.array(json.loads((DIV / f"{a.prefix}-disc-s0" / m / "mu.json").read_text())["mu"])
+        V = np.zeros((4096, len(C)), np.float32); K = []; mined_pos = []
+        R0 = {keyof(r): r for r in json.loads((DIV / f"{a.prefix}-disc-s0" / "mine" / f"lp-{m}-s0.json").read_text())}
+        for i, c in enumerate(C):
+            lat, w = keep95(src[c["id"]]["centroid"]); w = np.array(w); V[lat, i] = w / np.abs(w).sum()
+            K.append(int(max(src[c["id"]]["ks"], key=lambda x: src[c["id"]]["ks"][x])))
+            mined_pos.append({R0[k_]["pos"] for k_ in src[c["id"]]["members"]})
+        K = np.array(K); fs = files(a, m)
+        for fi in range(st["next"], len(fs)):
+            D, Z = raw(fs[fi]); Z.data = np.minimum(Z.data / np.maximum(mu[Z.indices], 1e-6), 3.0)
+            A = np.asarray((Z @ V)); lens = [len(d["sans"]) for d in D]
+            for p in pairs_of(D, crit):
+                for k in sorted(set(K.tolist())):
+                    if min(lens[p["c"]], lens[p["s"]]) < p["t"] + k: continue
+                    idx = np.flatnonzero(K == k); rc, rs = p["c"] * (PL + 1) + p["t"], p["s"] * (PL + 1) + p["t"]
+                    gap = (A[rc:rc + k + 1, idx] - A[rs:rs + k + 1, idx]).min(0)
+                    for j in np.flatnonzero(gap >= 0.5):
+                        i = int(idx[j])
+                        if fi < n_disc and fi in mined_pos[i]: continue
+                        lst = st["top"].setdefault(C[i]["id"], [])
+                        if any(x[1] == fi for x in lst):
+                            q_ = next(n_ for n_, x in enumerate(lst) if x[1] == fi)
+                            if lst[q_][0] >= gap[j]: continue
+                            del lst[q_]
+                        lst.append([round(float(gap[j]), 3), fi, p["t"], p["c"], p["s"], k, p["chosen"], p["subpar"], p["wc"], p["ws"], p["node"]])
+                        lst.sort(key=lambda x: -x[0]); del lst[a.n_pairs:]
+            if time.time() - t0 > a.budget:
+                st["next"] = fi + 1; st_f.write_text(json.dumps(st))
+                print(f"pairs {m}: paused after position {fi + 1} of {len(fs)}; rerun to resume", flush=True); return
+        st["next"] = None; st_f.write_text(json.dumps(st))
+        print(f"pairs {m}: search done, held-out pairs for {len(st['top'])} of {len(C)} concepts ({time.time() - t0:.0f}s)", flush=True)
+    # render both models' pairs into graph.json, one position at a time
+    tasks = []                                                # (m, fi, concept index, order, args)
+    VV = {}
+    for m in "SW":
+        st = json.loads((OV / a.name / f"pairs-state-{m}.json").read_text())
+        R0 = {keyof(r): r for r in json.loads((DIV / f"{a.prefix}-disc-s0" / "mine" / f"lp-{m}-s0.json").read_text())}
+        for ci, c in enumerate(g["concepts"]):
+            if c["model"] != m or not c["lat"]: continue
+            lat, w = keep95(src[c["id"]]["centroid"]); w = np.array(w); v = np.zeros(4096, np.float32); v[lat] = w / np.abs(w).sum(); VV[ci] = v
+            ps, o = set(), 0
+            for key in sorted(src[c["id"]]["members"], key=lambda k_: -R0[k_]["node"]):
+                r_ = R0[key]
+                if r_["pos"] in ps: continue
+                ps.add(r_["pos"])
+                tasks.append((m, r_["pos"], ci, o, ("mined", r_["t"], r_["c"], r_["s"], r_["k"], r_["chosen"], r_["subpar"], r_["wc"], r_["ws"], r_["node"], None))); o += 1
+                if len(ps) == a.n_pairs: break
+            for x in st["top"].get(c["id"], []):
+                tasks.append((m, x[1], ci, o, ("held-out", x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[0]))); o += 1
+    mus = {m: np.array(json.loads((DIV / f"{a.prefix}-disc-s0" / m / "mu.json").read_text())["mu"]) for m in "SW"}
+    fsm = {m: files(a, m) for m in "SW"}
+    res = {}
+    tasks.sort(key=lambda x: (x[0], x[1])); cur = None
+    for m, fi, ci, o, (kind, t, c_, s_, k, chosen, subpar, wc, ws, node, gap) in tasks:
+        if cur != (m, fi):
+            D, Z = raw(fsm[m][fi]); Z.data = np.minimum(Z.data / np.maximum(mus[m][Z.indices], 1e-6), 3.0); Z = Z.tocsr(); cur = (m, fi)
+        root = roots[fi]; sc, ss = D[c_]["sans"], D[s_]["sans"]; v = VV[ci]
+        b = chess.Board(root["fen"])
+        for mv in sc[:t - 1]: b.push_san(mv)
+        act = lambda q, n: [round(float(x), 2) for x in np.asarray(Z[q * (PL + 1):q * (PL + 1) + n + 1] @ v).ravel()[1:]]
+        r = dict(kind=kind, pos=fi, split="discovery" if fi < n_disc else "confirmation", band=root["band"], t=t, k=k,
+                 chosen=chosen, subpar=subpar, wc=round(wc, 3), ws=round(ws, 3), node=node, fen=b.fen(),
+                 uc=b.parse_san(chosen).uci(), us=b.parse_san(subpar).uci(),
+                 cline=nums(root["fen"], sc), sline=nums(root["fen"], ss), cact=act(c_, len(sc)), sact=act(s_, len(ss)),
+                 lk=lichess_at_branch(b.fen(), sc[t - 1:], ss[t - 1:]), lg=lichess_branch(root, sc, ss, t - 1))
+        if gap is not None: r["gap"] = gap
+        # how long the concept persists: plies in a row from the split where it stays higher on the concept line by >= 0.5
+        ca, sa_ = r["cact"][t - 1:], r["sact"][t - 1:]; n = 0
+        while n < min(len(ca), len(sa_)) and ca[n] - sa_[n] >= 0.5: n += 1
+        n = max(n, 1); r["persist"] = n
+        r["lkc"] = lichess_line_from(r["fen"], sc[t - 1:t - 1 + n]); r["lks"] = lichess_line_from(r["fen"], ss[t - 1:t - 1 + n])
+        res.setdefault(ci, []).append((o, r))
+    for ci, lst in res.items(): g["concepts"][ci]["pairs"] = [r for _, r in sorted(lst, key=lambda x: x[0])]
+    done = len(res)
+    (OV / a.name / "graph.json").write_text(json.dumps(g))
+    n_h = sum(1 for c in g["concepts"] for p in c.get("pairs", []) if p["kind"] == "held-out")
+    print(f"pairs: {done} concepts, {sum(len(c.get('pairs', [])) for c in g['concepts'])} pairs ({n_h} held-out) written into graph.json "
+          f"({time.time() - t0:.0f}s); now run page", flush=True)
+
+
+def latentpairs(a):
+    """The latents' examples as pairs from one board too. Each activating ply and its minimal pair (examples()) share a
+    game up to the ply where their lines part; that position is the starting board, the two moves played there are its
+    arrows, and both lines run on from it, the latent's ply marked (on in the one, off in the other)."""
+    import re, chess
+    g = json.loads((OV / a.name / "graph.json").read_text())
+    roots = sum((json.loads((OV / a.name / s_ / "positions.json").read_text(encoding="utf-8")) for s_ in ("disc", "conf")), [])
+    strip = lambda x: re.sub(r"^\d+\.(\.\.)?", "", x)
+    by_start = {}
+    for i, r in enumerate(roots):
+        b = chess.Board(r["fen"]); by_start.setdefault((b.fullmove_number, b.turn), []).append(i)
+    def find_root(e):
+        first = e["line"][0]; n = int(re.match(r"^(\d+)", first).group(1)); turn = "..." not in first
+        sans = [strip(x) for x in e["line"]]
+        for i in by_start.get((n, turn), []):
+            b = chess.Board(roots[i]["fen"])
+            try:
+                for mv in sans[:e["t"] - 1]: b.push_san(mv)
+            except Exception: continue
+            if b.fen() == e["fen"]: return i, sans
+        return None, sans
+    ok = miss = 0
+    for k, exs in g.get("examples", {}).items():
+        for e in exs:
+            off = e.get("off")
+            if not off: continue
+            i, sa = find_root(e)
+            if i is None: miss += 1; continue
+            sb = [strip(x) for x in off["line"]]; d = off["diverge"]
+            if d >= len(sa) or d >= len(sb): miss += 1; continue
+            root = roots[i]; b = chess.Board(root["fen"])
+            for mv in sa[:d]: b.push_san(mv)
+            e["pair"] = dict(fen=b.fen(), ua=b.parse_san(sa[d]).uci(), ub=b.parse_san(sb[d]).uci(), start=d + 1,
+                             la=e["line"], lb=off["line"], lk=lichess_at_branch(b.fen(), sa[d:], sb[d:]), lg=lichess_branch(root, sa, sb, d))
+            ok += 1
+    (OV / a.name / "graph.json").write_text(json.dumps(g))
+    print(f"latentpairs: {ok} latent examples now start from their shared board ({miss} without one)", flush=True)
+
+
+def strength_of(f):
+    """How strongly a concept is defined: its margins over the nulls in the seed check (concept_mine.py score), summed."""
+    parts = [(f.get(x), f.get(x + "_null95")) for x in ("replication", "agreement", "replication_own")]
+    return round(sum(v - n for v, n in parts), 3) if all(v is not None and n is not None for v, n in parts) else None
+
+
+def rank(a):
+    """The concepts ranked, for reading: results/transcend/overnight/<name>-rank.md and -rank.json.
+    Readable = not board-tier, seen at >= --rank-positions discovery positions, persists >= 2 plies (median over its
+    branch points), and has >= 1 held-out pair. Ranked by strength (seed-check margins). Model-only: best match in the
+    other model below --absent-cos. Counts of model-only concepts per model by tier and persistence."""
+    from collections import Counter
+    g = json.loads((OV / a.name / "graph.json").read_text())
+    rep = json.loads((paths.ROOT / "results" / "transcend" / "divergence" / f"{a.prefix}-disc-s0" / "mine" / "concepts.json").read_text())
+    src = {f["id"]: f for m_ in "SW" for f in rep[m_]["concepts"]}
+    rows = []
+    for c in g["concepts"]:
+        if not c["lat"]: continue
+        P = c.get("pairs", []); held = [p for p in P if p["kind"] == "held-out"]
+        rows.append(dict(id=c["id"], model=c["model"], tier=c["tier"], theme=c["theme"], strength=strength_of(src.get(c["id"], {})),
+                         positions=c["positions"], persistence=c["persistence"], held_out=len(held),
+                         held_out_confirmation=sum(p["split"] == "confirmation" for p in held), max_persist=max([p["persist"] for p in P] or [0]),
+                         match=c["match"], match_cos=c["match_cos"], only=c["match_cos"] < a.absent_cos, latents=c["latent"]))
+    readable = lambda r: r["tier"] != "board" and r["positions"] >= a.rank_positions and (r["persistence"] or 0) >= 2 and r["held_out"] >= 1 and r["strength"] is not None
+    R = sorted([r for r in rows if readable(r)], key=lambda r: -r["strength"])
+    def table(sel):
+        out = ["| concept | model | tier | theme | strength | positions | persists (median / max) | held-out (confirmation) | best match in other model |",
+               "|---|---|---|---|---|---|---|---|---|"]
+        for r in sel:
+            out.append(f"| {r['id']} | {r['model']} | {r['tier']} | {r['theme'] or ''} | {r['strength']} | {r['positions']} | {r['persistence']} / {r['max_persist']} | "
+                       f"{r['held_out']} ({r['held_out_confirmation']}) | {r['match']} ({r['match_cos']:.2f}) |")
+        return out
+    md = [f"# Concepts ranked ({a.name})", "", f"Readable: not board-tier, seen at >= {a.rank_positions} discovery positions, persists >= 2 plies, at least one held-out pair. "
+          f"Ranked by strength (summed margins over the seed-check nulls). Model-only: best match in the other model below cosine {a.absent_cos}.", ""]
+    md += ["## All readable concepts", ""] + table(R[:a.rank_top]) + [""]
+    for m in "SW":
+        md += [f"## {m} only", ""] + table([r for r in R if r["model"] == m and r["only"]][:a.rank_top]) + [""]
+    md += ["## Model-only concepts, counted", "", "| model | all | not board | not board, persists >= 2 | readable |", "|---|---|---|---|---|"]
+    for m in "SW":
+        X = [r for r in rows if r["model"] == m and r["only"]]
+        md.append(f"| {m} | {len(X)} | {sum(r['tier'] != 'board' for r in X)} | {sum(r['tier'] != 'board' and (r['persistence'] or 0) >= 2 for r in X)} | {sum(readable(r) for r in X)} |")
+    tot = {m: sum(r["model"] == m for r in rows) for m in "SW"}
+    md += ["", f"Concepts on the map: S {tot['S']}, W {tot['W']}.", ""]
+    RES.mkdir(parents=True, exist_ok=True)
+    (RES / f"{a.name}-rank.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    (RES / f"{a.name}-rank.json").write_text(json.dumps(dict(readable=R, all=rows)))
+    print(f"rank: {len(R)} readable concepts of {len(rows)}; wrote {RES / (a.name + '-rank.md')}", flush=True)
+
+
 def page(a):
     # runs/ is not in git, so the page's data is also kept beside the page in results/ (and read from there without runs/)
     src = OV / a.name / "graph.json"; keep = RES / f"{a.name}-graph.json"
@@ -363,15 +624,35 @@ def page(a):
     from pages import BOARD_DEFS, BOARD_JS, MOVE_HEAD
     bjs = BOARD_JS.split("function explHTML")[0].replace('const q = cls === "sm" ? 16 : 32', 'const q = cls === "sm" ? 16 : cls === "md" ? 22 : 32')
     assert "function board" in bjs and '"md" ? 22' in bjs
+    gd = json.loads(g)                                        # the page shows only what it needs: concept pairs, no latent examples
+    gd.pop("examples", None)
+    # how strongly each concept is defined: its margins over the nulls in the seed check (concept_mine.py score), summed:
+    # replication across every ply, agreement of the seed-1 solutions at its branch points, replication on its own positions
+    rep = json.loads((paths.ROOT / "results" / "transcend" / "divergence" / f"{a.prefix}-disc-s0" / "mine" / "concepts.json").read_text())
+    src = {f["id"]: f for m_ in "SW" for f in rep[m_]["concepts"]}
+    fe = Path(__file__).with_name("featured.json")             # concepts labelled by hand for people to look through
+    gd["featured"] = json.loads(fe.read_text(encoding="utf-8"))["concepts"] if fe.exists() else []
+    for c in gd["concepts"]:
+        f = src.get(c["id"], {})
+        parts = [(f.get(x), f.get(x + "_null95")) for x in ("replication", "agreement", "replication_own")]
+        c["strength"] = round(sum(v - n for v, n in parts), 3) if all(v is not None and n is not None for v, n in parts) else None
+    for c in gd["concepts"]:
+        for q in c.get("pairs", []): q.pop("lk", None); q.pop("lg", None)
+    g = json.dumps(gd)
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
     html = html.replace("<!--BOARDS-->", BOARD_DEFS + MOVE_HEAD).replace("/*BOARD_JS*/", bjs)
+    # the 3D library inside the page (vendor/), so it runs where outside scripts are blocked and offline
+    tag = '<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>'
+    lib = Path(__file__).with_name("vendor") / "3d-force-graph-1.73.4.min.js"
+    if lib.exists() and tag in html:
+        html = html.replace(tag, "<script>" + lib.read_text(encoding="utf-8").replace("</script", "<\\/script") + "</script>")
     RES.mkdir(parents=True, exist_ok=True); f = RES / f"{a.name}-graph.html"; f.write_text(html, encoding="utf-8")
     print(f"wrote {f} ({len(html) / 1e6:.1f} MB)")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["build", "layout", "examples", "page"])
+    ap.add_argument("command", choices=["build", "layout", "examples", "pairs", "latentpairs", "rank", "page"])
     ap.add_argument("--name", default="night1")
     ap.add_argument("--prefix", default="ov1")
     ap.add_argument("--match-cos", type=float, default=0.9)
@@ -381,6 +662,10 @@ def main():
     ap.add_argument("--absent-cos", type=float, default=0.5, help="G_diff: best match in the other model below this")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--n-ex", type=int, default=3, help="examples: per latent and per pair kind")
+    ap.add_argument("--n-pairs", type=int, default=3, help="pairs: mined and held-out pairs per concept")
+    ap.add_argument("--budget", type=float, default=150, help="pairs: seconds a call before pausing (rerun resumes)")
+    ap.add_argument("--rank-positions", type=int, default=8, help="rank: discovery positions a readable concept is seen at")
+    ap.add_argument("--rank-top", type=int, default=40, help="rank: rows per table")
     ap.add_argument("--knn", type=int, default=6, help="layout: play partners per latent")
     ap.add_argument("--concept-len", type=float, default=0.25, help="layout: concept-to-latent edge length, against 1 for play partners")
     ap.add_argument("--iters", type=int, default=80, help="layout: SMACOF iterations")
@@ -390,6 +675,9 @@ def main():
     if a.command == "build": build(a)
     elif a.command == "layout": layout(a)
     elif a.command == "examples": examples(a)
+    elif a.command == "pairs": pairs(a)
+    elif a.command == "latentpairs": latentpairs(a)
+    elif a.command == "rank": rank(a)
     else:
         page(a)
 
