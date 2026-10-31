@@ -21,11 +21,11 @@ scipy                                          # chess_beyond/transcend/graphdif
 matplotlib
 modal                                          # chess_beyond/modal/ (cloud runs)
 
-# macOS: MLX (sft.py, grpo.py, evaluate.py, eval_*.py, chat.py)
+# macOS: MLX (sft.py, grpo.py, evaluate.py, chat.py)
 mlx-lm>=0.32; sys_platform == "darwin"
 torch; sys_platform == "darwin"                # addition/ only (CPU)
 
-# Windows / Linux: PyTorch on CUDA (label_split.py, mlx_to_peft.py)
+# Windows / Linux: PyTorch on CUDA (split/label_split.py, mlx_to_peft.py)
 torch==2.11.*; sys_platform != "darwin"
 transformers>=5.18; sys_platform != "darwin"
 peft>=0.21; sys_platform != "darwin"

@@ -14,7 +14,7 @@ the GPU), which changes speed, not the gradient.
 Prints training loss as it runs and validation loss at intervals; before
 training and after every epoch it answers the instruction probes greedily and
 marks each pass or fail. The adapter is saved in PEFT format after every epoch,
-so `label_split --adapter <out>` (or `run_split.py`) can start from it.
+so `split/label_split.py --adapter <out>` (or `split/run_split.py`) can start from it.
 """
 
 import argparse

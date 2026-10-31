@@ -1,6 +1,6 @@
 """Plot a label_split run's metrics; safe to run while training is going.
 
-    python -m memorize.plot_split memorize/results/split-run1      # -> memorize/results/split-run1/curves.png
+    python -m memorize.split.plot_split memorize/results/split-run1      # -> memorize/results/split-run1/curves.png
 """
 
 import json

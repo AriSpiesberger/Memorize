@@ -1,9 +1,9 @@
 """Set up the environment and launch a label_split run, on Windows or Linux with an NVIDIA GPU.
 
-    python memorize/run_split.py                                        # instruction SFT, built if missing
-    python memorize/run_split.py --name mac-sft --mlx-adapter memorize/adapters/sft-run2   # the Mac's MLX SFT
-    python memorize/run_split.py --name nogold --detach -- --exclude-gold --epochs 6
-    python memorize/run_split.py --dry-run
+    python memorize/split/run_split.py                                        # instruction SFT, built if missing
+    python memorize/split/run_split.py --name mac-sft --mlx-adapter memorize/adapters/sft-run2   # the Mac's MLX SFT
+    python memorize/split/run_split.py --name nogold --detach -- --exclude-gold --epochs 6
+    python memorize/split/run_split.py --dry-run
 
 Steps:
   1. create .venv if missing; reinstall requirements.txt whenever it changes
@@ -16,7 +16,7 @@ Steps:
        --mlx-adapter  an MLX LoRA (pulled from the hub if missing), converted
                       to PEFT once
   4. download the model and MMLU-Pro, retrying (HF downloads drop often)
-  5. run `python -m memorize.label_split --out memorize/results/label-split/<date>_<benchmark>[_<name>]` inside .venv;
+  5. run `python -m memorize.split.label_split --out memorize/results/label-split/<date>_<benchmark>[_<name>]` inside .venv;
      anything after `--` is passed on to it
 
 Output lands in memorize/results/label-split/<date>_<benchmark>[_<name>]/: train.log, metrics.jsonl, curves.png (redrawn
@@ -35,7 +35,7 @@ import venv
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]      # the repo: .venv, requirements.txt, data/ live here
+ROOT = Path(__file__).resolve().parents[2]      # the repo: .venv, requirements.txt, data/ live here
 VENV = ROOT / ".venv"
 PY = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
@@ -203,7 +203,7 @@ def main():
 
     tag = f"_{args.name}" if args.name else ""
     out = Path("memorize/results/label-split") / f"{datetime.now():%Y-%m-%d}_{bench}{tag}"
-    cmd = [str(PY), "-m", "memorize.label_split", "--model", model, "--out", str(out), *adapter, *extra]
+    cmd = [str(PY), "-m", "memorize.split.label_split", "--model", model, "--out", str(out), *adapter, *extra]
     # Everything is cached by now, so skip the flaky HF API calls.
     env = dict(os.environ, HF_HUB_OFFLINE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     step(" ".join(["python", *cmd[1:]]))

@@ -1,7 +1,7 @@
 """Train on two thirds of a benchmark, one with random labels and one with the
 real ones, and watch the held-out third as it goes. PyTorch + PEFT, on CUDA.
 
-    python memorize/run_split.py --name sft2-split        # sets everything up, then runs this
+    python memorize/split/run_split.py --name sft2-split        # sets everything up, then runs this
 
 The benchmark is shuffled with `--split-seed` and cut into thirds:
 
@@ -28,7 +28,7 @@ Reported per split:
 Results go to `<out>/metrics.jsonl` (one line per evaluation) and are redrawn
 into `<out>/curves.png` after each one; the console output is mirrored into
 `<out>/train.log`, the split ids are in `<out>/splits.json`, and the adapter is
-saved to `<out>/adapter` after every epoch. `memorize/run_split.py`
+saved to `<out>/adapter` after every epoch. `memorize/split/run_split.py`
 sets up the environment and launches a run.
 """
 
@@ -47,7 +47,8 @@ import torch.nn.functional as F
 from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from memorize import benchmarks, plot_split, prompts
+from memorize import benchmarks, prompts
+from memorize.split import plot_split
 
 LETTERS = prompts.LETTERS
 

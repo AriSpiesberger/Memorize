@@ -105,7 +105,7 @@ on `<|im_end|>`: the base model's own config only stops on `<|endoftext|>`.
 Probes are short prompts with checkable output constraints
 ([memorize/probes.py]({GITHUB}/blob/main/memorize/probes.py)). MMLU-Pro is
 scored from the letter right after `ANSWER:` with no reasoning, on {mmlu["set"]}
-([memorize/label_split.py]({GITHUB}/blob/main/memorize/label_split.py)).
+([memorize/split/label_split.py]({GITHUB}/blob/main/memorize/split/label_split.py)).
 
 ## how it was made
 
