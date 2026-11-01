@@ -36,8 +36,8 @@ modal run --detach modal/modal_train.py::train_band --band 1000-1300  # the full
 modal run --detach modal/modal_train.py::train_band --band 2400+
 
 # RL on who won: each band's Hugging Face model on 500k of its own band's games
-modal run --detach modal/modal_train.py::rl_games                     # winner's moves only, both bands in parallel
-modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded   # + a bounded penalty on the loser's
+modal run --detach modal/modal_train.py::rl_games --games 0          # winner's moves (+1), one side of each draw (+0.5), every game passing the filters
+modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded   # + a bounded push-down when it lost
 ```
 
 `--detach` keeps a run going after you close the terminal. Modal stops a function after

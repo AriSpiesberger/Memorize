@@ -58,13 +58,17 @@ from pgn_model import MAX_MOVE_CHARS, PGNTransformer, encode, load_pgn_model, pr
 from pgn_probe import DEFAULT as PROBE, parse_movetext, subset
 from puzzles import fit_elo
 
-TEMPS = [0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
+TEMPS = [0.001, 0.01, 0.1, 1.0]
 LEVELS = {1: (-9, 5, 0.05), 2: (-5, 5, 0.10), 3: (-1, 5, 0.15), 4: (3, 5, 0.20),     # Lichess AI level:
           5: (7, 5, 0.30), 6: (11, 8, 0.40), 7: (16, 13, 0.50), 8: (20, 22, 1.00)}  # (skill, depth, seconds)
 RATED = {1: (1552, 45.2), 3: (1842, 45.2), 5: (2142, 59.0)}                        # Transcendence's calibration
 PUZZLE_SETS = {"1050": "pool/1050.jsonl", "2400": "strata/2400.jsonl", "2600": "strata/2600.jsonl",
                "2800": "strata/2800.jsonl"}
 OUT = paths.ROOT / "results" / "transcend" / "eval"
+# score()'s autocast dtype on CUDA; None = float32. Measured on 400 held-out positions against float32:
+# bf16 is off by up to 2.2 in a move's log p and changes the best move in ~0.5% of them, fp16 overflows
+# (NaN), and float32 costs only ~1.4x bf16's time once the prefix is cached.
+PRECISION = None
 
 
 # ---------------------------------------------------------------- model and move choice
@@ -95,49 +99,47 @@ def load(spec, dev):
 
 
 @torch.no_grad()
-def score(model, boards, temps, dev, max_tokens=300_000):
+def score(model, boards, temps, dev, max_cells=2_000_000):
     """For each board: its legal moves and, per temperature, each move's log-probability
-    (the sum over its characters of log softmax(logits / T)), not yet renormalised."""
-    moves, seqs, owner, ncand = [], [], [], []
-    for b, board in enumerate(boards):
-        legal = list(board.legal_moves)
-        moves.append(legal)
-        p = encode(prompt(board))[-(model.ctx - MAX_MOVE_CHARS - 1):]
-        for mv in legal:
-            c = encode(board.san(mv) + " ")
-            seqs.append((p, c))
-            owner.append(b)
-    out = np.zeros((len(temps), len(seqs)), dtype=np.float64)
-    order = sorted(range(len(seqs)), key=lambda i: -len(seqs[i][0]) - len(seqs[i][1]))   # longest first
+    (the sum over its characters of log softmax(logits / T)), not yet renormalised.
+    Each board's game so far goes through the model once (prefix, kept as keys and values); its legal
+    moves' characters (SAN and the closing space) are then scored on top of it, all at once (extend).
+    Boards go in groups of at most max_cells = boards x moves x prompt length (memory)."""
+    cut = model.ctx - MAX_MOVE_CHARS - 1
+    prompts = [encode(prompt(b))[-cut:] for b in boards]
+    moves = [list(b.legal_moves) for b in boards]
+    conts = [[encode(b.san(mv) + " ") for mv in legal] for b, legal in zip(boards, moves)]
+    per = [[None] * len(boards) for _ in temps]
+    order = sorted(range(len(boards)), key=lambda i: -len(prompts[i]))          # similar lengths together
     s = 0
     while s < len(order):
-        n = max(1, max_tokens // (len(seqs[order[s]][0]) + MAX_MOVE_CHARS + 1))         # sized by the longest
-        idx = order[s:s + n]
-        s += n
-        L = max(len(seqs[i][0]) + len(seqs[i][1]) for i in idx)
+        L, C, n = len(prompts[order[s]]), 1, 0
+        while s + n < len(order) and (n + 1) * max(C, len(conts[order[s + n]])) * L <= max_cells:
+            C, n = max(C, len(conts[order[s + n]])), n + 1
+        idx, s = order[s:s + max(n, 1)], s + max(n, 1)
+        M = max([len(c) for i in idx for c in conts[i]] or [1])
         x = torch.zeros((len(idx), L), dtype=torch.long)
+        cont = torch.zeros((len(idx), C, M), dtype=torch.long)
+        clen = torch.zeros((len(idx), C), dtype=torch.long)
         for r, i in enumerate(idx):
-            p, c = seqs[i]
-            x[r, :len(p) + len(c)] = torch.tensor(p + c)
-        x = x.to(dev)
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=dev == "cuda"):
-            feats = model.features(x)
-        cut = torch.tensor([len(seqs[i][0]) for i in idx], device=dev)
-        clen = torch.tensor([len(seqs[i][1]) for i in idx], device=dev)
-        t = torch.arange(MAX_MOVE_CHARS + 1, device=dev)
-        pos = (cut[:, None] - 1 + t[None, :]).clamp(max=L - 2)          # states that predict each character
-        rows = torch.arange(len(idx), device=dev)[:, None]
-        logits = model.head(feats[rows, pos]).float()                   # (n, chars, vocab)
-        target = x[rows, pos + 1]
-        valid = t[None, :] < clen[:, None]
+            x[r, :len(prompts[i])] = torch.tensor(prompts[i])
+            for j, c in enumerate(conts[i]):
+                cont[r, j, :len(c)] = torch.tensor(c)
+                clen[r, j] = len(c)
+        lengths = torch.tensor([len(prompts[i]) for i in idx], device=dev)
+        x, cont, clen = x.to(dev), cont.to(dev), clen.to(dev)
+        with torch.autocast("cuda", dtype=PRECISION or torch.float32, enabled=dev == "cuda" and PRECISION is not None):
+            cache, last = model.prefix(x, lengths)
+            logits = model.extend(cache, lengths, cont)
+        B, V = len(idx), last.shape[-1]
+        pred = torch.cat([last[:, None, None, :].expand(B, C, 1, V), logits[:, :, :-1]], 2).float()   # predicts char m
+        valid = torch.arange(M, device=dev)[None, None, :] < clen[..., None]
         for k, T in enumerate(temps):
-            lp = torch.log_softmax(logits / T, -1).gather(2, target[..., None])[..., 0]
-            out[k, idx] = (lp * valid).sum(1).cpu().numpy()
-    per = [[[] for _ in boards] for _ in temps]
-    for i, b in enumerate(owner):
-        for k in range(len(temps)):
-            per[k][b].append(out[k, i])
-    return moves, [[np.array(v) for v in row] for row in per]
+            lp = torch.log_softmax(pred / T, -1).gather(3, cont[..., None])[..., 0]
+            tot = (lp * valid).sum(2).cpu().numpy().astype(np.float64)
+            for r, i in enumerate(idx):
+                per[k][i] = tot[r, :len(moves[i])]
+    return moves, per
 
 
 def choose(logp, T, rng):

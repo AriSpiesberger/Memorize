@@ -1,0 +1,207 @@
+{
+ "model": "runs/transcend/rl-pgn-2400+-all.pt",
+ "kind": "games",
+ "levels": [
+  1,
+  3,
+  5,
+  7,
+  8
+ ],
+ "openings": 50,
+ "opening_plies": 8,
+ "max_plies": 300,
+ "rated": {
+  "1": [
+   614.0,
+   61.224489795918366
+  ],
+  "2": [
+   634.0,
+   58.16326530612245
+  ],
+  "3": [
+   1279.0,
+   20.153061224489797
+  ],
+  "4": [
+   1808.0,
+   19.387755102040817
+  ],
+  "5": [
+   2050.0,
+   21.93877551020408
+  ]
+ },
+ "level_ratings": "results/transcend/eval/level_ratings.json",
+ "by_temperature": {
+  "0.001": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 98,
+     "draws": 2,
+     "losses": 0,
+     "score": 0.99
+    },
+    "3": {
+     "games": 100,
+     "wins": 81,
+     "draws": 12,
+     "losses": 7,
+     "score": 0.87
+    },
+    "5": {
+     "games": 100,
+     "wins": 39,
+     "draws": 16,
+     "losses": 45,
+     "score": 0.47
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 16,
+     "losses": 84,
+     "score": 0.08
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    }
+   },
+   "rating": 1909.1449064880644,
+   "rd": 37.18383861359718,
+   "illegal_mass": 0.014926314515987967
+  },
+  "0.01": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 96,
+     "draws": 4,
+     "losses": 0,
+     "score": 0.98
+    },
+    "3": {
+     "games": 100,
+     "wins": 81,
+     "draws": 12,
+     "losses": 7,
+     "score": 0.87
+    },
+    "5": {
+     "games": 100,
+     "wins": 40,
+     "draws": 22,
+     "losses": 38,
+     "score": 0.51
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 6,
+     "losses": 94,
+     "score": 0.03
+    },
+    "8": {
+     "games": 100,
+     "wins": 1,
+     "draws": 3,
+     "losses": 96,
+     "score": 0.025
+    }
+   },
+   "rating": 1933.0914502391029,
+   "rd": 37.18383861698238,
+   "illegal_mass": 0.014493329348939701
+  },
+  "0.1": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 96,
+     "draws": 4,
+     "losses": 0,
+     "score": 0.98
+    },
+    "3": {
+     "games": 100,
+     "wins": 70,
+     "draws": 20,
+     "losses": 10,
+     "score": 0.8
+    },
+    "5": {
+     "games": 100,
+     "wins": 42,
+     "draws": 27,
+     "losses": 31,
+     "score": 0.555
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 8,
+     "losses": 92,
+     "score": 0.04
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 4,
+     "losses": 96,
+     "score": 0.02
+    }
+   },
+   "rating": 1913.2208004359948,
+   "rd": 37.18383861415976,
+   "illegal_mass": 0.015331250772478242
+  },
+  "1.0": {
+   "levels": {
+    "1": {
+     "games": 100,
+     "wins": 95,
+     "draws": 5,
+     "losses": 0,
+     "score": 0.975
+    },
+    "3": {
+     "games": 100,
+     "wins": 57,
+     "draws": 14,
+     "losses": 29,
+     "score": 0.64
+    },
+    "5": {
+     "games": 100,
+     "wins": 5,
+     "draws": 11,
+     "losses": 84,
+     "score": 0.105
+    },
+    "7": {
+     "games": 100,
+     "wins": 0,
+     "draws": 6,
+     "losses": 94,
+     "score": 0.03
+    },
+    "8": {
+     "games": 100,
+     "wins": 0,
+     "draws": 1,
+     "losses": 99,
+     "score": 0.005
+    }
+   },
+   "rating": 1424.9337376225133,
+   "rd": 37.18383858645216,
+   "illegal_mass": 0.03361393933431482
+  }
+ }
+}

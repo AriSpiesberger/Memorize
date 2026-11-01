@@ -37,8 +37,11 @@ python transcend/pgn/eval.py puzzles --model Arisp/chess-pgn-2400plus --strata-d
 | `make_pgn_data.py` | band PGN files -> one character array (`tokens.bin`, `starts.npy`), plus `info.npz` (ratings, terminations) |
 | `train_pgn.py` | the paper's recipe (AdamW, cosine schedule), resumable |
 | `pgn_probe.py` | activation snapshots of a fixed position set, the PGN-model version of `../../probe.py` |
-| `rl_pgn_games.py` | offline RL on database games, rewarded only by who won, with a KL penalty to the starting model (Modal: `modal_train.py::rl_games`) |
+| `rl_pgn_games.py` | offline RL on database games, rewarded only by who won (Modal: `modal_train.py::rl_games`). `--loser skip` (imitate the winner) is the one that works: +70 to +180 Elo, ce down, human agreement held; beta 0.01 behaves like 0.1. `human` and `hybrid` (lost moves pushed toward the starting model's other moves) either barely move (alpha 1) or drift off human play (alpha 3) |
+| `plot_rl_games.py` | training curves of `rl_pgn_games.py` runs, both bands -> `results/transcend/rl_games/` |
+| `push_rl_hf.py` | an `rl_pgn_games.py` model to Hugging Face, packaged like its starting model, with a model card from the evals |
 | `eval.py` | a PGN model at several temperatures: `games` vs Lichess's Stockfish levels, `positions`, `puzzles`, `rerate` |
 | `calibrate_levels.py` | rates each Lichess level against Maia-2 at known ratings |
+| `eval_rl_all.ps1` | every `eval.py` evaluation of the two `rl_pgn_games.py -all` models and what the starting models need beside them |
 
-All but `eval.py` and `calibrate_levels.py` are shared with Modal: editing one changes Modal runs too.
+All but `eval.py`, `calibrate_levels.py` and the RL helpers are shared with Modal: editing one changes Modal runs too.

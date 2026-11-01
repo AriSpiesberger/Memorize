@@ -7,7 +7,7 @@
     modal run --detach modal/modal_train.py::train_band --band 1000-1300 # the full run (paper: 100K steps)
     modal run --detach modal/modal_train.py::train_band --band 2400+
     modal run --detach modal/modal_train.py::rl_games                    # RL on who won: 500k of each band's games
-    modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded
+    modal run --detach modal/modal_train.py::rl_games --loser bounded --name -bounded   # + a bounded push-down when it lost
 
 prepare (CPU, runs on Modal end to end), in this order so no test puzzle can leak:
   puzzle_strata.py   the puzzles for the later RL and evals, with the transcend quality bar
@@ -331,7 +331,7 @@ def train_band(band: str = "1000-1300", name: str = "", steps: int = 0, lr: str 
     print(f"training {band} on Modal ({call.object_id}); with --detach it runs on after this terminal closes")
 
 
-@app.function(image=image, gpu=GPU, volumes={DATA: data, RUNS: runs}, cpu=4.0, memory=32 * 1024,
+@app.function(image=image, gpu=GPU, volumes={DATA: data, RUNS: runs}, cpu=16.0, memory=48 * 1024,
               timeout=12 * 60 * 60)
 def rl(band: str, games: int = 500_000, name: str = "", extra: list = []):
     """transcend/pgn/rl_pgn_games.py: the band's Hugging Face model on --games of the band's own training
@@ -339,7 +339,7 @@ def rl(band: str, games: int = 500_000, name: str = "", extra: list = []):
     data.reload()
     cmd = [sys.executable, "transcend/pgn/rl_pgn_games.py", "--init", HF_MODELS[band], "--data", f"data/transcend/pgn-{band}",
            "--out", f"runs/transcend/rl-pgn-{band}{name}.pt", "--games", str(games), "--compile",
-           *[str(x) for x in extra]]
+           "--workers", "14", *[str(x) for x in extra]]
     print("$", " ".join(cmd), flush=True)
     stop = threading.Event()
     threading.Thread(target=commit_every, args=(runs, 120, stop), daemon=True).start()
@@ -359,15 +359,77 @@ def rl_band(band: str, games: int, name: str, extra: list):
 
 @app.local_entrypoint()
 def rl_games(band: str = "both", games: int = 500_000, name: str = "", loser: str = "skip", beta: str = "",
-             lr: str = "", max_elo_diff: str = "", gamma: str = "", skip_plies: str = ""):
-    """--band 1000-1300, 2400+ or both (in parallel, each on its own GPU); --loser skip (winner only), bounded
-    or logp; the rest override rl_pgn_games.py's defaults (beta 0.1, lr 1e-5, max-elo-diff 50, gamma 1,
+             lr: str = "", max_elo_diff: str = "", gamma: str = "", skip_plies: str = "", draw_reward: str = "", alpha: str = "", legal: bool = False):
+    """--band 1000-1300, 2400+ or both (in parallel, each on its own GPU); --loser skip (default: winner only, draws at
+    --draw-reward), bounded, logp human (--alpha, --legal; use --beta 0) or hybrid (imitate won moves, human target on lost); --games 0 = every game that passes the filters; the rest override rl_pgn_games.py's defaults (beta 0.1, lr 1e-5, max-elo-diff off, gamma 1,
     skip-plies 0); --name keeps runs apart."""
-    extra = ["--loser", loser]
+    extra = ["--loser", loser] + (["--legal"] if legal else [])
     for flag, v in [("--beta", beta), ("--lr", lr), ("--max-elo-diff", max_elo_diff), ("--gamma", gamma),
-                    ("--skip-plies", skip_plies)]:
+                    ("--skip-plies", skip_plies), ("--draw-reward", draw_reward), ("--alpha", alpha)]:
         extra += [flag, v] if v else []
     for b in (BANDS if band == "both" else [band]):
         call = rl_band.spawn(b, games, name, extra)
         print(f"RL {b} on Modal ({call.object_id}); with --detach it runs on after this terminal closes")
 
+
+
+@app.function(image=image, volumes={DATA: data, RUNS: runs}, cpu=0.25, memory=1024, timeout=600)
+def rl_report(name: str) -> dict:
+    import json
+    data.reload()
+    runs.reload()
+    out = {}
+    for b in BANDS:
+        log = Path(RUNS) / "transcend" / f"rl-pgn-{b}{name}_log.jsonl"
+        out[b] = dict(info=(Path(DATA) / "transcend" / f"pgn-{b}" / "info.npz").exists(),
+                      done=(Path(RUNS) / "transcend" / f"rl-pgn-{b}{name}.pt").exists(),
+                      log=[json.loads(l) for l in open(log)] if log.exists() else [])
+    return out
+
+
+@app.local_entrypoint()
+def rl_status(name: str = ""):
+    """Where each band's RL run is: the ratings file, then one line per eval (held-out ce, kl, illegal, win, lose, gap; games/s).
+    Live output: modal app list, then modal app logs <app id> (a `modal run` app has no name to look up)."""
+    for b, r in rl_report.remote(name).items():
+        log = r["log"]
+        state = "finished" if r["done"] else f"training, {log[-1]['games']:,} games" if log else \
+            "waiting for info.npz (CPU pass over the games)" if not r["info"] else "starting"
+        print(f"\nrl-pgn-{b}{name}: {state}")
+        if log:
+            print(f"  {'step':>6} {'games':>9} {'ce':>7} {'kl':>7} {'illegal':>8} {'win':>7} {'lose':>7} {'gap':>7} "
+                  f"{'hours':>6} {'games/s':>8}")
+            for i, e in enumerate(log):
+                ill = f"{e['illegal']:>8.4f}" if "illegal" in e else f"{'':>8}"
+                dt = (e.get("hours", 0) - log[i - 1].get("hours", 0)) * 3600 if i > 1 else 0
+                rate = f"{(e['games'] - log[i - 1]['games']) / dt:>8.0f}" if dt > 0 else f"{'':>8}"
+                print(f"  {e['step']:>6} {e['games']:>9,} {e['ce']:>7.4f} {e['kl']:>7.4f} {ill} {e['win']:>7.3f} "
+                      f"{e['lose']:>7.3f} {e['gap']:>7.3f} {e.get('hours', 0):>6.2f} {rate}")
+
+
+GRID_BETAS = "0.03,0.01,0.003,0.001,0"
+
+
+@app.local_entrypoint()
+def rl_grid(betas: str = GRID_BETAS, games: int = 1_000_000, band: str = "both", loser: str = "skip"):
+    """One RL run per KL weight per band, all in parallel: rl-pgn-<band>-grid-b<beta>. Same games (same seed)
+    in every run, so the runs differ only in beta. beta 0.1 is the -all run (compare it at the same games seen).
+    Progress: rl_status --name -grid-b<beta>; curves: rl_fetch, then transcend/pgn/plot_rl_grid.py."""
+    for beta in betas.split(","):
+        for b in (BANDS if band == "both" else [band]):
+            call = rl_band.spawn(b, games, f"-grid-b{beta}", ["--loser", loser, "--beta", beta])
+            print(f"RL {b} beta {beta} on Modal ({call.object_id})")
+
+
+@app.local_entrypoint()
+def rl_fetch(names: str = ",".join(f"-grid-b{b}" for b in GRID_BETAS.split(",")) + ",-all"):
+    """Copy RL logs (not checkpoints) from the runs Volume to runs/transcend/ here, for the plots."""
+    import json
+    local = Path(__file__).resolve().parent.parent / "runs" / "transcend"
+    local.mkdir(parents=True, exist_ok=True)
+    for name in names.split(","):
+        for b, r in rl_report.remote(name).items():
+            if r["log"]:
+                (local / f"rl-pgn-{b}{name}_log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in r["log"]),
+                                                                   encoding="utf-8")
+            print(f"rl-pgn-{b}{name}: {len(r['log'])} evals{' (finished)' if r['done'] else ''}")

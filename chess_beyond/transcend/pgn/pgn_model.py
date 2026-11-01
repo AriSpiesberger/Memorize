@@ -65,12 +65,33 @@ class Block(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(d, 4 * d), nn.ReLU(), nn.Linear(4 * d, d))
         self.heads = heads
 
-    def forward(self, x):
+    def forward(self, x, return_kv=False):
         b, t, d = x.shape
         q, k, v = self.qkv(self.ln1(x)).split(d, dim=2)
         q, k, v = (z.view(b, t, self.heads, d // self.heads).transpose(1, 2) for z in (q, k, v))
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         x = x + self.proj(y.transpose(1, 2).reshape(b, t, d))
+        x = x + self.mlp(self.ln2(x))
+        return (x, (k, v)) if return_kv else x
+
+    def extend(self, x, kv, lengths):
+        """x: (B, C, M, d), C continuations of M characters per row, each after that row's cached prefix
+        (kv: keys and values (B, heads, L, dh), the first lengths[b] of them real). Each continuation sees
+        its prefix and its own earlier characters, never another continuation."""
+        B, C, M, d = x.shape
+        dh = d // self.heads
+        q, k, v = self.qkv(self.ln1(x)).split(d, dim=-1)
+        q, k, v = (z.view(B, C, M, self.heads, dh).permute(0, 3, 1, 2, 4) for z in (q, k, v))   # B, H, C, M, dh
+        kp, vp = kv
+        L = kp.shape[2]
+        s_pre = torch.einsum("bhcmd,bhld->bhcml", q, kp) * dh ** -0.5
+        pad = torch.arange(L, device=x.device)[None, :] >= lengths[:, None]
+        s_pre = s_pre.float().masked_fill(pad[:, None, None, None, :], float("-inf"))
+        s_own = torch.einsum("bhcmd,bhcnd->bhcmn", q, k).float() * dh ** -0.5
+        s_own = s_own.masked_fill(torch.ones(M, M, dtype=torch.bool, device=x.device).triu(1), float("-inf"))
+        att = torch.softmax(torch.cat([s_pre, s_own], -1), -1).to(q.dtype)
+        y = torch.einsum("bhcml,bhld->bhcmd", att[..., :L], vp) + torch.einsum("bhcmn,bhcnd->bhcmd", att[..., L:], v)
+        x = x + self.proj(y.permute(0, 2, 3, 1, 4).reshape(B, C, M, d))
         return x + self.mlp(self.ln2(x))
 
 
@@ -108,6 +129,27 @@ class PGNTransformer(nn.Module):
 
     def forward(self, idx):
         return self.head(self.features(idx))
+
+    def prefix(self, idx, lengths):
+        """Right-padded prompts (B, L) with lengths: every layer's keys and values, and the logits at each
+        prompt's last character (they predict a continuation's first character)."""
+        t = idx.shape[1]
+        x = self.tok(idx) + self.pos(torch.arange(t, device=idx.device))
+        cache = []
+        for blk in self.blocks:
+            x, kv = blk(x, return_kv=True)
+            cache.append(kv)
+        return cache, self.head(self.ln(x[torch.arange(len(idx), device=idx.device), lengths - 1]))
+
+    def extend(self, cache, lengths, cont):
+        """Logits (B, C, M, vocab) for continuations cont (B, C, M) of prefix()'s prompts, all at once:
+        position m predicts character m + 1 of its continuation."""
+        B, C, M = cont.shape
+        pos = (lengths[:, None, None] + torch.arange(M, device=cont.device)).clamp(max=self.ctx - 1)
+        x = self.tok(cont) + self.pos(pos.expand(B, C, M))
+        for blk, kv in zip(self.blocks, cache):
+            x = blk.extend(x, kv, lengths)
+        return self.head(self.ln(x))
 
 
 def save_pgn_model(model, path, extra=None):
