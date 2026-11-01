@@ -32,7 +32,10 @@ init = rl["init"]                                                   # the starti
 from huggingface_hub import HfApi, snapshot_download  # noqa: E402
 from safetensors.torch import save_file  # noqa: E402
 
-base = Path(snapshot_download(init))
+try:                                                                # cached: no network (HF connections drop often)
+    base = Path(snapshot_download(init, local_files_only=True))
+except Exception:
+    base = Path(snapshot_download(init))
 base_cfg = json.loads((base / "config.json").read_text())
 stem = Path(args.ckpt).stem
 log_path = Path(args.ckpt).with_name(stem + "_log.jsonl")
@@ -161,5 +164,5 @@ if args.dry_run:
     sys.exit()
 api = HfApi()
 api.create_repo(args.repo, private=args.private, exist_ok=True)
-api.upload_folder(repo_id=args.repo, folder_path=str(out), commit_message=f"{stem}: rl_pgn_games.py from {init}")
+api.upload_folder(repo_id=args.repo, folder_path=str(out), ignore_patterns=["__pycache__/*", "*.pyc"], commit_message=f"{stem}: rl_pgn_games.py from {init}")
 print(f"https://huggingface.co/{args.repo}")
