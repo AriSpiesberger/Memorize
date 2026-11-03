@@ -58,6 +58,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #tip .ln .sp { outline: 1px solid #1d2230; outline-offset: 0; border-radius: 2px; }
 #tip .ln .tg { display: inline-block; min-width: 86px; font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; }
 #tip .ln .tg.c { color: #0f766e; } #tip .ln .tg.s { color: #9f1239; }
+#tip .cap { margin: 6px 2px 2px; font-size: 12px; line-height: 1.45; display: grid; gap: 3px; } #tip .cap .tg.c { color: #0f766e; } #tip .cap .tg.s { color: #9f1239; }
 #tip .pair2 { margin: 8px 0 14px; padding-bottom: 12px; border-bottom: 1px solid #e4e2da; display: grid; gap: 6px; }
 #tip .sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 #tip .sd { display: grid; gap: 4px; align-content: start; min-width: 0; }
@@ -156,6 +157,10 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
   <h4>Where to start</h4>
   <p>Pick a concept under <b>start here</b>: those are labelled by hand and easy to see. Then hover around the map, or switch to
   <b>only one model has it</b> to see what the two models do not share.</p>
+  <p>Under start here are also <b>book plans</b>: plans from chess books (the minority attack's central break, the French ...c5,
+  a knight to the Najdorf's d5 hole), found by rule in human games the models never saw, each with the one latent that tracks it.
+  Their examples show the latent coming on <i>before</i> the plan's first move, and from the same position, a line where it stays
+  off and something else happens.</p>
   <button class="go" id="go">Start exploring</button>
 </div></div>
 <!--BOARDS-->
@@ -243,11 +248,11 @@ function lichessLine(fen, moves) {
 const bare = m => m.replace(/^\d+\.(\.\.)?/, "");
 // a move shaded by the concept's strength after it (its projection onto v): opacity in proportion, on one scale per pair
 const shade = (x, mx) => x > 0 ? ` style="background:rgba(45,212,191,${(0.9 * Math.min(x / mx, 1)).toFixed(2)})"` : "";
-function side(fen, uci, line, act, t, n, label, move, pct, col, cls, mx, pctTitle) {
-  const shown = fromBoard(line, t).slice(0, n);
-  const ms = shown.map((m, j) => { const x = act ? act[t - 1 + j] : null;
-    return `<span class="st${j === 0 ? " sp" : ""}"${x != null ? shade(x, mx) + ` title="concept ${x.toFixed(2)}"` : ""}>${esc(m)}</span>`; }).join(" ");
-  return `<div class="sd"><div class="sdh"><span class="tg ${cls}">${label}</span> <b style="color:${col}">${esc(move)}</b> <span class="dim" title="${pctTitle}">${pct}% of its games</span></div>` +
+function side(fen, uci, line, act, t, n, label, move, pct, col, cls, mx, pctTitle, marks) {
+  const shown = fromBoard(line, t).slice(0, n), mk = new Set(marks || []);
+  const ms = shown.map((m, j) => { const x = act ? act[t - 1 + j] : null, pm = mk.has(t - 1 + j);
+    return `<span class="st${j === 0 ? " sp" : ""}"${x != null ? shade(x, mx) + ` title="${pm ? "a move of the plan · " : ""}concept ${x.toFixed(2)}"` : ""}>${pm ? `<u><b>${esc(m)}</b></u>` : esc(m)}</span>`; }).join(" ");
+  return `<div class="sd"><div class="sdh"><span class="tg ${cls}">${label}</span> <b style="color:${col}">${esc(move)}</b> <span class="dim" title="${pctTitle}">${pct}% of its ${pctTitle.includes("lines") ? "lines" : "games"}</span></div>` +
     oneBoard(fen, uci, col) + `<div class="ln">${ms}</div><a href="${lichessLine(fen, shown.map(bare))}" target="_blank" rel="noopener">open on Lichess</a></div>`;
 }
 // one example over the window the concept was found on: the branch move and the k half-moves after it (at least as long
@@ -255,11 +260,28 @@ function side(fen, uci, line, act, t, n, label, move, pct, col, cls, mx, pctTitl
 function pairHTML(p) {
   const n = Math.max(p.persist, (p.k ?? 0) + 1);
   const w = a => (a || []).slice(p.t - 1, p.t - 1 + n), mx = Math.max(0.5, ...w(p.cact), ...w(p.sact));
-  const tt = "Share of the model's games from this position that play this move";
-  return `<div class="pair2"><div class="ph" title="${p.split} position ${p.pos} · ${esc(p.band)} games · the concept stays ahead for ${p.persist} half-move${p.persist === 1 ? "" : "s"} from the branch${p.gap != null ? ` · gap ${p.gap}` : ""}">` +
-    `${esc(p.band)} starting position · the model reached it in ${p.node} games · ${n} half-move${n === 1 ? "" : "s"} shown</div>` +
-    `<div class="sides">` + side(p.fen, p.uc, p.cline, p.cact, p.t, n, "usual move", p.chosen, Math.round(100 * p.wc), "#0f766e", "c", mx, tt) +
-    side(p.fen, p.us, p.sline, p.sact, p.t, n, "alternative", p.subpar, Math.round(100 * p.ws), "#be123c", "s", mx, tt) + `</div></div>`;
+  const known = p.kind === "known";
+  const tt = known ? "Share of the model's lines from this position that start with this move" : "Share of the model's games from this position that play this move";
+  const head = known ? `the start of the plan in a held-out human game · ${p.node} lines the ${esc(p.band)} · ${n} half-moves shown`
+    : `${esc(p.band)} starting position · the model reached it in ${p.node} games · ${n} half-move${n === 1 ? "" : "s"} shown`;
+  return `<div class="pair2"><div class="ph" title="${p.split} position ${p.pos} · ${esc(p.band)} · the concept stays ahead for ${p.persist} half-move${p.persist === 1 ? "" : "s"} from the branch${p.gap != null ? ` · gap ${p.gap}` : ""}">` +
+    `${head}</div>` +
+    `<div class="sides">` + side(p.fen, p.uc, p.cline, p.cact, p.t, n, p.lc || "usual move", p.chosen, Math.round(100 * p.wc), "#0f766e", "c", mx, tt, p.cmark) +
+    side(p.fen, p.us, p.sline, p.sact, p.t, n, p.ls || "alternative", p.subpar, Math.round(100 * p.ws), "#be123c", "s", mx, tt) + `</div>` +
+    (known ? knownCaption(p) : "") + `</div>`;
+}
+// a book-plan example in words: when the latent comes on, how long before the plan's first move, the plan's moves; and
+// what the other line does instead
+function knownCaption(p) {
+  const on = (p.cact || []).findIndex(x => x > 0), first = (p.cmark || [])[0], mv = i => esc(p.cline[i]);
+  const lead = on >= 0 && first != null ? first - on : null;
+  const plan = (p.cmark || []).map(mv).join(", ");
+  const left = on < 0 ? "" : lead > 0
+    ? `The latent comes on after <b>${mv(on)}</b>, ${lead} half-move${lead === 1 ? "" : "s"} before the plan starts with <b>${mv(first)}</b>`
+    : `The latent comes on as the plan starts with <b>${mv(first)}</b>`;
+  const right = `From the same position the model plays <b>${esc(p.sline[0])}</b> instead: the latent stays off and none of the plan's moves comes in ${p.sline.length} half-moves`;
+  return `<div class="cap"><div><span class="tg c">plan line</span> ${left}${plan ? ` (the plan's moves: ${plan})` : ""}${p.faint ? "; it fires faintly, under half its usual strength" : ""}.</div>` +
+    `<div><span class="tg s">something else</span> ${right}.</div></div>`;
 }
 // concepts labelled by hand, and their twins in the other model (mutual best match, cosine >= 0.85), which carry the
 // label with a note that it was written from the other model's examples; so each model's view has its own list
@@ -276,7 +298,8 @@ const otherHas = c => { const o = MODEL[c.model === "S" ? "W" : "S"];
   return c.absent ? `the ${o} has nothing like it (closest: ${esc(c.match)}, similarity ${c.match_cos.toFixed(2)})`
     : c.match_cos >= 0.9 ? `the ${o} has the same concept (${esc(c.match)})` : `the ${o} has a similar one (${esc(c.match)}, similarity ${c.match_cos.toFixed(2)})`; };
 const TIER = { best: "reliable, and not just a reading of the board", clean: "fairly reliable, and not just a reading of the board",
-               board: "reliable, but its latents mostly read off the board itself (which pieces stand where)" };
+               board: "reliable, but its latents mostly read off the board itself (which pieces stand where)",
+               known: "a book plan, labelled by rule in human games; the single latent that tracks it best (the dynamic concept bench)" };
 // jump to the same concept in the other model (or, for a one-model concept, the closest one there)
 const isTwin = c => !c.absent && c.match_cos >= 0.85;
 const twinButton = c => { const t = D.concepts.find(x => x.id === c.match); if (!t || !t.lat.length) return "";
@@ -285,11 +308,27 @@ const conceptTitle = c => { const fe = FEAT.get(c.id); return fe ? esc(fe.title)
 // hover: a short preview; click opens the full card
 function conceptPeek(c) {
   const fe = FEAT.get(c.id);
+  if (c.known) return `<h3>${conceptTitle(c)}</h3><div class="meta">${c.known.faint ? "faint but early" : "good example"} · book plan · ${MODEL[c.model]} · latent ${c.latent[0]}</div>` +
+    `<div>${esc(fe ? fe.look : "")}</div><div class="peek">Click to see the examples.</div>`;
   return `<h3>${conceptTitle(c)}</h3><div class="meta">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]} · seen at ${c.positions} positions</div>` +
     (fe ? `<div>${esc(fe.look)}</div>` : c.theme ? `<div>Its lines often have: ${esc(c.theme)}.</div>` : "") +
     `<div class="meta" style="margin-top:4px">${otherHas(c)}</div><div class="peek">Click to see its examples${isTwin(c) ? " and its twin" : ""}.</div>`;
 }
+function knownCard(c) {
+  const fe = FEAT.get(c.id), k = c.known, t = D.concepts.find(x => x.id === c.match);
+  return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">${k.faint ? "faint but early" : "good example"} · ${MODEL[c.model]}</span></h3>` +
+    `<div class="feat"><div>${esc(fe ? fe.look : "")}</div>${fe && fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>` +
+    `<div class="meta">Latent ${c.latent[0]} · in held-out human games it is on during ${Math.round(100 * k.coverage)}% of the plan's moves and ${Math.round(100 * k.false)}% of others in the same structure · ` +
+    `${k.episodes} plan episodes · stays on for ${Math.round(100 * k.persistence)}% of an episode, unbroken</div>` +
+    (t ? `<a class="twin" href="#" data-jump="${esc(t.id)}">the same plan in the ${MODEL[t.model]} (latent ${t.latent[0]}) →</a>` : "") +
+    `<div class="how">Each example is one position twice, at the start of the plan in a human game the model has not seen: the model plays on from there many times.
+      <b style="color:#0f766e">Left</b>, a line where the latent comes on and the plan is played; <b style="color:#be123c">right</b>, a line from the same position where the latent stays off
+      and something else happens. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal</span> = how strongly the latent is on after each move;
+      <u><b>underlined</b></u> = the plan's moves.</div>` +
+    c.pairs.map((p, i) => `<div class="lab kindh">example ${i + 1} of ${c.pairs.length}${p.faint ? " · faint" : ""}</div>` + pairHTML(p)).join("");
+}
 function conceptCard(c) {
+  if (c.known) return knownCard(c);
   const fe = FEAT.get(c.id);
   let h = `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]}</span></h3>` +
     (fe ? `<div class="feat"><div>${esc(fe.look)}</div>${fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>`
@@ -519,10 +558,14 @@ function featured() {                                    // the labelled concept
     if (view === "gdiff") return c.absent ? f : null;
     const m = view === "gs" ? "S" : "W"; if (c.model === m) return f;
     const t = [...FEAT.values()].find(x => x.via === f.id); return t ? t : null; }).filter(f => f && !seen.has(f.id) && seen.add(f.id));
-  const none = (D.featured || []).filter(f => !F.some(x => x.id === f.id || x.via === f.id));
+  const none = (D.featured || []).filter(f => !f.known && !F.some(x => x.id === f.id || x.via === f.id));
+  const kn = F.filter(f => f.known), F0 = F.filter(f => !f.known);
+  const btn = f => { const c = byId.get(f.id); return `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span>` +
+      `<span class="fm">${c ? MODEL[c.model] : ""} · ${c && c.latent ? "latent " + c.latent[0] : esc(f.id)}${f.via ? ` · twin of ${esc(f.via)}` : ""}</span></button>`; };
   box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand: each is easy to see in its examples.`} Click one to open it.</p>` +
-    F.map(f => { const c = byId.get(f.id); return `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span>` +
-      `<span class="fm">${c ? MODEL[c.model] : ""} · ${esc(f.id)}${f.via ? ` · twin of ${esc(f.via)}` : ""}</span></button>`; }).join("") +
+    F0.map(btn).join("") +
+    (kn.some(f => !f.faint) ? `<h2 style="margin-top:8px">Book plans: good examples</h2><p>Plans from chess books, labelled by rule in human games, and the latent that comes on before each one.</p>` + kn.filter(f => !f.faint).map(btn).join("") : "") +
+    (kn.some(f => f.faint) ? `<h2 style="margin-top:8px">Book plans: faint but early</h2><p>The latent comes on before the plan, but weakly (under half its usual strength).</p>` + kn.filter(f => f.faint).map(btn).join("") : "") +
     (view !== "gdiff" && none.length ? `<p>Not in this model: ${none.map(f => esc(f.title)).join("; ")} (see <b>only one model has it</b>).</p>` : "");
   box.querySelectorAll("button.fi").forEach(b => b.onclick = () => { const c = byId.get(b.dataset.id); if (!c) return;
     document.getElementById("list").hidden = true;

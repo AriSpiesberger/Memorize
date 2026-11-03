@@ -24,6 +24,7 @@ G_diff  concepts whose best match in the other model (report()'s centroid cosine
     python transcend/interp/concept_graph.py examples   # CPU, a few minutes: examples for the edges (into graph.json)
     python transcend/interp/concept_graph.py pairs      # CPU, resumable: each concept's examples as pairs from one board (into graph.json)
     python transcend/interp/concept_graph.py rank       # CPU, seconds: results/transcend/overnight/<name>-rank.md (concepts ranked for reading)
+    python transcend/interp/known_plans.py              # GPU, minutes: book plans from conceptbench/traj.py as good examples (-known.json)
     python transcend/interp/concept_graph.py page       # results/transcend/overnight/<name>-graph.html (and -graph.json, its data)
 
 The page is concept_graph.html with the data put in. To change the page only, edit concept_graph.html and run page: it
@@ -636,6 +637,10 @@ def page(a):
         c["strength"] = round(sum(v - n for v, n in parts), 3) if all(v is not None and n is not None for v, n in parts) else None
     for c in gd["concepts"]:
         for q in c.get("pairs", []): q.pop("lk", None); q.pop("lg", None)
+    kn = RES / f"{a.name}-known.json"                          # book plans from the dynamic bench (known_plans.py), as good examples
+    if kn.exists():
+        k = json.loads(kn.read_text(encoding="utf-8"))
+        gd["concepts"] += k["concepts"]; gd["featured"] += k["featured"]
     g = json.dumps(gd)
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
     html = html.replace("<!--BOARDS-->", BOARD_DEFS + MOVE_HEAD).replace("/*BOARD_JS*/", BOARD_JS)
