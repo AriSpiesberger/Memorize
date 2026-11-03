@@ -316,16 +316,16 @@ function conceptPeek(c) {
 }
 function knownCard(c) {
   const fe = FEAT.get(c.id), k = c.known, t = D.concepts.find(x => x.id === c.match);
-  return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">good example · ${MODEL[c.model]}</span></h3>` +
-    `<div class="feat"><div>${esc(fe ? fe.look : "")}</div>${fe && fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>` +
-    `<div class="meta">Latent ${c.latent[0]} · in held-out human games it is on during ${Math.round(100 * k.coverage)}% of the plan's moves and ${Math.round(100 * k.false)}% of others in the same structure · ` +
-    `${k.episodes} plan episodes · stays on for ${Math.round(100 * k.persistence)}% of an episode, unbroken</div>` +
-    (t ? `<a class="twin" href="#" data-jump="${esc(t.id)}">the same plan in the ${MODEL[t.model]} (latent ${t.latent[0]}) →</a>` : "") +
+  return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">book plan · ${MODEL[c.model]}</span></h3>` +
+    (t ? `<a class="twin" href="#" data-jump="${esc(t.id)}">the same plan in the ${MODEL[t.model]} →</a>` : "") +
     `<div class="how">Each example is one position twice, at the start of the plan in a human game the model has not seen: the model plays on from there many times.
       <b style="color:#0f766e">Left</b>, a line where the latent comes on and the plan is played; <b style="color:#be123c">right</b>, a line from the same position where the latent stays off
       and something else happens. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal</span> = how strongly the latent is on after each move;
       <u><b>underlined</b></u> = the plan's moves.</div>` +
-    c.pairs.map((p, i) => `<div class="lab kindh">example ${i + 1} of ${c.pairs.length}</div>` + pairHTML(p)).join("");
+    c.pairs.map((p, i) => `<div class="lab kindh">example ${i + 1} of ${c.pairs.length}</div>` + pairHTML(p)).join("") +
+    `<details><summary>details</summary><div class="meta" style="margin-top:6px">${fe && fe.also ? esc(fe.also) + " " : ""}` +
+    `Latent ${c.latent[0]}: in held-out human games it is on during ${Math.round(100 * k.coverage)}% of the plan's moves and ` +
+    `${Math.round(100 * k.false)}% of other positions in the same structure, over ${k.episodes} plan episodes.</div></details>`;
 }
 function conceptCard(c) {
   if (c.known) return knownCard(c);
@@ -560,11 +560,10 @@ function featured() {                                    // the labelled concept
     const t = [...FEAT.values()].find(x => x.via === f.id); return t ? t : null; }).filter(f => f && !seen.has(f.id) && seen.add(f.id));
   const none = (D.featured || []).filter(f => !f.known && !F.some(x => x.id === f.id || x.via === f.id));
   const kn = F.filter(f => f.known), F0 = F.filter(f => !f.known);
-  const btn = f => { const c = byId.get(f.id); return `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span>` +
-      `<span class="fm">${c ? MODEL[c.model] : ""} · ${c && c.latent ? "latent " + c.latent[0] : esc(f.id)}${f.via ? ` · twin of ${esc(f.via)}` : ""}</span></button>`; };
-  box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand: each is easy to see in its examples.`} Click one to open it.</p>` +
+  const btn = f => `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span></button>`;
+  box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand.`} Click one to open it.</p>` +
     F0.map(btn).join("") +
-    (kn.length ? `<h2 style="margin-top:8px">Book plans: good examples</h2><p>Plans from chess books, labelled by rule in human games, and the latent that comes on before each one.</p>` + kn.map(btn).join("") : "") +
+    (kn.length ? `<h2 style="margin-top:8px">Book plans</h2><p>Plans from chess books, found in human games.</p>` + kn.map(btn).join("") : "") +
     (view !== "gdiff" && none.length ? `<p>Not in this model: ${none.map(f => esc(f.title)).join("; ")} (see <b>only one model has it</b>).</p>` : "");
   box.querySelectorAll("button.fi").forEach(b => b.onclick = () => { const c = byId.get(b.dataset.id); if (!c) return;
     document.getElementById("list").hidden = true;
