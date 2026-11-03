@@ -280,7 +280,7 @@ function knownCaption(p) {
     ? `The latent comes on after <b>${mv(on)}</b>, ${lead} half-move${lead === 1 ? "" : "s"} before the plan starts with <b>${mv(first)}</b>`
     : `The latent comes on as the plan starts with <b>${mv(first)}</b>`;
   const right = `From the same position the model plays <b>${esc(p.sline[0])}</b> instead: the latent stays off and none of the plan's moves comes in ${p.sline.length} half-moves`;
-  return `<div class="cap"><div><span class="tg c">plan line</span> ${left}${plan ? ` (the plan's moves: ${plan})` : ""}${p.faint ? "; it fires faintly, under half its usual strength" : ""}.</div>` +
+  return `<div class="cap"><div><span class="tg c">plan line</span> ${left}${plan ? ` (the plan's moves: ${plan})` : ""}.</div>` +
     `<div><span class="tg s">something else</span> ${right}.</div></div>`;
 }
 // concepts labelled by hand, and their twins in the other model (mutual best match, cosine >= 0.85), which carry the
@@ -308,7 +308,7 @@ const conceptTitle = c => { const fe = FEAT.get(c.id); return fe ? esc(fe.title)
 // hover: a short preview; click opens the full card
 function conceptPeek(c) {
   const fe = FEAT.get(c.id);
-  if (c.known) return `<h3>${conceptTitle(c)}</h3><div class="meta">${c.known.faint ? "faint but early" : "good example"} · book plan · ${MODEL[c.model]} · latent ${c.latent[0]}</div>` +
+  if (c.known) return `<h3>${conceptTitle(c)}</h3><div class="meta">good example · book plan · ${MODEL[c.model]} · latent ${c.latent[0]}</div>` +
     `<div>${esc(fe ? fe.look : "")}</div><div class="peek">Click to see the examples.</div>`;
   return `<h3>${conceptTitle(c)}</h3><div class="meta">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]} · seen at ${c.positions} positions</div>` +
     (fe ? `<div>${esc(fe.look)}</div>` : c.theme ? `<div>Its lines often have: ${esc(c.theme)}.</div>` : "") +
@@ -316,7 +316,7 @@ function conceptPeek(c) {
 }
 function knownCard(c) {
   const fe = FEAT.get(c.id), k = c.known, t = D.concepts.find(x => x.id === c.match);
-  return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">${k.faint ? "faint but early" : "good example"} · ${MODEL[c.model]}</span></h3>` +
+  return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">good example · ${MODEL[c.model]}</span></h3>` +
     `<div class="feat"><div>${esc(fe ? fe.look : "")}</div>${fe && fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>` +
     `<div class="meta">Latent ${c.latent[0]} · in held-out human games it is on during ${Math.round(100 * k.coverage)}% of the plan's moves and ${Math.round(100 * k.false)}% of others in the same structure · ` +
     `${k.episodes} plan episodes · stays on for ${Math.round(100 * k.persistence)}% of an episode, unbroken</div>` +
@@ -325,7 +325,7 @@ function knownCard(c) {
       <b style="color:#0f766e">Left</b>, a line where the latent comes on and the plan is played; <b style="color:#be123c">right</b>, a line from the same position where the latent stays off
       and something else happens. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal</span> = how strongly the latent is on after each move;
       <u><b>underlined</b></u> = the plan's moves.</div>` +
-    c.pairs.map((p, i) => `<div class="lab kindh">example ${i + 1} of ${c.pairs.length}${p.faint ? " · faint" : ""}</div>` + pairHTML(p)).join("");
+    c.pairs.map((p, i) => `<div class="lab kindh">example ${i + 1} of ${c.pairs.length}</div>` + pairHTML(p)).join("");
 }
 function conceptCard(c) {
   if (c.known) return knownCard(c);
@@ -564,8 +564,7 @@ function featured() {                                    // the labelled concept
       `<span class="fm">${c ? MODEL[c.model] : ""} · ${c && c.latent ? "latent " + c.latent[0] : esc(f.id)}${f.via ? ` · twin of ${esc(f.via)}` : ""}</span></button>`; };
   box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand: each is easy to see in its examples.`} Click one to open it.</p>` +
     F0.map(btn).join("") +
-    (kn.some(f => !f.faint) ? `<h2 style="margin-top:8px">Book plans: good examples</h2><p>Plans from chess books, labelled by rule in human games, and the latent that comes on before each one.</p>` + kn.filter(f => !f.faint).map(btn).join("") : "") +
-    (kn.some(f => f.faint) ? `<h2 style="margin-top:8px">Book plans: faint but early</h2><p>The latent comes on before the plan, but weakly (under half its usual strength).</p>` + kn.filter(f => f.faint).map(btn).join("") : "") +
+    (kn.length ? `<h2 style="margin-top:8px">Book plans: good examples</h2><p>Plans from chess books, labelled by rule in human games, and the latent that comes on before each one.</p>` + kn.map(btn).join("") : "") +
     (view !== "gdiff" && none.length ? `<p>Not in this model: ${none.map(f => esc(f.title)).join("; ")} (see <b>only one model has it</b>).</p>` : "");
   box.querySelectorAll("button.fi").forEach(b => b.onclick = () => { const c = byId.get(b.dataset.id); if (!c) return;
     document.getElementById("list").hidden = true;

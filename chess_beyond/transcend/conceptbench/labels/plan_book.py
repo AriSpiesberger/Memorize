@@ -278,6 +278,26 @@ PLANS = {
                                 min_moves=3),
     "rook_seventh": plan(rook_middlegame, {"R7": mv(R, "a7 b7 c7 d7 e7 f7 g7 h7")}, "After move 10: a rook to the seventh rank"),
 }
+NAMES = {    # short names for pages and tables
+    "carlsbad_minority": "Minority attack", "carlsbad_central_break": "Carlsbad: e4 break",
+    "carlsbad_pillsbury": "Pillsbury attack", "carlsbad_kingside_counter": "Carlsbad: kingside counter",
+    "iqp_break": "IQP: d5 break", "iqp_kingside_attack": "IQP: kingside attack", "iqp_blockade": "Blockade the IQP",
+    "hanging_pawns_advance": "Hanging pawns advance", "hanging_pawns_levers": "Attack hanging pawns",
+    "kings_indian_storm": "King's Indian storm", "kings_indian_queenside": "King's Indian: c5 break",
+    "benoni_b5": "Benoni: ...b5", "benoni_e5": "Benoni: e5 break", "benoni_f4_e5": "Benoni: f4 and e5",
+    "french_c5": "French: ...c5 break", "french_f6": "French: ...f6 break", "french_d4_pressure": "French: pressure on d4",
+    "french_kingside": "French: f4-f5", "caro_slav_c5": "Caro-Kann / Slav: ...c5", "caro_slav_e5": "Caro-Kann / Slav: ...e5",
+    "caro_slav_space": "Caro-Kann / Slav: space", "maroczy_break": "Break the Maroczy", "maroczy_f5": "Maroczy: ...f5",
+    "hedgehog_break": "Hedgehog break", "stonewall_attack": "Stonewall attack", "stonewall_c5_break": "...c5 against the Stonewall",
+    "small_centre_f4": "Small centre: f4", "small_centre_d5": "Small centre: ...d5", "small_centre_f5": "Small centre: ...f5",
+    "scheveningen_english_attack": "English Attack", "scheveningen_b5": "Scheveningen: ...b5", "scheveningen_d5": "Scheveningen: ...d5",
+    "najdorf_nd5": "Knight to d5", "najdorf_d5": "Najdorf: ...d5", "najdorf_b5": "Najdorf: ...b5",
+    "dragon_h_storm": "Dragon: h4-h5", "dragon_b5": "Dragon: ...b5", "dragon_exchange_sac": "Dragon: ...Rxc3",
+    "big_centre_d5": "Big centre: d5", "big_centre_c5": "Big centre: ...c5",
+    "opposite_castling_storm": "Pawn storm (opposite castling)", "fianchetto_h_storm": "h-pawn against a fianchetto",
+    "queenside_majority_push": "Push the queenside majority", "king_centralisation": "King to the centre",
+    "rook_seventh": "Rook to the 7th",
+}
 DEFS = {f"plan_{k}": p.doc + f". Episode: from {LEAD} plies before its first move (in the structure) to its last move, each "
         f"within {GAP} plies of the one before; in the structure with no episode coming: negative." for k, p in PLANS.items()}
 

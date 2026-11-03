@@ -18,8 +18,10 @@ against the other line, where the latent stays off for OFF_FOR plies and none of
 happens. The two lines start with different moves. Preferred: the latent at MIN_ON or more, then on before the plan's
 first move, then the largest gap in the latent over the first
 OFF_FOR plies, up to N_PAIRS positions from different games. The latent's value is shown in units of its mean when on
-(capped at 3), as the map shows a concept's. A plan whose pairs all have the latent below MIN_ON before the plan is
-shown as faint but early: the timing is there, the firing is weak.
+(capped at 3), as the map shows a concept's. Pairs whose latent stays under MIN_ON before the plan are dropped, and a
+plan left with none is left out.
+
+    python transcend/interp/known_plans.py --relabel  # the cards and that rule applied again to the -known.json already made
 """
 import argparse
 import json
@@ -124,7 +126,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--name", default="night1")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--relabel", action="store_true", help="only write the cards of the -known.json already made again")
     a = ap.parse_args()
+    if a.relabel:
+        return relabel(a.name)
     import pandas as pd
     import torch
     import eval as ev
@@ -231,10 +236,11 @@ def main():
                     break
             print(f"  {m} {plan}: latent {u}, {len(pairs)} pairs from {min(len(cands), CANDIDATES)} positions tried "
                   f"({time.time() - t0:.0f}s)", flush=True)
+            pairs = [q for q in pairs if not q["faint"]]
+            for q in pairs:
+                q.pop("faint")
             if not pairs:
                 continue
-            pairs.sort(key=lambda q: q["faint"])
-            faint = all(q["faint"] for q in pairs)
             p = plan_book.PLANS[plan[5:]]
             x, nl = row["real"], row["null"]
             cid = f"{m}-{plan[5:].upper().replace('_', '-')}"
@@ -244,25 +250,48 @@ def main():
                                  pairs=pairs, known=dict(plan=plan, J=round(x["J"], 3), null=round(nl["J"], 3),
                                                          J_ci=[round(v, 3) for v in x["J_ci"]], coverage=round(x["coverage"], 3),
                                                          false=round(x["false"], 3), persistence=round(x["persistence"], 3),
-                                                         episodes=x["test_episodes"], shared_with=shared_with, faint=faint)))
-            also = [k for k in shared_with if k != plan]
-            featured.append(dict(id=cid, known=True, faint=faint, title=f"{p.doc} (book plan)",
-                                 look=f"Left: from the start of the plan the latent comes on" + (" (faintly)" if faint else "")
-                                      + f" before the plan is played ({', '.join(p.marks)}). "
-                                      f"Right: from the same position the latent stays off and something else happens.",
-                                 also=(f"Latent {u} tracks this plan through held-out human games: score {x['J']:.2f} "
-                                       f"[{x['J_ci'][0]:.2f}, {x['J_ci'][1]:.2f}] against {nl['J']:.2f} by chance (labels shifted). "
-                                       + (f"It is also the best latent for: {', '.join(k[5:].replace('_', ' ') for k in also)}." if also else ""))))
+                                                         episodes=x["test_episodes"], shared_with=shared_with)))
         del model
         torch.cuda.empty_cache()
+    write(a.name, concepts)
+    print(f"({time.time() - t0:.0f}s)", flush=True)
+
+
+def write(name, concepts):
+    """The good examples, each plan's card text (its short name, its rule, its score), and its twin in the other model."""
+    featured = []
+    for c in concepts:
+        k = c["known"]
+        p, u = plan_book.PLANS[k["plan"][5:]], c["latent"][0]
+        also = [x for x in k["shared_with"] if x != k["plan"]]
+        featured.append(dict(id=c["id"], known=True, title=plan_book.NAMES[k["plan"][5:]],
+                             look="Left: from the start of the plan the latent comes on before the plan is played. "
+                                  "Right: from the same position the latent stays off and something else happens.",
+                             also=(f"The plan: {p.doc}. Latent {u} tracks it through held-out human games: score {k['J']:.2f} "
+                                   f"[{k['J_ci'][0]:.2f}, {k['J_ci'][1]:.2f}] against {k['null']:.2f} by chance (labels shifted). "
+                                   + (f"It is also the best latent for: {', '.join(plan_book.NAMES[x[5:]] for x in also)}." if also else ""))))
     for c in concepts:                                  # the same plan in the other model: its twin
         t = next((d for d in concepts if d["model"] != c["model"] and d["known"]["plan"] == c["known"]["plan"]), None)
-        if t:
-            c["match"], c["match_cos"] = t["id"], 1.0 if t["latent"] == c["latent"] else 0.9
+        c["match"], c["match_cos"] = (t["id"], 1.0 if t["latent"] == c["latent"] else 0.9) if t else ("", 0.0)
     RES.mkdir(parents=True, exist_ok=True)
-    out = RES / f"{a.name}-known.json"
+    out = RES / f"{name}-known.json"
     out.write_text(json.dumps(dict(note=__doc__.split("\n\n")[0], concepts=concepts, featured=featured)), encoding="utf-8")
-    print(f"wrote {out}: {len(concepts)} good examples ({time.time() - t0:.0f}s)", flush=True)
+    print(f"wrote {out}: {len(concepts)} good examples", flush=True)
+
+
+def relabel(name):
+    """The -known.json already made, with weak pairs (and plans left with none) dropped and the cards written again."""
+    k = json.loads((RES / f"{name}-known.json").read_text(encoding="utf-8"))
+    out = []
+    for c in k["concepts"]:
+        c["pairs"] = [q for q in c["pairs"] if q.get("strength", MIN_ON) >= MIN_ON]
+        for q in c["pairs"]:
+            q.pop("faint", None)
+        c["known"].pop("faint", None)
+        if c["pairs"]:
+            c["on_at_split"] = len(c["pairs"])
+            out.append(c)
+    write(name, out)
 
 
 if __name__ == "__main__":
