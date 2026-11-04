@@ -318,6 +318,7 @@ function knownCard(c) {
   const fe = FEAT.get(c.id), k = c.known, t = D.concepts.find(x => x.id === c.match);
   return `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">book plan · ${MODEL[c.model]}</span></h3>` +
     (t ? `<a class="twin" href="#" data-jump="${esc(t.id)}">the same plan in the ${MODEL[t.model]} →</a>` : "") +
+    (c.same ? `<a class="twin" href="#" data-jump="${esc(c.same)}">the same latent as the map found it (${esc(c.same)}) →</a>` : "") +
     `<div class="how">Each example is one position twice, at the start of the plan in a human game the model has not seen: the model plays on from there many times.
       <b style="color:#0f766e">Left</b>, a line where the latent comes on and the plan is played; <b style="color:#be123c">right</b>, a line from the same position where the latent stays off
       and something else happens. <span style="background:rgba(45,212,191,.6);padding:0 3px;border-radius:2px">Teal</span> = how strongly the latent is on after each move;
@@ -333,6 +334,7 @@ function conceptCard(c) {
   let h = `<h3>${conceptTitle(c)} <span style="font-weight:400;color:#5b6275">${fe ? esc(c.id) + " · " : ""}${MODEL[c.model]}</span></h3>` +
     (fe ? `<div class="feat"><div>${esc(fe.look)}</div>${fe.also ? `<div style="color:#5b6275;margin-top:4px">${esc(fe.also)}</div>` : ""}</div>`
         : `<div class="lead">Not labelled by hand: read it from the examples below.${c.theme ? ` Its lines often have: <b>${esc(c.theme)}</b>.` : ""}</div>`) +
+    (fe && fe.plan ? `<a class="twin" href="#" data-jump="${esc(fe.plan)}">the book plan's examples →</a>` : "") +
     `<div class="meta">Seen at ${c.positions} positions · ${c.persistence == null ? "not on right after the branch move" : `usually stays on for ${c.persistence} half-moves`} · ${otherHas(c)}</div>` +
     twinButton(c);
   if (c.pairs && c.pairs.length) {
@@ -558,8 +560,8 @@ function featured() {                                    // the labelled concept
     if (view === "gdiff") return c.absent ? f : null;
     const m = view === "gs" ? "S" : "W"; if (c.model === m) return f;
     const t = [...FEAT.values()].find(x => x.via === f.id); return t ? t : null; }).filter(f => f && !seen.has(f.id) && seen.add(f.id));
-  const none = (D.featured || []).filter(f => !f.known && !F.some(x => x.id === f.id || x.via === f.id));
-  const kn = F.filter(f => f.known), F0 = F.filter(f => !f.known);
+  const none = (D.featured || []).filter(f => !f.known && !f.plan && !F.some(x => x.id === f.id || x.via === f.id));
+  const kn = F.filter(f => f.known), F0 = F.filter(f => !f.known && !f.plan && !(FEAT.get(f.via) || {}).plan);
   const btn = f => `<button class="fi" data-id="${esc(f.id)}"><span class="ft">${esc(f.title)}</span></button>`;
   box.innerHTML = `<h2>Start here</h2><p>${view === "gdiff" ? "Labelled concepts only one model has." : `Concepts in the ${MODEL[view === "gs" ? "S" : "W"]}, labelled by hand.`} Click one to open it.</p>` +
     F0.map(btn).join("") +

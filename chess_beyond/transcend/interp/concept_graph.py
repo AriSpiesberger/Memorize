@@ -640,6 +640,14 @@ def page(a):
     kn = RES / f"{a.name}-known.json"                          # book plans from the dynamic bench (known_plans.py), as good examples
     if kn.exists():
         k = json.loads(kn.read_text(encoding="utf-8"))
+        title = {f["id"]: f["title"] for f in k["featured"]}
+        for c in k["concepts"]:                                # a node the map found on its own that is this plan's latent, alone:
+            for m in gd["concepts"]:                           # the same thing twice, so it takes the plan's name and links to it
+                if m["model"] == c["model"] and m["latent"] == c["latent"]:
+                    c["same"] = m["id"]
+                    gd["featured"].append(dict(id=m["id"], title=title[c["id"]], plan=c["id"],
+                                               look=f"Latent {c['latent'][0]} alone. The same latent tracks the book plan "
+                                                    f"{title[c['id']]} through human games: see the plan's examples."))
         gd["concepts"] += k["concepts"]; gd["featured"] += k["featured"]
     g = json.dumps(gd)
     html = (Path(__file__).with_name("concept_graph.html")).read_text(encoding="utf-8").replace("/*DATA*/", g.replace("</", "<\\/"))
